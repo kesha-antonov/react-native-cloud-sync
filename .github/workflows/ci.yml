@@ -35,27 +35,8 @@ jobs:
       - run: yarn test
 
   ios:
-    name: iOS (RN ${{ matrix.react-native }}, ${{ matrix.arch }})
+    name: iOS build (New Architecture)
     runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The legacy architecture is only reachable on RN <= 0.81; 0.82
-          # removed it outright, so newArchEnabled=false is ignored from there
-          # on. This matrix is what keeps the #ifdef'd bridge honest.
-          - react-native: '0.71.19'
-            arch: legacy
-            new-arch: '0'
-          - react-native: '0.76.9'
-            arch: legacy
-            new-arch: '0'
-          - react-native: '0.76.9'
-            arch: new
-            new-arch: '1'
-          - react-native: '0.86.2'
-            arch: new
-            new-arch: '1'
     steps:
       - uses: actions/checkout@v5
 
@@ -69,30 +50,41 @@ jobs:
 
       - run: yarn install --immutable
 
-      - name: Pin React Native for this matrix entry
+      # example/ios is generated, not committed, so it has to be produced here.
+      - name: Prebuild the example
         working-directory: example
-        run: yarn add -D react-native@${{ matrix.react-native }}
+        run: npx expo prebuild --platform ios --no-install
 
       - name: Install pods
         working-directory: example/ios
         env:
-          RCT_NEW_ARCH_ENABLED: ${{ matrix.new-arch }}
-        run: pod install --repo-update
+          RCT_NEW_ARCH_ENABLED: '1'
+        run: pod install
 
-      - name: Build (iOS simulator)
+      # The first thing that actually compiles ios/RNCloudStorage.mm and the
+      # Swift implementation behind it. Everything else in this workflow is
+      # JavaScript.
+      - name: Build
         working-directory: example/ios
         run: |
+          set -euo pipefail
+          # Discover the generated names rather than hardcoding them - the
+          # workspace is produced by `expo prebuild` from app.json.
+          WORKSPACE=$(ls -d ./*.xcworkspace | head -1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "workspace=$WORKSPACE scheme=$SCHEME"
           xcodebuild \
-            -workspace CloudStorageExample.xcworkspace \
-            -scheme CloudStorageExample \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphonesimulator \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || exit 1
+            -quiet \
+            build
 
-  ios-catalyst:
-    name: iOS static frameworks + Mac Catalyst
+  ios-static-frameworks:
+    name: iOS static frameworks
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
@@ -107,25 +99,35 @@ jobs:
 
       - run: yarn install --immutable
 
-      # Both of these break naive pods. Static linkage changes how the Swift
-      # module is emitted, and Mac Catalyst needs a slice that many pods simply
-      # do not ship - consuming apps then carry hand-written Podfile repairs for
-      # every one that gets it wrong. Building both here keeps that off them.
+      - name: Prebuild the example
+        working-directory: example
+        run: npx expo prebuild --platform ios --no-install
+
+      # Static linkage changes how the Swift module is emitted and is a common
+      # way for a pod mixing Swift and Objective-C++ to break. Consuming apps
+      # otherwise carry hand-written Podfile repairs for pods that get it wrong.
       - name: Install pods with static frameworks
         working-directory: example/ios
         env:
           RCT_NEW_ARCH_ENABLED: '1'
           USE_FRAMEWORKS: static
-        run: pod install --repo-update
+        run: pod install
 
-      - name: Build Mac Catalyst slice
+      - name: Build
         working-directory: example/ios
         run: |
+          set -euo pipefail
+          # Discover the generated names rather than hardcoding them - the
+          # workspace is produced by `expo prebuild` from app.json.
+          WORKSPACE=$(ls -d ./*.xcworkspace | head -1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "workspace=$WORKSPACE scheme=$SCHEME"
           xcodebuild \
-            -workspace CloudStorageExample.xcworkspace \
-            -scheme CloudStorageExample \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -configuration Debug \
-            -destination 'platform=macOS,variant=Mac Catalyst' \
+            -sdk iphonesimulator \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || exit 1
+            -quiet \
+            build

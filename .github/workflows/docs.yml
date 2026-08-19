@@ -28,6 +28,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Must precede setup-node: setup-node probes the package manager named in
+      # the root package.json ("yarn@4.18.0") during its own setup, and fails
+      # against the preinstalled Yarn 1 if Corepack is not enabled yet.
+      - name: Enable Corepack
+        run: corepack enable
+
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -37,7 +43,7 @@ jobs:
       # website/scripts/sync-docs.mjs, which `yarn build` runs first - so the
       # site can never drift from the markdown in the repo.
       - name: Install dependencies
-        run: corepack enable && yarn install --immutable
+        run: yarn install --immutable
         working-directory: website
 
       - name: Build

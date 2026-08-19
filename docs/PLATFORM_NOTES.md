@@ -79,3 +79,8 @@ Both are supported, from React Native 0.71.
 One Swift implementation sits behind both; the `.mm` file picks a base class with `#ifdef RCT_NEW_ARCH_ENABLED` and forwards. Event names differ per architecture (`onRemoteChange` vs `remoteChange`); the JS layer handles that, so it never reaches your code.
 
 React Native 0.82 removed the Legacy Architecture, so that path matters only on 0.81 and below.
+
+> **CI coverage.** The example app is Expo SDK 57, which pins React Native 0.86 - a version
+> that cannot run the Legacy Architecture at all. CI therefore compiles the New Architecture
+> path only. The `#ifdef`'d legacy path is implemented and reviewed but not yet exercised by
+> an automated build; if you are on 0.81 or below and hit a problem, please open an issue.
