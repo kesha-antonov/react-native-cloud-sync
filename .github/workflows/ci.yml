@@ -171,3 +171,83 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             -quiet \
             build
+
+      # Reuses the pods installed above rather than paying for a second
+      # install. Mac Catalyst builds from the iOS slice, so this is the same
+      # pod compiled for a different destination - which is exactly where a
+      # Swift/Objective-C++ pod tends to break, and what consuming apps
+      # otherwise carry hand-written Podfile repairs for.
+      - name: Build for Mac Catalyst
+        working-directory: example/ios
+        run: |
+          set -euo pipefail
+          WORKSPACE=$(ls -d ./*.xcworkspace | head -1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -destination 'platform=macOS,variant=Mac Catalyst' \
+            -derivedDataPath build-catalyst \
+            SUPPORTS_MACCATALYST=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet \
+            build
+
+  legacy-architecture:
+    name: Legacy Architecture (RN 0.76)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: yarn
+
+      - run: yarn install --immutable
+
+      - run: yarn build && yarn build-plugin
+
+      # The example app cannot cover this. It is Expo SDK 57, which pins React
+      # Native 0.86, and 0.82 removed the Legacy Architecture outright - so no
+      # Expo 57 app can exercise the #ifndef RCT_NEW_ARCH_ENABLED half of the
+      # bridge. A bare fixture on 0.76 is the only way to compile it.
+      - name: Create a bare React Native 0.76 fixture
+        run: |
+          set -euo pipefail
+          npx --yes @react-native-community/cli@15 init LegacyFixture \
+            --version 0.76.9 \
+            --skip-install \
+            --skip-git-init \
+            --directory /tmp/legacy-fixture
+
+      - name: Link this package into the fixture
+        working-directory: /tmp/legacy-fixture
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"
+
+      - name: Install pods with the New Architecture OFF
+        working-directory: /tmp/legacy-fixture/ios
+        env:
+          RCT_NEW_ARCH_ENABLED: '0'
+        run: pod install
+
+      - name: Build
+        working-directory: /tmp/legacy-fixture/ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace LegacyFixture.xcworkspace \
+            -scheme LegacyFixture \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet \
+            build
