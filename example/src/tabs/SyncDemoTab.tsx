@@ -8,7 +8,7 @@ import {
   isGoogleDriveConfigured,
   type CloudProvider,
   type ProviderName,
-} from '@kesha-antonov/react-native-cloud-storage'
+} from '@kesha-antonov/react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { LogView } from '../components/LogView'

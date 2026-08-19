@@ -19,5 +19,5 @@ export function isLogsEnabled(): boolean {
 
 export function log(...args: unknown[]): void {
   if (!enabled) return
-  console.warn('[RNCloudStorage]', ...args)
+  console.warn('[RNCloudSync]', ...args)
 }

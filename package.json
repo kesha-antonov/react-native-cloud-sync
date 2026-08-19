@@ -1,5 +1,5 @@
 {
-  "name": "@kesha-antonov/react-native-cloud-storage",
+  "name": "@kesha-antonov/react-native-cloud-sync",
   "version": "0.1.0",
   "description": "iCloud key-value store, CloudKit and Google Drive under one API - iOS, Android and Web, old and new architecture",
   "workspaces": [
@@ -29,13 +29,13 @@
     "macos",
     "mac-catalyst"
   ],
-  "homepage": "https://github.com/kesha-antonov/react-native-cloud-storage",
+  "homepage": "https://github.com/kesha-antonov/react-native-cloud-sync",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kesha-antonov/react-native-cloud-storage.git"
+    "url": "git+https://github.com/kesha-antonov/react-native-cloud-sync.git"
   },
   "bugs": {
-    "url": "https://github.com/kesha-antonov/react-native-cloud-storage/issues"
+    "url": "https://github.com/kesha-antonov/react-native-cloud-sync/issues"
   },
   "license": "MIT",
   "author": "Kesha Antonov <innokenty.longway@gmail.com>",
@@ -80,7 +80,7 @@
     "lib/",
     "ios/",
     "plugin/build/",
-    "react-native-cloud-storage.podspec",
+    "react-native-cloud-sync.podspec",
     "!**/__tests__",
     "!**/__fixtures__",
     "!**/__mocks__",
@@ -133,7 +133,7 @@
     "react-native": ">=0.71"
   },
   "codegenConfig": {
-    "name": "RNCloudStorageSpec",
+    "name": "RNCloudSyncSpec",
     "type": "modules",
     "jsSrcsDir": "src/specs"
   },

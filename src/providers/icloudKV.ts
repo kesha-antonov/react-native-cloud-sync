@@ -16,7 +16,7 @@ import type {
 import type {
   AccountChangeNativeEvent,
   RemoteChangeNativeEvent,
-} from '../specs/NativeRNCloudStorage'
+} from '../specs/NativeRNCloudSync'
 import { toAccountStatus, toChangeReason } from '../internal/enums'
 
 const NAME = 'icloudKV' as const

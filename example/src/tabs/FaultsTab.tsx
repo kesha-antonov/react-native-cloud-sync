@@ -6,8 +6,8 @@ import {
   ErrorCode,
   isRetryable,
   requiresUserAction,
-  isCloudStorageError,
-} from '@kesha-antonov/react-native-cloud-storage'
+  isCloudSyncError,
+} from '@kesha-antonov/react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { LogView } from '../components/LogView'
@@ -62,7 +62,7 @@ export function FaultsTab() {
       .then(v => log.ok(`getItem -> ${String(v)}`))
       .catch((e) => {
         log.fail('getItem', e)
-        if (isCloudStorageError(e))
+        if (isCloudSyncError(e))
           log.event(
             `classification: retryable=${String(isRetryable(e))} `
             + `needsUserAction=${String(requiresUserAction(e))}`

@@ -1,4 +1,4 @@
-import type { CloudStorageError } from './errors'
+import type { CloudSyncError } from './errors'
 
 /**
  * Full account state.
@@ -69,7 +69,7 @@ export interface CloudProvider {
 
   /**
    * Resolves `null` if and only if the key does not exist. Every other failure
-   * rejects with a {@link CloudStorageError}. See `errors.ts` for why.
+   * rejects with a {@link CloudSyncError}. See `errors.ts` for why.
    */
   getItem: (key: string) => Promise<string | null>
 
@@ -134,5 +134,5 @@ export interface CloudStoreOptions {
    * connection before handing data to" it).
    */
   outbox?: boolean
-  onError?: (e: CloudStorageError) => void
+  onError?: (e: CloudSyncError) => void
 }

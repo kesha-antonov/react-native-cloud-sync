@@ -1,7 +1,7 @@
 // @ts-check
 const { themes } = require('prism-react-renderer')
 
-const REPO = 'https://github.com/kesha-antonov/react-native-cloud-storage'
+const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -10,9 +10,9 @@ const config = {
   favicon: 'img/favicon.svg',
 
   url: 'https://kesha-antonov.github.io',
-  baseUrl: '/react-native-cloud-storage/',
+  baseUrl: '/react-native-cloud-sync/',
   organizationName: 'kesha-antonov',
-  projectName: 'react-native-cloud-storage',
+  projectName: 'react-native-cloud-sync',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
@@ -55,13 +55,13 @@ const config = {
         respectPrefersColorScheme: true,
       },
       navbar: {
-        title: 'react-native-cloud-storage',
+        title: 'react-native-cloud-sync',
         items: [
           { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
           { to: '/comparison', label: 'Comparison', position: 'left' },
           { to: '/api', label: 'API', position: 'left' },
           {
-            href: 'https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-storage',
+            href: 'https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-sync',
             label: 'npm',
             position: 'right',
           },
@@ -86,7 +86,7 @@ const config = {
               { label: 'GitHub', href: REPO },
               {
                 label: 'npm',
-                href: 'https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-storage',
+                href: 'https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-sync',
               },
               { label: 'Issues', href: `${REPO}/issues` },
             ],

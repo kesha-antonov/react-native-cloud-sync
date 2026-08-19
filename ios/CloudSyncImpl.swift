@@ -3,12 +3,12 @@ import Foundation
 
 /// All CloudKit and NSUbiquitousKeyValueStore logic.
 ///
-/// The ObjC++ bridge (`RNCloudStorage.mm`) is deliberately thin - it only
+/// The ObjC++ bridge (`RNCloudSync.mm`) is deliberately thin - it only
 /// adapts between the two React Native architectures and forwards here. Keeping
 /// the real work in Swift is what makes CloudKit's async API tolerable; the
 /// same logic in Objective-C is a completion-block pyramid.
-@objc public class CloudStorageImpl: NSObject {
-    @objc public static let shared = CloudStorageImpl()
+@objc public class CloudSyncImpl: NSObject {
+    @objc public static let shared = CloudSyncImpl()
 
     static let recordTypeDefault = "KVBlob"
     static let valueField = "value"
@@ -24,7 +24,7 @@ import Foundation
     /// `@objc` is required. Swift does not expose members to Objective-C
     /// automatically just because the class is `@objc` and inherits NSObject,
     /// so without it the bridge fails to compile with "property 'emit' not
-    /// found on object of type 'CloudStorageImpl *'".
+    /// found on object of type 'CloudSyncImpl *'".
     @objc public var emit: ((String, [String: Any]) -> Void)?
 
     private let kvStore = NSUbiquitousKeyValueStore.default
@@ -68,7 +68,7 @@ import Foundation
 
     private func log(_ message: String) {
         guard logsEnabled else { return }
-        NSLog("[RNCloudStorage] %@", message)
+        NSLog("[RNCloudSync] %@", message)
     }
 
     // MARK: - Observers
@@ -199,8 +199,8 @@ import Foundation
         // Apple's per-key ceiling is 1 MB. Enforce it here with a typed error
         // rather than letting the write vanish server-side with no signal.
         if bytes > 1024 * 1024 {
-            let error = CloudStorageError.coded(
-                code: CloudStorageErrorCode.payloadTooLarge,
+            let error = CloudSyncError.coded(
+                code: CloudSyncErrorCode.payloadTooLarge,
                 message: "Value is \(bytes) bytes; the iCloud key-value store allows 1048576 per key.",
                 info: ["limitBytes": 1024 * 1024, "actualBytes": bytes]
             )
@@ -243,8 +243,8 @@ import Foundation
 
     private func requireDatabase() throws -> CKDatabase {
         guard let database = database else {
-            throw CloudStorageError.coded(
-                code: CloudStorageErrorCode.containerMisconfigured,
+            throw CloudSyncError.coded(
+                code: CloudSyncErrorCode.containerMisconfigured,
                 message: "No iCloud container is configured. Add the iCloud capability and a "
                     + "CloudKit container to the app target's entitlements.",
                 info: [:]
@@ -277,14 +277,14 @@ import Foundation
                         resolve(nil)
                         return
                     }
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                     return
                 }
                 resolve(record?[Self.valueField] as? String)
             }
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -299,8 +299,8 @@ import Foundation
     ) {
         let bytes = value.lengthOfBytes(using: .utf8)
         if bytes > Self.maxRecordBytes {
-            let error = CloudStorageError.coded(
-                code: CloudStorageErrorCode.payloadTooLarge,
+            let error = CloudSyncError.coded(
+                code: CloudSyncErrorCode.payloadTooLarge,
                 message: "Value is \(bytes) bytes; CloudKit records are limited to \(Self.maxRecordBytes). "
                     + "Use the store facade with tiering enabled to route large values to a CKAsset.",
                 info: ["limitBytes": Self.maxRecordBytes, "actualBytes": bytes]
@@ -329,13 +329,13 @@ import Foundation
                 case .success:
                     resolve(nil)
                 case let .failure(error):
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
             database.add(operation)
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -355,14 +355,14 @@ import Foundation
                         resolve(true)
                         return
                     }
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                     return
                 }
                 resolve(true)
             }
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -391,13 +391,13 @@ import Foundation
                 case .success:
                     resolve(names)
                 case let .failure(error):
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
             database.add(operation)
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -418,13 +418,13 @@ import Foundation
                 case .success:
                     resolve(nil)
                 case let .failure(error):
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
             database.add(operation)
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -443,13 +443,13 @@ import Foundation
                 case .success:
                     resolve(nil)
                 case let .failure(error):
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
             database.add(operation)
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -478,8 +478,8 @@ import Foundation
             let fileURL = Self.fileURL(from: fileUri)
 
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                let error = CloudStorageError.coded(
-                    code: CloudStorageErrorCode.unknown,
+                let error = CloudSyncError.coded(
+                    code: CloudSyncErrorCode.unknown,
                     message: "No file at \(fileURL.path)",
                     info: [:]
                 )
@@ -516,13 +516,13 @@ import Foundation
                 case .success:
                     resolve(nil)
                 case let .failure(error):
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
             database.add(operation)
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -544,7 +544,7 @@ import Foundation
                         resolve(nil)
                         return
                     }
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                     return
                 }
@@ -566,12 +566,12 @@ import Foundation
                     try FileManager.default.copyItem(at: url, to: destination)
                     resolve(destination.absoluteString)
                 } catch {
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }
@@ -591,14 +591,14 @@ import Foundation
             let database = try requireDatabase()
             database.fetchAllRecordZones { zones, error in
                 if let error = error {
-                    let mapped = CloudStorageError.from(error)
+                    let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                     return
                 }
                 resolve((zones ?? []).map { $0.zoneID.zoneName })
             }
         } catch {
-            let mapped = CloudStorageError.from(error)
+            let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)
         }
     }

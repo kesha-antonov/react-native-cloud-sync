@@ -95,4 +95,4 @@ export interface Spec extends TurboModule {
   setLogsEnabled: (enabled: boolean) => void
 }
 
-export default TurboModuleRegistry.get<Spec>('RNCloudStorage')
+export default TurboModuleRegistry.get<Spec>('RNCloudSync')

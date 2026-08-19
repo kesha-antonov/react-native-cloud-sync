@@ -1,7 +1,7 @@
 <p align="center">
-  <a href="https://badge.fury.io/js/@kesha-antonov%2Freact-native-cloud-storage"><img src="https://badge.fury.io/js/@kesha-antonov%2Freact-native-cloud-storage.svg" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-storage"><img src="https://img.shields.io/npm/dm/@kesha-antonov/react-native-cloud-storage.svg" alt="npm downloads" /></a>
-  <a href="https://github.com/kesha-antonov/react-native-cloud-storage/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@kesha-antonov/react-native-cloud-storage.svg" alt="license" /></a>
+  <a href="https://badge.fury.io/js/@kesha-antonov%2Freact-native-cloud-sync"><img src="https://badge.fury.io/js/@kesha-antonov%2Freact-native-cloud-sync.svg" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-sync"><img src="https://img.shields.io/npm/dm/@kesha-antonov/react-native-cloud-sync.svg" alt="npm downloads" /></a>
+  <a href="https://github.com/kesha-antonov/react-native-cloud-sync/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@kesha-antonov/react-native-cloud-sync.svg" alt="license" /></a>
   <img src="https://img.shields.io/badge/platforms-iOS%20%7C%20Android%20%7C%20Web-lightgrey.svg" alt="platforms" />
   <img src="https://img.shields.io/badge/TypeScript-ready-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Expo-compatible-000020.svg" alt="Expo compatible" />
@@ -9,17 +9,17 @@
   <img src="https://img.shields.io/badge/Legacy%20Architecture-supported-success.svg" alt="Legacy Architecture supported" />
 </p>
 
-<h1 align="center">react-native-cloud-storage</h1>
+<h1 align="center">react-native-cloud-sync</h1>
 
 <p align="center">
   iCloud key-value store, CloudKit and Google Drive behind one API - on iOS, Android and the web, on both React Native architectures.
 </p>
 
 <p align="center">
-  <a href="https://kesha-antonov.github.io/react-native-cloud-storage/">Documentation</a> ·
-  <a href="https://kesha-antonov.github.io/react-native-cloud-storage/comparison">Comparison</a> ·
-  <a href="https://kesha-antonov.github.io/react-native-cloud-storage/api">API</a> ·
-  <a href="https://kesha-antonov.github.io/react-native-cloud-storage/platform-notes">Platform Notes</a>
+  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/">Documentation</a> ·
+  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/comparison">Comparison</a> ·
+  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/api">API</a> ·
+  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes">Platform Notes</a>
 </p>
 
 ---
@@ -122,7 +122,7 @@ Both the New and the Legacy architecture are supported. React Native 0.82 remove
 ### Expo
 
 ```sh
-npx expo install @kesha-antonov/react-native-cloud-storage
+npx expo install @kesha-antonov/react-native-cloud-sync
 ```
 
 Add the config plugin to `app.json`, then rebuild:
@@ -131,7 +131,7 @@ Add the config plugin to `app.json`, then rebuild:
 {
   "expo": {
     "plugins": [
-      ["@kesha-antonov/react-native-cloud-storage", {
+      ["@kesha-antonov/react-native-cloud-sync", {
         "containerIdentifier": "iCloud.com.your.app"
       }]
     ]
@@ -146,7 +146,7 @@ npx expo prebuild --clean
 ### Bare React Native
 
 ```sh
-yarn add @kesha-antonov/react-native-cloud-storage
+yarn add @kesha-antonov/react-native-cloud-sync
 cd ios && pod install
 ```
 
@@ -170,7 +170,7 @@ Then add the iCloud entitlements by hand - the plugin is optional, and a committ
 ### The key-value store
 
 ```ts
-import { icloudKV } from '@kesha-antonov/react-native-cloud-storage'
+import { icloudKV } from '@kesha-antonov/react-native-cloud-sync'
 
 try {
   await icloudKV.setItem('settings/theme', 'dark')
@@ -200,7 +200,7 @@ icloudKV.onAccountChange(({ status, identityChanged }) => {
 ### The facade
 
 ```ts
-import { createCloudStore } from '@kesha-antonov/react-native-cloud-storage'
+import { createCloudStore } from '@kesha-antonov/react-native-cloud-sync'
 
 const store = createCloudStore({
   providers: ['icloudKV', 'googleDrive'],
@@ -220,7 +220,7 @@ Reads fall through the provider list, so a value written on another device by a 
 ### Handling failures
 
 ```ts
-import { isRetryable, requiresUserAction } from '@kesha-antonov/react-native-cloud-storage'
+import { isRetryable, requiresUserAction } from '@kesha-antonov/react-native-cloud-sync'
 
 try {
   await store.setItem('k', 'v')
@@ -235,7 +235,7 @@ try {
 ### CloudKit on Android and the web
 
 ```ts
-import { configureCloudKit } from '@kesha-antonov/react-native-cloud-storage'
+import { configureCloudKit } from '@kesha-antonov/react-native-cloud-sync'
 
 configureCloudKit({
   containerIdentifier: 'iCloud.com.your.app',
@@ -255,7 +255,7 @@ You need three things in the CloudKit Console first:
 ### Google Drive
 
 ```ts
-import { configureGoogleDrive } from '@kesha-antonov/react-native-cloud-storage'
+import { configureGoogleDrive } from '@kesha-antonov/react-native-cloud-sync'
 
 configureGoogleDrive({
   getAccessToken: async () => (await GoogleSignin.getTokens()).accessToken,
@@ -275,7 +275,7 @@ The library never owns the consent flow, so it stays independent of any particul
 | `googleDrive` | Drive `appDataFolder`, every platform |
 | `createCloudStore` | Facade: tiering, outbox, migration, fallthrough |
 | `configureCloudKit` / `configureGoogleDrive` | Credentials for the REST paths |
-| `ErrorCode`, `isCloudStorageError`, `isRetryable`, `requiresUserAction` | Error handling |
+| `ErrorCode`, `isCloudSyncError`, `isRetryable`, `requiresUserAction` | Error handling |
 | `createMemoryProvider` | In-memory provider with fault injection |
 | `setLogsEnabled` | Verbose logging, JS and native |
 
@@ -316,8 +316,8 @@ More detail: [`docs/PLATFORM_NOTES.md`](docs/PLATFORM_NOTES.md).
 ## 🧪 Testing
 
 ```ts
-import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-storage/testing'
-import { ErrorCode } from '@kesha-antonov/react-native-cloud-storage'
+import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
+import { ErrorCode } from '@kesha-antonov/react-native-cloud-sync'
 
 const provider = createMemoryProvider({
   initial: { 'user/id': '42' },

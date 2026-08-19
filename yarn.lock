@@ -2597,9 +2597,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@kesha-antonov/react-native-cloud-storage@workspace:*, @kesha-antonov/react-native-cloud-storage@workspace:.":
+"@kesha-antonov/react-native-cloud-sync@workspace:*, @kesha-antonov/react-native-cloud-sync@workspace:.":
   version: 0.0.0-use.local
-  resolution: "@kesha-antonov/react-native-cloud-storage@workspace:."
+  resolution: "@kesha-antonov/react-native-cloud-sync@workspace:."
   dependencies:
     "@babel/core": "npm:^7.29.7"
     "@eslint/js": "npm:^10.0.1"
@@ -5623,7 +5623,7 @@ __metadata:
   dependencies:
     "@babel/core": "npm:^7.29.7"
     "@eslint/js": "npm:^10.0.1"
-    "@kesha-antonov/react-native-cloud-storage": "workspace:*"
+    "@kesha-antonov/react-native-cloud-sync": "workspace:*"
     "@react-native-community/cli": "npm:^20.2.0"
     "@react-native/metro-config": "npm:^0.86.2"
     "@stylistic/eslint-plugin": "npm:^5.10.0"

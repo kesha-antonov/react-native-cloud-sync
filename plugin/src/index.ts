@@ -6,7 +6,7 @@ import {
 
 const pkg = require('../../package.json') as { name: string; version: string }
 
-export interface CloudStoragePluginOptions {
+export interface CloudSyncPluginOptions {
   /**
    * The iCloud container identifier, e.g. `iCloud.com.example.app`.
    * Defaults to `iCloud.<your bundle identifier>`, which is the convention
@@ -33,7 +33,7 @@ export interface CloudStoragePluginOptions {
  * to manage that file by hand. The README documents the raw keys for exactly
  * that case - a config plugin should not be the only documented path.
  */
-const withCloudStorage: ConfigPlugin<CloudStoragePluginOptions | void> = (config, options) => {
+const withCloudSync: ConfigPlugin<CloudSyncPluginOptions | void> = (config, options) => {
   const opts = options ?? {}
   const keyValueStore = opts.keyValueStore ?? true
   const cloudKit = opts.cloudKit ?? true
@@ -45,7 +45,7 @@ const withCloudStorage: ConfigPlugin<CloudStoragePluginOptions | void> = (config
 
     if (containerIdentifier == null)
       throw new Error(
-        '[react-native-cloud-storage] Cannot derive an iCloud container identifier. Set '
+        '[react-native-cloud-sync] Cannot derive an iCloud container identifier. Set '
         + 'ios.bundleIdentifier in app config, or pass containerIdentifier to the plugin.'
       )
 
@@ -72,4 +72,4 @@ const withCloudStorage: ConfigPlugin<CloudStoragePluginOptions | void> = (config
   })
 }
 
-export default createRunOncePlugin(withCloudStorage, pkg.name, pkg.version)
+export default createRunOncePlugin(withCloudSync, pkg.name, pkg.version)

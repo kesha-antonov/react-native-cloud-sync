@@ -1,13 +1,13 @@
 import { NativeEventEmitter, NativeModules, Platform, TurboModuleRegistry } from 'react-native'
 
-import type { Spec } from '../specs/NativeRNCloudStorage'
-import { CloudStorageError, ErrorCode } from '../errors'
+import type { Spec } from '../specs/NativeRNCloudSync'
+import { CloudSyncError, ErrorCode } from '../errors'
 import type { Unsubscribe } from '../types'
 
-const MODULE_NAME = 'RNCloudStorage'
+const MODULE_NAME = 'RNCloudSync'
 
 const LINKING_ERROR
-  = `[RNCloudStorage] The native module doesn't seem to be linked. Make sure you have:\n\n`
+  = `[RNCloudSync] The native module doesn't seem to be linked. Make sure you have:\n\n`
     + `  - run 'pod install' (iOS) or rebuilt the app (Android) after installing\n`
     + `  - rebuilt the app after installing, not just restarted Metro\n`
     + `  - not using Expo Go, which cannot load custom native modules\n`
@@ -62,10 +62,10 @@ export function getNativeModule(): Spec | null {
 export function requireNativeModule(): Spec {
   const m = getNativeModule()
   if (m == null)
-    throw new CloudStorageError(
+    throw new CloudSyncError(
       ErrorCode.UNSUPPORTED_PLATFORM,
       Platform.OS === 'web'
-        ? '[RNCloudStorage] This provider requires a native module and is not available on web.'
+        ? '[RNCloudSync] This provider requires a native module and is not available on web.'
         : LINKING_ERROR
     )
 

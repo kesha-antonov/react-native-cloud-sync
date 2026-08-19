@@ -1,12 +1,12 @@
-#import "RNCloudStorage.h"
+#import "RNCloudSync.h"
 
-#if __has_include(<react_native_cloud_storage/react_native_cloud_storage-Swift.h>)
-#import <react_native_cloud_storage/react_native_cloud_storage-Swift.h>
+#if __has_include(<react_native_cloud_sync/react_native_cloud_sync-Swift.h>)
+#import <react_native_cloud_sync/react_native_cloud_sync-Swift.h>
 #else
-#import "react_native_cloud_storage-Swift.h"
+#import "react_native_cloud_sync-Swift.h"
 #endif
 
-@implementation RNCloudStorage {
+@implementation RNCloudSync {
     // Events that arrived before JS was ready to receive them.
     NSMutableArray<NSDictionary *> *_pendingEvents;
     BOOL _jsReady;
@@ -14,7 +14,7 @@
 
 // Called unconditionally. Even on the New Architecture the module must remain
 // reachable through NativeModules so NativeEventEmitter interop keeps working.
-RCT_EXPORT_MODULE(RNCloudStorage)
+RCT_EXPORT_MODULE(RNCloudSync)
 
 + (BOOL)requiresMainQueueSetup
 {
@@ -32,19 +32,19 @@ RCT_EXPORT_MODULE(RNCloudStorage)
         _pendingEvents = [NSMutableArray new];
         _jsReady = NO;
 
-        __weak RNCloudStorage *weakSelf = self;
-        CloudStorageImpl.shared.emit = ^(NSString *name, NSDictionary *payload) {
+        __weak RNCloudSync *weakSelf = self;
+        CloudSyncImpl.shared.emit = ^(NSString *name, NSDictionary *payload) {
             [weakSelf safeEmitEvent:name value:payload];
         };
-        [CloudStorageImpl.shared startObserving];
+        [CloudSyncImpl.shared startObserving];
     }
     return self;
 }
 
 - (void)dealloc
 {
-    [CloudStorageImpl.shared stopObserving];
-    CloudStorageImpl.shared.emit = nil;
+    [CloudSyncImpl.shared stopObserving];
+    CloudSyncImpl.shared.emit = nil;
 }
 
 #pragma mark - Event emission
@@ -127,13 +127,13 @@ RCT_EXPORT_MODULE(RNCloudStorage)
 
 - (NSDictionary *)constantsToExport
 {
-    return [CloudStorageImpl.shared getConstants];
+    return [CloudSyncImpl.shared getConstants];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
 - (NSDictionary *)getConstants
 {
-    return [CloudStorageImpl.shared getConstants];
+    return [CloudSyncImpl.shared getConstants];
 }
 #endif
 
@@ -147,7 +147,7 @@ RCT_EXPORT_MODULE(RNCloudStorage)
 
 - (void)getAccountStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared getAccountStatusWithResolve:resolve reject:reject];
+    [CloudSyncImpl.shared getAccountStatusWithResolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -159,7 +159,7 @@ RCT_EXPORT_METHOD(getAccountStatus:(RCTPromiseResolveBlock)resolve rejecter:(RCT
 
 - (void)isAvailable:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared isAvailableWithResolve:resolve reject:reject];
+    [CloudSyncImpl.shared isAvailableWithResolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -171,7 +171,7 @@ RCT_EXPORT_METHOD(isAvailable:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromi
 
 - (void)kvGetItem:(NSString *)key resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared kvGetItem:key resolve:resolve reject:reject];
+    [CloudSyncImpl.shared kvGetItem:key resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -183,7 +183,7 @@ RCT_EXPORT_METHOD(kvGetItem:(NSString *)key resolver:(RCTPromiseResolveBlock)res
 
 - (void)kvSetItem:(NSString *)key value:(NSString *)value resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared kvSetItem:key value:value resolve:resolve reject:reject];
+    [CloudSyncImpl.shared kvSetItem:key value:value resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -195,7 +195,7 @@ RCT_EXPORT_METHOD(kvSetItem:(NSString *)key value:(NSString *)value resolver:(RC
 
 - (void)kvRemoveItem:(NSString *)key resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared kvRemoveItem:key resolve:resolve reject:reject];
+    [CloudSyncImpl.shared kvRemoveItem:key resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -207,7 +207,7 @@ RCT_EXPORT_METHOD(kvRemoveItem:(NSString *)key resolver:(RCTPromiseResolveBlock)
 
 - (void)kvGetAllKeys:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared kvGetAllKeysWithResolve:resolve reject:reject];
+    [CloudSyncImpl.shared kvGetAllKeysWithResolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -219,7 +219,7 @@ RCT_EXPORT_METHOD(kvGetAllKeys:(RCTPromiseResolveBlock)resolve rejecter:(RCTProm
 
 - (void)kvSync:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared kvSyncWithResolve:resolve reject:reject];
+    [CloudSyncImpl.shared kvSyncWithResolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -231,7 +231,7 @@ RCT_EXPORT_METHOD(kvSync:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRej
 
 - (void)ckGetRecord:(NSString *)recordType recordName:(NSString *)recordName zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckGetRecord:recordType recordName:recordName zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckGetRecord:recordType recordName:recordName zoneName:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -243,7 +243,7 @@ RCT_EXPORT_METHOD(ckGetRecord:(NSString *)recordType recordName:(NSString *)reco
 
 - (void)ckSaveRecord:(NSString *)recordType recordName:(NSString *)recordName value:(NSString *)value zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckSaveRecord:recordType recordName:recordName value:value zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckSaveRecord:recordType recordName:recordName value:value zoneName:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -255,7 +255,7 @@ RCT_EXPORT_METHOD(ckSaveRecord:(NSString *)recordType recordName:(NSString *)rec
 
 - (void)ckDeleteRecord:(NSString *)recordName zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckDeleteRecord:recordName zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckDeleteRecord:recordName zoneName:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -267,7 +267,7 @@ RCT_EXPORT_METHOD(ckDeleteRecord:(NSString *)recordName zoneName:(NSString *)zon
 
 - (void)ckQueryRecordNames:(NSString *)recordType zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckQueryRecordNames:recordType zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckQueryRecordNames:recordType zoneName:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -279,7 +279,7 @@ RCT_EXPORT_METHOD(ckQueryRecordNames:(NSString *)recordType zoneName:(NSString *
 
 - (void)ckCreateZone:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckCreateZone:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckCreateZone:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -291,7 +291,7 @@ RCT_EXPORT_METHOD(ckCreateZone:(NSString *)zoneName resolver:(RCTPromiseResolveB
 
 - (void)ckDeleteZone:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckDeleteZone:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckDeleteZone:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -303,7 +303,7 @@ RCT_EXPORT_METHOD(ckDeleteZone:(NSString *)zoneName resolver:(RCTPromiseResolveB
 
 - (void)ckListZones:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckListZonesWithResolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckListZonesWithResolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -315,7 +315,7 @@ RCT_EXPORT_METHOD(ckListZones:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromi
 
 - (void)ckSaveAsset:(NSString *)recordType recordName:(NSString *)recordName fieldName:(NSString *)fieldName fileUri:(NSString *)fileUri zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckSaveAsset:recordType recordName:recordName fieldName:fieldName fileUri:fileUri zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckSaveAsset:recordType recordName:recordName fieldName:fieldName fileUri:fileUri zoneName:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -327,7 +327,7 @@ RCT_EXPORT_METHOD(ckSaveAsset:(NSString *)recordType recordName:(NSString *)reco
 
 - (void)ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fieldName zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudStorageImpl.shared ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -339,13 +339,13 @@ RCT_EXPORT_METHOD(ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fiel
 
 - (void)setLogsEnabled:(BOOL)enabled
 {
-    [CloudStorageImpl.shared setLogsEnabled:enabled];
+    [CloudSyncImpl.shared setLogsEnabled:enabled];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
 RCT_EXPORT_METHOD(setLogsEnabled:(BOOL)enabled)
 {
-    [CloudStorageImpl.shared setLogsEnabled:enabled];
+    [CloudSyncImpl.shared setLogsEnabled:enabled];
 }
 #endif
 
@@ -353,7 +353,7 @@ RCT_EXPORT_METHOD(setLogsEnabled:(BOOL)enabled)
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params
 {
-    return std::make_shared<facebook::react::NativeRNCloudStorageSpecJSI>(params);
+    return std::make_shared<facebook::react::NativeRNCloudSyncSpecJSI>(params);
 }
 #endif
 

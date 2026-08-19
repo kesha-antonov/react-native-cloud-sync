@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Platform, ScrollView, Text, View } from 'react-native'
 
-import { icloudKV, icloudKVSync } from '@kesha-antonov/react-native-cloud-storage'
+import { icloudKV, icloudKVSync } from '@kesha-antonov/react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'

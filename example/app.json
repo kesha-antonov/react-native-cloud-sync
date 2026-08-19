@@ -1,17 +1,17 @@
 {
   "expo": {
     "name": "Cloud Storage Example",
-    "slug": "react-native-cloud-storage-example",
+    "slug": "react-native-cloud-sync-example",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.reactnativecloudstorage"
+      "bundleIdentifier": "com.example.reactnativecloudsync"
     },
     "android": {
-      "package": "com.example.reactnativecloudstorage"
+      "package": "com.example.reactnativecloudsync"
     },
     "web": {
       "bundler": "metro"
@@ -19,9 +19,9 @@
     "plugins": [
       "expo-status-bar",
       [
-        "@kesha-antonov/react-native-cloud-storage",
+        "@kesha-antonov/react-native-cloud-sync",
         {
-          "containerIdentifier": "iCloud.com.example.reactnativecloudstorage"
+          "containerIdentifier": "iCloud.com.example.reactnativecloudsync"
         }
       ]
     ]

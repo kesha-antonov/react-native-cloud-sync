@@ -3,7 +3,7 @@
  *
  * Deliberately a real package entry point:
  *
- *   import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-storage/testing'
+ *   import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
  *
  * expo-cloudkit ships a comparable mock factory but never exports it from the
  * package (its own source says "Import them directly from 'expo-cloudkit/src/testing'
@@ -18,5 +18,5 @@ export {
   type MemoryProviderOptions
 } from './providers/memory'
 
-export { ErrorCode, CloudStorageError, isCloudStorageError } from './errors'
+export { ErrorCode, CloudSyncError, isCloudSyncError } from './errors'
 export type { AccountStatus, ChangeReason, CloudProvider } from './types'

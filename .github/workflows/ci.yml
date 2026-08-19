@@ -84,7 +84,7 @@ jobs:
           RCT_NEW_ARCH_ENABLED: '1'
         run: pod install
 
-      # The first thing that actually compiles ios/RNCloudStorage.mm and the
+      # The first thing that actually compiles ios/RNCloudSync.mm and the
       # Swift implementation behind it. Everything else in this workflow is
       # JavaScript.
       - name: Build

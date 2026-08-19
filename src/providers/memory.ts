@@ -1,4 +1,4 @@
-import { CloudStorageError, ErrorCode } from '../errors'
+import { CloudSyncError, ErrorCode } from '../errors'
 import type {
   AccountChangeEvent,
   AccountStatus,
@@ -65,7 +65,7 @@ export interface MemoryProvider extends CloudProvider {
  * account switched mid-session) are effectively never exercised.
  *
  * So they are exercised here instead, deterministically, in Jest. This is
- * exported from the package entry (`@kesha-antonov/react-native-cloud-storage/testing`)
+ * exported from the package entry (`@kesha-antonov/react-native-cloud-sync/testing`)
  * rather than buried in source, so it is usable without reaching into internals.
  */
 export function createMemoryProvider(options: MemoryProviderOptions = {}): MemoryProvider {
@@ -101,9 +101,9 @@ export function createMemoryProvider(options: MemoryProviderOptions = {}): Memor
       remaining.set(op, left - 1)
     }
 
-    throw new CloudStorageError(
+    throw new CloudSyncError(
       fault.code,
-      fault.message ?? `[RNCloudStorage] Injected ${fault.code} on ${op}`,
+      fault.message ?? `[RNCloudSync] Injected ${fault.code} on ${op}`,
       {
         provider: NAME,
         retryAfterMs: fault.retryAfterMs,

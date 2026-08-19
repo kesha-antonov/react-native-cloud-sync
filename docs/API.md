@@ -1,6 +1,6 @@
 # API Reference
 
-Every operation rejects with a [`CloudStorageError`](#errors) on failure. `getItem` resolves `null` for exactly one condition: the key does not exist.
+Every operation rejects with a [`CloudSyncError`](#errors) on failure. `getItem` resolves `null` for exactly one condition: the key does not exist.
 
 ## Providers
 
@@ -27,7 +27,7 @@ interface CloudProvider {
 Limits, enforced locally rather than left to fail server-side: **1 MB total**, **1 MB per key**, **1024 keys**.
 
 ```ts
-import { icloudKV, icloudKVSync } from '@kesha-antonov/react-native-cloud-storage'
+import { icloudKV, icloudKVSync } from '@kesha-antonov/react-native-cloud-sync'
 
 await icloudKV.setItem('settings/theme', 'dark')
 await icloudKVSync() // schedules an upload; does NOT confirm one
@@ -38,7 +38,7 @@ await icloudKVSync() // schedules an upload; does NOT confirm one
 CloudKit private database. Native on iOS/macOS, REST on Android and web (requires `configureCloudKit`).
 
 ```ts
-import { cloudKit, cloudKitZones } from '@kesha-antonov/react-native-cloud-storage'
+import { cloudKit, cloudKitZones } from '@kesha-antonov/react-native-cloud-sync'
 
 await cloudKit.setItem('portfolio', json)
 
@@ -133,7 +133,7 @@ try {
 Helpers:
 
 ```ts
-isCloudStorageError(e)   // shape-based guard, works on bridged plain objects
+isCloudSyncError(e)   // shape-based guard, works on bridged plain objects
 isRetryable(e)           // worth retrying automatically
 requiresUserAction(e)    // needs the user to do something
 ```
@@ -172,7 +172,7 @@ Five values, not a boolean: "temporarily unavailable" means retry silently, "no 
 ## Testing
 
 ```ts
-import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-storage/testing'
+import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
 
 const provider = createMemoryProvider({
   initial: { 'k': 'v' },

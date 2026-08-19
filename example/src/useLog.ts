@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
-import { isCloudStorageError } from '@kesha-antonov/react-native-cloud-storage'
+import { isCloudSyncError } from '@kesha-antonov/react-native-cloud-sync'
 
 import type { LogEntry } from './components/LogView'
 
@@ -35,7 +35,7 @@ export function useLog() {
    * The demo shows the code, so that difference is visible on screen.
    */
   const fail = useCallback((label: string, e: unknown) => {
-    if (isCloudStorageError(e)) {
+    if (isCloudSyncError(e)) {
       const extra: string[] = []
       if (e.retryAfterMs != null) extra.push(`retryAfterMs=${e.retryAfterMs}`)
       if (e.limitBytes != null) extra.push(`limit=${e.limitBytes}`)

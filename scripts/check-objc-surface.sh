@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that every Swift member ios/RNCloudStorage.mm calls is actually
+# Verifies that every Swift member ios/RNCloudSync.mm calls is actually
 # exposed to Objective-C.
 #
 # Swift does not export members to Objective-C just because the class is @objc
@@ -27,14 +27,14 @@ xcrun swiftc -emit-objc-header \
   -emit-module -emit-module-path "$OUT/mod.swiftmodule" \
   -sdk "$SDK" \
   -target arm64-apple-ios15.1-simulator \
-  -module-name react_native_cloud_storage \
+  -module-name react_native_cloud_sync \
   "$IOS"/*.swift
 
-# Every `[CloudStorageImpl.shared <selector>` and `CloudStorageImpl.shared.<prop>`
+# Every `[CloudSyncImpl.shared <selector>` and `CloudSyncImpl.shared.<prop>`
 # the bridge uses.
-SELECTORS=$(grep -oE '\[CloudStorageImpl\.shared [a-zA-Z]+' "$IOS/RNCloudStorage.mm" \
+SELECTORS=$(grep -oE '\[CloudSyncImpl\.shared [a-zA-Z]+' "$IOS/RNCloudSync.mm" \
   | awk '{print $2}' | sort -u)
-PROPERTIES=$(grep -oE 'CloudStorageImpl\.shared\.[a-zA-Z]+' "$IOS/RNCloudStorage.mm" \
+PROPERTIES=$(grep -oE 'CloudSyncImpl\.shared\.[a-zA-Z]+' "$IOS/RNCloudSync.mm" \
   | sed 's/.*\.//' | sort -u)
 
 missing=0
@@ -59,7 +59,7 @@ for prop in $PROPERTIES; do
 done
 
 if ! grep -q "shared" "$OUT/gen-Swift.h"; then
-  echo "  MISSING CloudStorageImpl.shared is not exposed to Objective-C" >&2
+  echo "  MISSING CloudSyncImpl.shared is not exposed to Objective-C" >&2
   missing=1
 fi
 

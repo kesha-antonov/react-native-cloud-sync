@@ -25,7 +25,12 @@ def folly_compiler_flags
   '-DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1'
 end
 
-PODSPEC = File.expand_path('../react-native-cloud-storage.podspec', __dir__)
+# Globbed rather than hardcoded, so a package rename cannot silently turn this
+# check into a no-op that "passes" against a file that no longer exists.
+PODSPECS = Dir[File.expand_path('../*.podspec', __dir__)]
+abort 'validate-podspec: no .podspec found at the repository root' if PODSPECS.empty?
+abort "validate-podspec: expected exactly one podspec, found #{PODSPECS.size}" if PODSPECS.size > 1
+PODSPEC = PODSPECS.first
 
 failures = []
 

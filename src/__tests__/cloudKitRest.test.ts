@@ -1,5 +1,5 @@
 import { CloudKitRestClient, byteLength } from '../internal/cloudKitRest'
-import { ErrorCode, isCloudStorageError } from '../errors'
+import { ErrorCode, isCloudSyncError } from '../errors'
 
 interface FetchCall { url: string; body: unknown }
 
@@ -101,7 +101,7 @@ describe('error mapping', () => {
       throw new Error('should have rejected')
     }
     catch (e) {
-      expect(isCloudStorageError(e)).toBe(true)
+      expect(isCloudSyncError(e)).toBe(true)
       expect((e as { code: string }).code).toBe(ErrorCode.RATE_LIMITED)
       expect((e as { retryAfterMs?: number }).retryAfterMs).toBe(30_000)
     }

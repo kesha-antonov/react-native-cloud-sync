@@ -1,4 +1,4 @@
-import { CloudStorageError, ErrorCode } from '../errors'
+import { CloudSyncError, ErrorCode } from '../errors'
 
 /**
  * CloudKit Web Services REST client.
@@ -88,7 +88,7 @@ interface CloudKitResponse {
 const EXISTS_CODES = new Set(['EXISTS', 'CONFLICT', 'ATOMIC_ERROR'])
 
 function isAlreadyExists(e: unknown): boolean {
-  if (!(e instanceof CloudStorageError)) return false
+  if (!(e instanceof CloudSyncError)) return false
   if (e.serverErrorCode != null) return EXISTS_CODES.has(e.serverErrorCode)
   return e.code === ErrorCode.CONFLICT
 }
@@ -111,18 +111,18 @@ export class CloudKitRestClient {
 
   private async requireAuthToken(): Promise<string> {
     if (!this.config.apiToken)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.CONTAINER_MISCONFIGURED,
-        '[RNCloudStorage] No CloudKit API token configured. Create a Client token in the '
+        '[RNCloudSync] No CloudKit API token configured. Create a Client token in the '
         + 'CloudKit Console under API Access and pass it to configureCloudKit().',
         { provider: 'cloudKit' }
       )
 
     const token = await this.config.getAuthToken()
     if (!token)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.NOT_SIGNED_IN,
-        '[RNCloudStorage] No CloudKit web auth token. The user must sign in with their '
+        '[RNCloudSync] No CloudKit web auth token. The user must sign in with their '
         + 'Apple ID before the private database can be reached.',
         { provider: 'cloudKit' }
       )
@@ -143,8 +143,8 @@ export class CloudKitRestClient {
     reason: string | undefined,
     retryAfter: number | undefined,
     serverValue?: string | null
-  ): Promise<CloudStorageError> {
-    const message = `[RNCloudStorage] CloudKit: ${code ?? 'unknown'}${reason ? ` - ${reason}` : ''}`
+  ): Promise<CloudSyncError> {
+    const message = `[RNCloudSync] CloudKit: ${code ?? 'unknown'}${reason ? ` - ${reason}` : ''}`
     const provider = 'cloudKit'
     const base = { provider, serverErrorCode: code }
 
@@ -152,25 +152,25 @@ export class CloudKitRestClient {
       case 'AUTHENTICATION_REQUIRED':
       case 'AUTHENTICATION_FAILED':
         await this.handleAuthExpired()
-        return new CloudStorageError(ErrorCode.AUTH_EXPIRED, message, base)
+        return new CloudSyncError(ErrorCode.AUTH_EXPIRED, message, base)
       case 'ACCESS_DENIED':
         await this.handleAuthExpired()
-        return new CloudStorageError(ErrorCode.AUTH_EXPIRED, message, base)
+        return new CloudSyncError(ErrorCode.AUTH_EXPIRED, message, base)
       case 'QUOTA_EXCEEDED':
-        return new CloudStorageError(ErrorCode.QUOTA_EXCEEDED, message, base)
+        return new CloudSyncError(ErrorCode.QUOTA_EXCEEDED, message, base)
       case 'THROTTLED':
       case 'TRY_AGAIN_LATER':
-        return new CloudStorageError(ErrorCode.RATE_LIMITED, message, {
+        return new CloudSyncError(ErrorCode.RATE_LIMITED, message, {
           ...base,
           retryAfterMs: retryAfter != null ? retryAfter * 1000 : undefined,
         })
       case 'CONFLICT':
-        return new CloudStorageError(ErrorCode.CONFLICT, message, { ...base, serverValue })
+        return new CloudSyncError(ErrorCode.CONFLICT, message, { ...base, serverValue })
       case 'BAD_REQUEST':
       case 'ZONE_NOT_FOUND':
-        return new CloudStorageError(ErrorCode.CONTAINER_MISCONFIGURED, message, base)
+        return new CloudSyncError(ErrorCode.CONTAINER_MISCONFIGURED, message, base)
       default:
-        return new CloudStorageError(ErrorCode.UNKNOWN, message, base)
+        return new CloudSyncError(ErrorCode.UNKNOWN, message, base)
     }
   }
 
@@ -190,9 +190,9 @@ export class CloudKitRestClient {
       })
     }
     catch (e) {
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.NETWORK_UNAVAILABLE,
-        '[RNCloudStorage] CloudKit request failed to reach the server.',
+        '[RNCloudSync] CloudKit request failed to reach the server.',
         { provider: 'cloudKit', cause: e }
       )
     }
@@ -209,22 +209,22 @@ export class CloudKitRestClient {
       // HTTP-level failure with no parseable CloudKit error body.
       if (res.status === 401 || res.status === 421) {
         await this.handleAuthExpired()
-        throw new CloudStorageError(
+        throw new CloudSyncError(
           ErrorCode.AUTH_EXPIRED,
-          `[RNCloudStorage] CloudKit returned HTTP ${res.status}; the web auth token is no longer valid.`,
+          `[RNCloudSync] CloudKit returned HTTP ${res.status}; the web auth token is no longer valid.`,
           { provider: 'cloudKit' }
         )
       }
       if (res.status === 429 || res.status === 503)
-        throw new CloudStorageError(
+        throw new CloudSyncError(
           ErrorCode.RATE_LIMITED,
-          `[RNCloudStorage] CloudKit returned HTTP ${res.status}.`,
+          `[RNCloudSync] CloudKit returned HTTP ${res.status}.`,
           { provider: 'cloudKit' }
         )
 
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.UNKNOWN,
-        `[RNCloudStorage] CloudKit returned HTTP ${res.status}.`,
+        `[RNCloudSync] CloudKit returned HTTP ${res.status}.`,
         { provider: 'cloudKit' }
       )
     }
@@ -261,9 +261,9 @@ export class CloudKitRestClient {
   ): Promise<void> {
     const bytes = byteLength(value)
     if (bytes > MAX_RECORD_BYTES)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.PAYLOAD_TOO_LARGE,
-        `[RNCloudStorage] Value is ${bytes} bytes; CloudKit records are limited to ${MAX_RECORD_BYTES}. `
+        `[RNCloudSync] Value is ${bytes} bytes; CloudKit records are limited to ${MAX_RECORD_BYTES}. `
         + `Use the store facade with tiering enabled to route large values to a CKAsset.`,
         { provider: 'cloudKit', limitBytes: MAX_RECORD_BYTES, actualBytes: bytes }
       )

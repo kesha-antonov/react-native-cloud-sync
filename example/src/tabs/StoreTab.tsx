@@ -6,7 +6,7 @@ import {
   createMemoryProvider,
   DEFAULT_TIERING,
   type OutboxEntry,
-} from '@kesha-antonov/react-native-cloud-storage'
+} from '@kesha-antonov/react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'

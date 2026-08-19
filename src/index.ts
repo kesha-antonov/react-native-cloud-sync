@@ -1,5 +1,5 @@
 /**
- * @kesha-antonov/react-native-cloud-storage
+ * @kesha-antonov/react-native-cloud-sync
  *
  * iCloud key-value store, CloudKit and Google Drive behind one API, on iOS,
  * Android and the web, on both React Native architectures.
@@ -27,13 +27,13 @@ export type { GoogleDriveConfig } from './internal/googleDriveRest'
 
 // Errors - the part callers branch on.
 export {
-  CloudStorageError,
+  CloudSyncError,
   ErrorCode,
-  isCloudStorageError,
+  isCloudSyncError,
   isRetryable,
   requiresUserAction
 } from './errors'
-export type { CloudStorageErrorInfo } from './errors'
+export type { CloudSyncErrorInfo } from './errors'
 
 export type {
   AccountChangeEvent,

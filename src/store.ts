@@ -2,7 +2,7 @@ import { icloudKV } from './providers/icloudKV'
 import { cloudKit } from './providers/cloudKit'
 import { googleDrive } from './providers/googleDrive'
 import { byteLength } from './internal/cloudKitRest'
-import { CloudStorageError, ErrorCode, isRetryable, normalizeError } from './errors'
+import { CloudSyncError, ErrorCode, isRetryable, normalizeError } from './errors'
 import {
   DEFAULT_TIERING,
   type CloudProvider,
@@ -64,9 +64,9 @@ export function createCloudStore(
   function resolve(name: ProviderName): CloudProvider {
     const found = custom.get(name) ?? (BUILT_IN as Record<string, CloudProvider>)[name]
     if (found == null)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.CONTAINER_MISCONFIGURED,
-        `[RNCloudStorage] Unknown provider '${name}'. Register it with registerProvider() first.`
+        `[RNCloudSync] Unknown provider '${name}'. Register it with registerProvider() first.`
       )
 
     return found
@@ -78,9 +78,9 @@ export function createCloudStore(
       const p = resolve(name)
       if (await p.isAvailable()) return p
     }
-    throw new CloudStorageError(
+    throw new CloudSyncError(
       ErrorCode.NOT_SIGNED_IN,
-      `[RNCloudStorage] None of the configured providers (${options.providers.join(', ')}) `
+      `[RNCloudSync] None of the configured providers (${options.providers.join(', ')}) `
       + `is currently available.`
     )
   }
@@ -130,9 +130,9 @@ export function createCloudStore(
     if (preferred.name === 'icloudKV' && bytes > tiering.kvMaxBytes) {
       const fallback = options.providers.find(n => n === 'cloudKit' || n === 'googleDrive')
       if (fallback != null) return resolve(fallback)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.PAYLOAD_TOO_LARGE,
-        `[RNCloudStorage] Value is ${bytes} bytes, above the ${tiering.kvMaxBytes}-byte key-value `
+        `[RNCloudSync] Value is ${bytes} bytes, above the ${tiering.kvMaxBytes}-byte key-value `
         + `limit, and no larger-capacity provider is configured. Add 'cloudKit' or 'googleDrive' `
         + `to providers.`,
         { limitBytes: tiering.kvMaxBytes, actualBytes: bytes, provider: preferred.name }

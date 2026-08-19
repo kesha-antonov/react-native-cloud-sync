@@ -2,7 +2,7 @@ import type { CloudKitRestConfig } from './internal/cloudKitRest'
 import { CloudKitRestClient } from './internal/cloudKitRest'
 import type { GoogleDriveConfig } from './internal/googleDriveRest'
 import { GoogleDriveClient } from './internal/googleDriveRest'
-import { CloudStorageError, ErrorCode } from './errors'
+import { CloudSyncError, ErrorCode } from './errors'
 
 let cloudKitClient: CloudKitRestClient | null = null
 let driveClient: GoogleDriveClient | null = null
@@ -20,9 +20,9 @@ export function configureCloudKit(config: CloudKitRestConfig): void {
 
 export function getCloudKitClient(): CloudKitRestClient {
   if (cloudKitClient == null)
-    throw new CloudStorageError(
+    throw new CloudSyncError(
       ErrorCode.CONTAINER_MISCONFIGURED,
-      '[RNCloudStorage] CloudKit is not configured on this platform. Call configureCloudKit({ '
+      '[RNCloudSync] CloudKit is not configured on this platform. Call configureCloudKit({ '
       + 'containerIdentifier, apiToken, environment, getAuthToken }) before using the cloudKit '
       + 'provider on Android or web.',
       { provider: 'cloudKit' }
@@ -42,9 +42,9 @@ export function configureGoogleDrive(config: GoogleDriveConfig): void {
 
 export function getGoogleDriveClient(): GoogleDriveClient {
   if (driveClient == null)
-    throw new CloudStorageError(
+    throw new CloudSyncError(
       ErrorCode.CONTAINER_MISCONFIGURED,
-      '[RNCloudStorage] Google Drive is not configured. Call configureGoogleDrive({ '
+      '[RNCloudSync] Google Drive is not configured. Call configureGoogleDrive({ '
       + 'getAccessToken }) before using the googleDrive provider.',
       { provider: 'googleDrive' }
     )

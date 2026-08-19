@@ -3,7 +3,7 @@ import Foundation
 
 /// The error vocabulary, kept identical to `src/errors.ts` and to the Kotlin
 /// side. These strings are public API - apps branch on them.
-@objc public class CloudStorageErrorCode: NSObject {
+@objc public class CloudSyncErrorCode: NSObject {
     @objc public static let notSignedIn = "ERR_NOT_SIGNED_IN"
     @objc public static let accountRestricted = "ERR_ACCOUNT_RESTRICTED"
     @objc public static let accountUnavailable = "ERR_ACCOUNT_UNAVAILABLE"
@@ -20,7 +20,7 @@ import Foundation
     @objc public static let unknown = "ERR_UNKNOWN"
 }
 
-enum CloudStorageError: Error {
+enum CloudSyncError: Error {
     case coded(code: String, message: String, info: [String: Any])
 
     var code: String {
@@ -46,14 +46,14 @@ enum CloudStorageError: Error {
     var asNSError: NSError {
         var userInfo: [String: Any] = info
         userInfo[NSLocalizedDescriptionKey] = message
-        return NSError(domain: "RNCloudStorage", code: 0, userInfo: userInfo)
+        return NSError(domain: "RNCloudSync", code: 0, userInfo: userInfo)
     }
 
-    static func from(_ error: Error) -> CloudStorageError {
-        if let already = error as? CloudStorageError { return already }
+    static func from(_ error: Error) -> CloudSyncError {
+        if let already = error as? CloudSyncError { return already }
         guard let ckError = error as? CKError else {
             return .coded(
-                code: CloudStorageErrorCode.unknown,
+                code: CloudSyncErrorCode.unknown,
                 message: error.localizedDescription,
                 info: [:]
             )
@@ -66,7 +66,7 @@ enum CloudStorageError: Error {
     /// The mapping matters more than it looks: collapsing these into one failure
     /// (or into `nil`) is what makes a signed-out user indistinguishable from an
     /// empty backup, which is the defect this whole package exists to avoid.
-    static func fromCKError(_ error: CKError) -> CloudStorageError {
+    static func fromCKError(_ error: CKError) -> CloudSyncError {
         var info: [String: Any] = [:]
         if let retryAfter = error.userInfo[CKErrorRetryAfterKey] as? Double {
             info["retryAfterMs"] = retryAfter * 1000
@@ -75,65 +75,65 @@ enum CloudStorageError: Error {
         switch error.code {
         case .notAuthenticated:
             return .coded(
-                code: CloudStorageErrorCode.notSignedIn,
+                code: CloudSyncErrorCode.notSignedIn,
                 message: "No iCloud account is signed in on this device.",
                 info: info
             )
         case .managedAccountRestricted, .permissionFailure:
             return .coded(
-                code: CloudStorageErrorCode.accountRestricted,
+                code: CloudSyncErrorCode.accountRestricted,
                 message: "This iCloud account is restricted from using CloudKit.",
                 info: info
             )
         case .networkUnavailable, .networkFailure, .serviceUnavailable:
             return .coded(
-                code: CloudStorageErrorCode.networkUnavailable,
+                code: CloudSyncErrorCode.networkUnavailable,
                 message: "Could not reach iCloud: \(error.localizedDescription)",
                 info: info
             )
         case .quotaExceeded:
             return .coded(
-                code: CloudStorageErrorCode.quotaExceeded,
+                code: CloudSyncErrorCode.quotaExceeded,
                 message: "The iCloud account is out of storage.",
                 info: info
             )
         case .requestRateLimited, .zoneBusy:
             return .coded(
-                code: CloudStorageErrorCode.rateLimited,
+                code: CloudSyncErrorCode.rateLimited,
                 message: "CloudKit is rate limiting requests.",
                 info: info
             )
         case .limitExceeded:
             return .coded(
-                code: CloudStorageErrorCode.payloadTooLarge,
+                code: CloudSyncErrorCode.payloadTooLarge,
                 message: "The record exceeds CloudKit's size limit.",
                 info: info
             )
         case .serverRecordChanged:
             if let server = error.userInfo[CKRecordChangedErrorServerRecordKey] as? CKRecord,
-               let value = server[CloudStorageImpl.valueField] as? String {
+               let value = server[CloudSyncImpl.valueField] as? String {
                 info["serverValue"] = value
             }
             return .coded(
-                code: CloudStorageErrorCode.conflict,
+                code: CloudSyncErrorCode.conflict,
                 message: "A newer version of this record exists on the server.",
                 info: info
             )
         case .badContainer, .missingEntitlement, .badDatabase:
             return .coded(
-                code: CloudStorageErrorCode.containerMisconfigured,
+                code: CloudSyncErrorCode.containerMisconfigured,
                 message: "CloudKit container or entitlement problem: \(error.localizedDescription)",
                 info: info
             )
         case .operationCancelled:
             return .coded(
-                code: CloudStorageErrorCode.cancelled,
+                code: CloudSyncErrorCode.cancelled,
                 message: "The CloudKit operation was cancelled.",
                 info: info
             )
         default:
             return .coded(
-                code: CloudStorageErrorCode.unknown,
+                code: CloudSyncErrorCode.unknown,
                 message: error.localizedDescription,
                 info: info
             )

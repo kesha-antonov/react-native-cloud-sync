@@ -1,4 +1,4 @@
-import { CloudStorageError, ErrorCode } from '../errors'
+import { CloudSyncError, ErrorCode } from '../errors'
 
 /**
  * Google Drive `appDataFolder` REST client.
@@ -57,9 +57,9 @@ export class GoogleDriveClient {
   private async requireToken(): Promise<string> {
     const token = await this.config.getAccessToken()
     if (!token)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.NOT_SIGNED_IN,
-        '[RNCloudStorage] No Google Drive access token. Connect a Google account first.',
+        '[RNCloudSync] No Google Drive access token. Connect a Google account first.',
         { provider: 'googleDrive' }
       )
 
@@ -76,9 +76,9 @@ export class GoogleDriveClient {
       res = await this.fetch(url, { ...init, headers })
     }
     catch (e) {
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.NETWORK_UNAVAILABLE,
-        '[RNCloudStorage] Google Drive request failed to reach the server.',
+        '[RNCloudSync] Google Drive request failed to reach the server.',
         { provider: 'googleDrive', cause: e }
       )
     }
@@ -87,17 +87,17 @@ export class GoogleDriveClient {
 
     if (res.status === 401 || res.status === 403) {
       await this.config.onAuthExpired?.()
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.AUTH_EXPIRED,
-        `[RNCloudStorage] Google Drive returned HTTP ${res.status}; the access token is not valid.`,
+        `[RNCloudSync] Google Drive returned HTTP ${res.status}; the access token is not valid.`,
         { provider: 'googleDrive' }
       )
     }
     if (res.status === 429) {
       const retryAfter = Number(res.headers.get('Retry-After'))
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.RATE_LIMITED,
-        '[RNCloudStorage] Google Drive rate limited the request.',
+        '[RNCloudSync] Google Drive rate limited the request.',
         {
           provider: 'googleDrive',
           retryAfterMs: Number.isFinite(retryAfter) ? retryAfter * 1000 : undefined,
@@ -105,15 +105,15 @@ export class GoogleDriveClient {
       )
     }
     if (res.status === 507)
-      throw new CloudStorageError(
+      throw new CloudSyncError(
         ErrorCode.QUOTA_EXCEEDED,
-        '[RNCloudStorage] Google Drive storage quota exceeded.',
+        '[RNCloudSync] Google Drive storage quota exceeded.',
         { provider: 'googleDrive' }
       )
 
-    throw new CloudStorageError(
+    throw new CloudSyncError(
       ErrorCode.UNKNOWN,
-      `[RNCloudStorage] Google Drive returned HTTP ${res.status}.`,
+      `[RNCloudSync] Google Drive returned HTTP ${res.status}.`,
       { provider: 'googleDrive' }
     )
   }

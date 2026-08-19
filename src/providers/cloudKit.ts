@@ -14,7 +14,7 @@ import type {
 import type {
   AccountChangeNativeEvent,
   RemoteChangeNativeEvent,
-} from '../specs/NativeRNCloudStorage'
+} from '../specs/NativeRNCloudSync'
 
 const NAME = 'cloudKit' as const
 

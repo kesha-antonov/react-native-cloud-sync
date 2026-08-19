@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.homepage     = package['repository']['url']
   s.license      = package['license']
   s.author       = package['author']
-  s.source       = { git: 'https://github.com/kesha-antonov/react-native-cloud-storage.git', tag: "v#{s.version}" }
+  s.source       = { git: 'https://github.com/kesha-antonov/react-native-cloud-sync.git', tag: "v#{s.version}" }
 
   # iOS only as a declared platform - Mac Catalyst builds from this same slice
   # (SUPPORTS_MACCATALYST), it is not a separate platform entry. 15.1 matches
@@ -32,7 +32,7 @@ Pod::Spec.new do |s|
   # Pod::Specification with no matching reader, so it cannot be read back and
   # merged into.
   xcconfig = {
-    # Required so the generated `react_native_cloud_storage-Swift.h` exists for
+    # Required so the generated `react_native_cloud_sync-Swift.h` exists for
     # the Objective-C++ bridge to import.
     'DEFINES_MODULE' => 'YES',
     'SWIFT_VERSION' => '5.0'

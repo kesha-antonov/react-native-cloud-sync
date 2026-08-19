@@ -12,7 +12,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
 const OUT = join(HERE, '..', 'docs')
 
-const REPO = 'https://github.com/kesha-antonov/react-native-cloud-storage'
+const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
 
 /**
  * Canonical key for a heading.

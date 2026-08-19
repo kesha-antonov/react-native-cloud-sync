@@ -15,7 +15,7 @@ Initial release.
   writes to, reached over CloudKit Web Services. The REST client is shared by
   both platforms and needs no crypto, so it avoids the missing-`crypto` problem
   that stalled earlier CloudKit JS attempts in React Native.
-- **A typed error contract.** Every failure rejects with a `CloudStorageError`
+- **A typed error contract.** Every failure rejects with a `CloudSyncError`
   carrying a stable `code`, plus `retryAfterMs`, `limitBytes`/`actualBytes` or
   `serverValue` where relevant. `null` is returned for exactly one condition -
   the key does not exist. `isRetryable()` and `requiresUserAction()` classify a

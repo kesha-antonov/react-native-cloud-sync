@@ -64,18 +64,18 @@ jest.mock('react-native', () => ({
   get Platform () {
     return { OS: state.platform, select: objs => objs[state.platform] ?? objs.default }
   },
-  NativeModules: { RNCloudStorage: mockModule },
+  NativeModules: { RNCloudSync: mockModule },
   TurboModuleRegistry: {
     get: () => state.turboModule,
     getEnforcing: () => {
-      if (state.turboModule == null) throw new Error('TurboModule RNCloudStorage not found')
+      if (state.turboModule == null) throw new Error('TurboModule RNCloudSync not found')
       return state.turboModule
     },
   },
   NativeEventEmitter: MockNativeEventEmitter,
 }))
 
-global.__RNCloudStorage = {
+global.__RNCloudSync = {
   module: mockModule,
   /** Fire a native event, as the old-architecture emitter would. */
   emit (name, payload) {

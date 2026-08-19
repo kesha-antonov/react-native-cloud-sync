@@ -16,15 +16,15 @@
  * The rule that prevents both, and that every provider in this package obeys:
  *
  *   `null` is returned for exactly one condition - the key genuinely does not
- *   exist. Every other outcome rejects with a `CloudStorageError` carrying a
+ *   exist. Every other outcome rejects with a `CloudSyncError` carrying a
  *   stable `code`.
  */
 
 /**
  * Stable, cross-platform failure codes.
  *
- * These strings are duplicated in `ios/CloudStorageError.swift` and
- * `android/.../CloudStorageErrors.kt`. They are part of the public API: apps
+ * These strings are duplicated in `ios/CloudSyncError.swift` and
+ * `android/.../CloudSyncErrors.kt`. They are part of the public API: apps
  * branch on them, so treat a change here as a breaking change.
  */
 export const ErrorCode = {
@@ -64,7 +64,7 @@ export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode]
 
 const ALL_CODES: readonly string[] = Object.values(ErrorCode)
 
-export interface CloudStorageErrorInfo {
+export interface CloudSyncErrorInfo {
   /** Milliseconds to wait before retrying. Set on {@link ErrorCode.RATE_LIMITED}. */
   retryAfterMs?: number
   /** The store's size limit in bytes. Set on {@link ErrorCode.PAYLOAD_TOO_LARGE}. */
@@ -90,9 +90,9 @@ export interface CloudStorageErrorInfo {
  *
  * `instanceof` is deliberately not the recommended check - a rejected promise
  * crossing the React Native bridge arrives as a plain object on some paths, so
- * {@link isCloudStorageError} tests the shape instead.
+ * {@link isCloudSyncError} tests the shape instead.
  */
-export class CloudStorageError extends Error implements CloudStorageErrorInfo {
+export class CloudSyncError extends Error implements CloudSyncErrorInfo {
   readonly code: ErrorCode
   readonly retryAfterMs?: number
   readonly limitBytes?: number
@@ -102,9 +102,9 @@ export class CloudStorageError extends Error implements CloudStorageErrorInfo {
   readonly serverErrorCode?: string
   readonly cause?: unknown
 
-  constructor(code: ErrorCode, message: string, info: CloudStorageErrorInfo = {}) {
+  constructor(code: ErrorCode, message: string, info: CloudSyncErrorInfo = {}) {
     super(message)
-    this.name = 'CloudStorageError'
+    this.name = 'CloudSyncError'
     this.code = code
     this.retryAfterMs = info.retryAfterMs
     this.limitBytes = info.limitBytes
@@ -115,13 +115,13 @@ export class CloudStorageError extends Error implements CloudStorageErrorInfo {
     this.cause = info.cause
 
     // Restore the prototype chain: TypeScript's ES5 downlevel of `extends Error`
-    // otherwise leaves `instanceof CloudStorageError` false.
-    Object.setPrototypeOf(this, CloudStorageError.prototype)
+    // otherwise leaves `instanceof CloudSyncError` false.
+    Object.setPrototypeOf(this, CloudSyncError.prototype)
   }
 }
 
 /** Narrowing guard that works on both real instances and bridged plain objects. */
-export function isCloudStorageError(e: unknown): e is CloudStorageError {
+export function isCloudSyncError(e: unknown): e is CloudSyncError {
   if (e == null || typeof e !== 'object') return false
   const code = (e as { code?: unknown }).code
   return typeof code === 'string' && ALL_CODES.includes(code)
@@ -129,7 +129,7 @@ export function isCloudStorageError(e: unknown): e is CloudStorageError {
 
 /** True when retrying the same call later could plausibly succeed. */
 export function isRetryable(e: unknown): boolean {
-  if (!isCloudStorageError(e)) return false
+  if (!isCloudSyncError(e)) return false
   switch (e.code) {
     case ErrorCode.NETWORK_UNAVAILABLE:
     case ErrorCode.RATE_LIMITED:
@@ -143,7 +143,7 @@ export function isRetryable(e: unknown): boolean {
 
 /** True when the user must take an action (sign in, free up space) to proceed. */
 export function requiresUserAction(e: unknown): boolean {
-  if (!isCloudStorageError(e)) return false
+  if (!isCloudSyncError(e)) return false
   switch (e.code) {
     case ErrorCode.NOT_SIGNED_IN:
     case ErrorCode.AUTH_EXPIRED:
@@ -156,19 +156,19 @@ export function requiresUserAction(e: unknown): boolean {
 }
 
 /**
- * Normalises whatever the native layer rejected with into a `CloudStorageError`.
+ * Normalises whatever the native layer rejected with into a `CloudSyncError`.
  *
  * React Native's bridge turns `reject(code, message, nativeError)` into an Error
  * whose `code` is the string we chose natively, so the common path is a simple
  * re-wrap. Anything unrecognised becomes {@link ErrorCode.UNKNOWN} rather than
  * being swallowed.
  */
-export function normalizeError(e: unknown, provider?: string): CloudStorageError {
-  if (e instanceof CloudStorageError) return e
+export function normalizeError(e: unknown, provider?: string): CloudSyncError {
+  if (e instanceof CloudSyncError) return e
 
-  if (isCloudStorageError(e)) {
-    const info = e as unknown as CloudStorageErrorInfo & { message?: string }
-    return new CloudStorageError(e.code, info.message ?? e.code, {
+  if (isCloudSyncError(e)) {
+    const info = e as unknown as CloudSyncErrorInfo & { message?: string }
+    return new CloudSyncError(e.code, info.message ?? e.code, {
       retryAfterMs: numeric(info.retryAfterMs),
       limitBytes: numeric(info.limitBytes),
       actualBytes: numeric(info.actualBytes),
@@ -180,7 +180,7 @@ export function normalizeError(e: unknown, provider?: string): CloudStorageError
   }
 
   const message = e instanceof Error ? e.message : String(e)
-  return new CloudStorageError(ErrorCode.UNKNOWN, message, { provider, cause: e })
+  return new CloudSyncError(ErrorCode.UNKNOWN, message, { provider, cause: e })
 }
 
 /**
@@ -197,10 +197,10 @@ function numeric(v: unknown): number | undefined {
 }
 
 /** Convenience constructor for the platform-capability guards. */
-export function unsupportedPlatform(provider: string, detail: string): CloudStorageError {
-  return new CloudStorageError(
+export function unsupportedPlatform(provider: string, detail: string): CloudSyncError {
+  return new CloudSyncError(
     ErrorCode.UNSUPPORTED_PLATFORM,
-    `[RNCloudStorage] ${provider} is not available on this platform: ${detail}`,
+    `[RNCloudSync] ${provider} is not available on this platform: ${detail}`,
     { provider }
   )
 }

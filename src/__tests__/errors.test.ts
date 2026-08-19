@@ -1,16 +1,16 @@
 import {
-  CloudStorageError,
+  CloudSyncError,
   ErrorCode,
-  isCloudStorageError,
+  isCloudSyncError,
   isRetryable,
   normalizeError,
   requiresUserAction,
 } from '../errors'
 
-describe('CloudStorageError', () => {
+describe('CloudSyncError', () => {
   it('keeps instanceof working after the ES5 Error downlevel', () => {
-    const e = new CloudStorageError(ErrorCode.NOT_SIGNED_IN, 'nope')
-    expect(e).toBeInstanceOf(CloudStorageError)
+    const e = new CloudSyncError(ErrorCode.NOT_SIGNED_IN, 'nope')
+    expect(e).toBeInstanceOf(CloudSyncError)
     expect(e).toBeInstanceOf(Error)
   })
 
@@ -18,9 +18,9 @@ describe('CloudStorageError', () => {
     // The bridge does not preserve the prototype on every path, so the guard
     // has to test shape rather than identity.
     const bridged = { code: 'ERR_QUOTA_EXCEEDED', message: 'full' }
-    expect(isCloudStorageError(bridged)).toBe(true)
-    expect(isCloudStorageError({ code: 'SOMETHING_ELSE' })).toBe(false)
-    expect(isCloudStorageError(null)).toBe(false)
+    expect(isCloudSyncError(bridged)).toBe(true)
+    expect(isCloudSyncError({ code: 'SOMETHING_ELSE' })).toBe(false)
+    expect(isCloudSyncError(null)).toBe(false)
   })
 })
 
@@ -49,7 +49,7 @@ describe('error classification', () => {
     [ErrorCode.NOT_SIGNED_IN, false],
     [ErrorCode.QUOTA_EXCEEDED, false],
   ])('isRetryable(%s) === %s', (code, expected) => {
-    expect(isRetryable(new CloudStorageError(code, 'x'))).toBe(expected)
+    expect(isRetryable(new CloudSyncError(code, 'x'))).toBe(expected)
   })
 
   it.each([
@@ -58,6 +58,6 @@ describe('error classification', () => {
     [ErrorCode.QUOTA_EXCEEDED, true],
     [ErrorCode.NETWORK_UNAVAILABLE, false],
   ])('requiresUserAction(%s) === %s', (code, expected) => {
-    expect(requiresUserAction(new CloudStorageError(code, 'x'))).toBe(expected)
+    expect(requiresUserAction(new CloudSyncError(code, 'x'))).toBe(expected)
   })
 })
