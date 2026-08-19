@@ -115,6 +115,8 @@ for (const key of copied) {
 
 `migrate` copies and leaves the source intact, so a partial failure cannot lose data.
 
+That is the one-off, developer-initiated case. If the user is the one choosing where their data lives, see [Let the user choose their provider](#let-the-user-choose-their-provider), which wires the same call into a settings picker.
+
 ## Read legacy keys while writing new ones
 
 When adopting this package over an existing store, read through the old path on a miss and lazily copy forward:
@@ -155,17 +157,116 @@ NetInfo.addEventListener(s => {
 })
 ```
 
-## Choose a provider at runtime
+## Let the user choose their provider
+
+A settings picker: which cloud holds their data, or none. See [Choosing a provider](choosing-a-provider.md#better-still-let-the-user-choose) for why this is usually worth doing.
 
 ```ts
-const available = await Promise.all([
-  icloudKV.isAvailable(),
-  googleDrive.isAvailable(),
-])
+import {
+  cloudKit,
+  googleDrive,
+  icloudKV,
+  createCloudStore,
+  type CloudProvider,
+  type ProviderName,
+} from '@kesha-antonov/react-native-cloud-sync'
 
-// isAvailable never throws, so this is safe on a render path.
-const providers = [
-  available[0] && 'icloudKV',
-  available[1] && 'googleDrive',
-].filter(Boolean) as ProviderName[]
+type Choice = ProviderName | 'off'
+
+const ALL: CloudProvider[] = [icloudKV, cloudKit, googleDrive]
+
+/** Only what actually works on this device - never offer a dead option. */
+export async function availableProviders (): Promise<ProviderName[]> {
+  const checked = await Promise.all(
+    ALL.map(async p => [p.name, await p.isAvailable()] as const)
+  )
+  return checked.filter(([, ok]) => ok).map(([name]) => name)
+}
+
+export function buildStore (choice: Choice) {
+  return createCloudStore({
+    providers: choice === 'off' ? [] : [choice],
+    tiering: 'auto',
+    outboxStorage: mmkvAdapter,
+  })
+}
+```
+
+Persist the choice locally, and rebuild the store when it changes:
+
+```ts
+export function setChoice (next: Choice) {
+  mmkv.set('sync/provider', next)
+  store = buildStore(next)
+}
+```
+
+### Switching between providers
+
+Offer to bring the data along. `migrate` copies and leaves the source intact, so a failure cannot lose anything:
+
+```ts
+export async function switchProvider (from: Choice, to: Choice) {
+  if (from !== 'off' && to !== 'off') {
+    const combined = createCloudStore({ providers: [from, to] })
+    await combined.migrate({ from, to })
+  }
+  setChoice(to)
+}
+```
+
+### Turning it off, and deleting what is stored
+
+Two separate questions - stop syncing, and remove the existing copy. Ask them separately, because "stop backing up" and "delete my backup" are different intentions.
+
+```ts
+export async function turnOff (previous: Choice, alsoDelete: boolean) {
+  if (alsoDelete && previous !== 'off') {
+    await deleteEverything(previous)
+  }
+  setChoice('off')
+}
+
+/**
+ * Deletes every key this app ever wrote - enumerated, not hardcoded.
+ *
+ * Hardcoding a list is how a "delete my backup" flow ends up removing the two
+ * keys someone remembered and quietly leaving the rest behind. If the user
+ * asked you to delete their data, delete it.
+ */
+async function deleteEverything (name: ProviderName) {
+  const provider = ALL.find(p => p.name === name)
+  if (provider == null) return
+
+  const keys = await provider.getAllKeys()
+  const failed: string[] = []
+
+  for (const key of keys) {
+    try {
+      await provider.removeItem(key)
+    } catch {
+      failed.push(key)
+    }
+  }
+
+  // Report honestly rather than claiming success.
+  if (failed.length > 0) {
+    throw new Error(`Could not delete ${failed.length} of ${keys.length} items`)
+  }
+}
+```
+
+Order matters when the provider needs a session: **delete first, then disconnect.** Once the account is disconnected the deletes become silent no-ops, and the user is told their data is gone when it is not.
+
+### Leftover data after a switch
+
+If someone moves from iCloud to Drive, the iCloud copy is still there. Either offer to clean it up at the time, or remember the previous provider so the settings screen can offer it later:
+
+```ts
+const leftover = mmkv.getString('sync/previousProvider')
+if (leftover != null && leftover !== 'off') {
+  const provider = ALL.find(p => p.name === leftover)
+  const stale = (await provider?.getAllKeys()) ?? []
+  if (stale.length > 0) offerToDelete(leftover, stale.length)
+}
 ```

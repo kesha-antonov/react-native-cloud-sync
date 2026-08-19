@@ -64,6 +64,55 @@ const store = createCloudStore({
 
 **Cross-platform, but the data must be the same account everywhere.** `cloudKit` everywhere, with the Android/web halves framed as an explicit import.
 
+## Better still: let the user choose
+
+Everything above assumes *you* pick. Where you reasonably can, expose the choice instead - a settings row listing the providers that work on this device, plus an off switch.
+
+It costs little and buys a lot:
+
+- **Not everyone has both accounts.** An Android user may have no Apple ID; an iPhone user may not want a Google account.
+- **It is a privacy decision, and it is theirs.** "Which company holds my data, if anyone" is not a question a developer should silently answer for someone.
+- **It makes the failure states legible.** A user who chose Drive understands a "reconnect Google" prompt. A user who never knew Drive was involved does not.
+- **It is the honest framing.** The data is theirs; the cloud is where a copy lives.
+
+Because every provider implements the same interface, switching at runtime is just rebuilding the store:
+
+```ts
+const store = createCloudStore({
+  providers: chosen === 'off' ? [] : [chosen],
+  tiering: 'auto',
+  outboxStorage: mmkvAdapter,
+})
+```
+
+Three things worth getting right, each of which is easy to get wrong:
+
+**Only offer what actually works here.** Filter with `isAvailable()` rather than listing every provider and letting the user pick one that will immediately fail:
+
+```ts
+const options = (
+  await Promise.all(
+    ([icloudKV, cloudKit, googleDrive] as const).map(
+      async p => [p.name, await p.isAvailable()] as const
+    )
+  )
+).filter(([, ok]) => ok).map(([name]) => name)
+```
+
+**Include an off switch, and mean it.** Some people do not want a cloud copy at all. "Off" should stop writing *and* offer to remove what is already stored.
+
+**Deleting means deleting everything.** When a user turns sync off and asks you to remove the backup, remove every key you ever wrote - not the two obvious ones. Enumerate rather than hardcode:
+
+```ts
+for (const key of await provider.getAllKeys()) {
+  await provider.removeItem(key)
+}
+```
+
+Leaving stray keys behind after someone explicitly asked you to delete their data is worse than never having offered the switch.
+
+Working code for the whole flow - picker, switching, migration, off, delete - is in [Recipes](recipes.md#let-the-user-choose-their-provider).
+
 ## What none of them do
 
 Not a general file-sync API. `googleDrive` and `cloudKit` assets handle binaries, but this package is built around durable key-value and record storage - if you need arbitrary user-visible files in iCloud Drive, you want a different library.
