@@ -39,12 +39,15 @@ jobs:
       # moment CocoaPods evaluated it, which broke every iOS build.
       - name: Validate the podspec
         run: |
-          gem install cocoapods-core --no-document --quiet
+          sudo gem install cocoapods-core --no-document --quiet
           yarn validate:podspec
 
   ios:
     name: iOS build (New Architecture)
-    runs-on: macos-15
+    # macos-26 for Xcode 26: Expo SDK 57 pulls Swift Package Manager
+    # dependencies declared with Swift tools 6.2, which the macos-15 image's
+    # Swift 6.1 refuses to resolve.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
@@ -99,7 +102,7 @@ jobs:
 
   ios-static-frameworks:
     name: iOS static frameworks
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
