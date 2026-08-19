@@ -41,7 +41,7 @@ const PAGES = [
     description:
       'iCloud key-value store, CloudKit and Google Drive behind one API for React Native and Expo - '
       + 'on iOS, Android and the web, on both architectures.',
-    sections: ['✨ Features', '💡 Why?'],
+    sections: ['✨ Features', '💡 Why?', '📚 Upstream documentation'],
   },
   {
     id: 'comparison',

@@ -1,6 +1,6 @@
 # Google Drive
 
-Drive's hidden `appDataFolder` - a per-app, per-Google-account folder that never appears in the user's visible Drive.
+Drive's hidden [`appDataFolder`][appdata] - a per-app, per-Google-account folder that never appears in the user's visible Drive.
 
 ## When to use it
 
@@ -9,7 +9,7 @@ The always-on backend for a cross-platform app. It behaves identically on iOS, A
 | | |
 |---|---|
 | Platforms | iOS, Android, web |
-| Auth | OAuth, `drive.appdata` scope, supplied by your app |
+| Auth | OAuth, [`drive.appdata` scope][drivescopes], supplied by your app |
 | Size limits | the user's Drive quota |
 | Survives app uninstall | yes - tied to the account, not the install |
 | Remote change events | – |
@@ -78,7 +78,7 @@ The **file** survives - it belongs to the Google account. The **session** does n
 
 ## Performance notes
 
-Drive has no "get by name" endpoint, so a read has to resolve a name to a file id first. This package issues one scoped `q=` query and then caches the id, which keeps a read to a single request and usually none.
+The [Drive `files` API][drivefiles] has no "get by name" endpoint, so a read has to resolve a name to a file id first. This package issues one scoped `q=` query and then caches the id, which keeps a read to a single request and usually none.
 
 The naive approach - list every file in the drive and filter client-side - is what makes other implementations take minutes on accounts with many files. If you switch accounts, drop the cache by reconfiguring.
 
@@ -96,3 +96,7 @@ See [Error handling](../errors.md).
 ## No change events
 
 Drive has no push channel here, so `onRemoteChange` is not implemented. If you need another device's write to arrive without user action, either pair Drive with `icloudKV`/`cloudKit` through the [facade](../store.md), or re-read on app foreground.
+
+[appdata]: https://developers.google.com/workspace/drive/api/guides/appdata
+[drivescopes]: https://developers.google.com/workspace/drive/api/guides/api-specific-auth
+[drivefiles]: https://developers.google.com/workspace/drive/api/reference/rest/v3/files

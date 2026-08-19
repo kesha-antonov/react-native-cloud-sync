@@ -90,8 +90,35 @@ const config = {
 
 let problems = 0
 
+/**
+ * Reference-style links whose definition is missing.
+ *
+ * Markdown renders `[text][missing]` as literal text - no error anywhere, in
+ * the build or the browser. So a typo'd reference just quietly ships as
+ * punctuation.
+ */
+function checkReferenceLinks (file, source) {
+  // Strip fenced code so `arr[i][j]` is not mistaken for a reference link.
+  const prose = source.replace(/```[\s\S]*?```/g, '')
+
+  const defined = new Set(
+    [...prose.matchAll(/^\[([^\]]+)\]:\s*\S+/gm)].map(m => m[1].toLowerCase())
+  )
+
+  let found = 0
+  for (const m of prose.matchAll(/\[[^\]\n]+\]\[([^\]\n]+)\]/g)) {
+    const ref = m[1].toLowerCase()
+    if (defined.has(ref)) continue
+    const line = prose.slice(0, m.index).split('\n').length
+    console.error(`${relative(ROOT, file)}:${line}  undefined link reference [${ref}]`)
+    found += 1
+  }
+  return found
+}
+
 for (const file of FILES) {
   const source = readFileSync(file, 'utf8')
+  problems += checkReferenceLinks(file, source)
 
   for (const block of extractBlocks(source)) {
     let messages

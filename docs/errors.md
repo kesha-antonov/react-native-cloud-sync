@@ -33,6 +33,8 @@ Worse is a failed write reported as a success. Two libraries in this space do ex
 
 ## Codes
 
+These are this package's codes. They map onto CloudKit's own ([framework errors][ck], [Web Services error codes][ckerrors]) and Drive's HTTP statuses, and the original is kept on `serverErrorCode` when there was one.
+
 | Code | Meaning | Typical response |
 |---|---|---|
 | `ERR_NOT_SIGNED_IN` | No account signed in | Prompt sign-in |
@@ -95,3 +97,6 @@ try {
 if (value == null)
   seedInitialState()
 ```
+
+[ck]: https://developer.apple.com/documentation/cloudkit
+[ckerrors]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/ErrorCodes.html

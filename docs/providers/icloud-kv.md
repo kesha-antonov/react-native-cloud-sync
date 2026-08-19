@@ -1,6 +1,6 @@
 # iCloud key-value store
 
-`NSUbiquitousKeyValueStore` - a small dictionary that syncs across a user's Apple devices with no sign-in and no UI.
+[`NSUbiquitousKeyValueStore`][kvs] - a small dictionary that syncs across a user's Apple devices with no sign-in and no UI.
 
 ## When to use it
 
@@ -51,7 +51,7 @@ const status = await icloudKV.getAccountStatus()
 // 'temporarilyUnavailable' | 'couldNotDetermine'
 ```
 
-Five states, not a boolean, because they call for different behaviour: `temporarilyUnavailable` means retry silently; `noAccount` means prompt the user; `couldNotDetermine` means do nothing yet.
+Five states ([`CKAccountStatus`][ckstatus]), not a boolean, because they call for different behaviour: `temporarilyUnavailable` means retry silently; `noAccount` means prompt the user; `couldNotDetermine` means do nothing yet.
 
 ## Reacting to other devices
 
@@ -98,3 +98,6 @@ If you are hitting the limit, that is the signal to move that key to `cloudKit` 
 ## On Android and web
 
 Every operation rejects with `ERR_UNSUPPORTED_PLATFORM`. There is no polyfill and no fallback, because `NSUbiquitousKeyValueStore` has no network API to reach. Use `cloudKit` for the same account's data elsewhere, or `googleDrive`.
+
+[kvs]: https://developer.apple.com/documentation/foundation/nsubiquitouskeyvaluestore
+[ckstatus]: https://developer.apple.com/documentation/cloudkit/ckaccountstatus

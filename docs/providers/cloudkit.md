@@ -1,6 +1,6 @@
 # CloudKit
 
-The user's private CloudKit database - records, custom zones and binary assets. The only provider here that reaches the *same* data from iOS, Android and the web.
+The user's [private CloudKit database][ckdb] - [records][ckrecord], [custom zones][ckzone] and [binary assets][ckasset]. The only provider here that reaches the *same* data from iOS, Android and the web.
 
 ## When to use it
 
@@ -14,7 +14,7 @@ Your app's real data, on Apple platforms, with the option of reaching it elsewhe
 | Remote change events | native | – | – |
 | Auth | implicit | Apple ID sign-in | Apple ID sign-in |
 
-Per-record limit: **1 MB**, excluding assets. Oversized writes reject locally with `ERR_PAYLOAD_TOO_LARGE` rather than failing server-side.
+Per-record limit: **1 MB**, excluding assets ([all limits][cklimits]). Oversized writes reject locally with `ERR_PAYLOAD_TOO_LARGE` rather than failing server-side.
 
 ## Setup on Apple platforms
 
@@ -22,9 +22,9 @@ Entitlements only. The container identifier is read from them at runtime, so it 
 
 ## Setup on Android and web
 
-Three things in the CloudKit Console first:
+Three things in the [CloudKit Console][console] first:
 
-1. A **Client** API token under API Access. Not a server-to-server key - see [the constraint](#the-constraint-on-android-and-web) below.
+1. A **Client** API token under API Access ([how tokens work][ckauth]). Not a server-to-server key - see [the constraint](#the-constraint-on-android-and-web) below.
 2. A **Sign In Callback** set to `cloudkit-<container-id>://callback`.
 3. Your schema **deployed to Production**, if you use `environment: 'production'`. Development and Production are separate datastores, so a debug build and a release build do not see each other's data.
 
@@ -141,3 +141,12 @@ So the interactive sign-in is not a shortcut this package chose - it is the only
 Design around it: make CloudKit-on-Android a deliberate import/export, and handle `ERR_AUTH_EXPIRED` by prompting for sign-in rather than retrying. For continuous background sync on Android, use `googleDrive`.
 
 The REST path needs no crypto - two query parameters on a `fetch` - so it is unaffected by the missing-`crypto` problem that stalled earlier CloudKit JS attempts in React Native.
+
+[ckdb]: https://developer.apple.com/documentation/cloudkit/ckdatabase
+[ckrecord]: https://developer.apple.com/documentation/cloudkit/ckrecord
+[ckzone]: https://developer.apple.com/documentation/cloudkit/ckrecordzone
+[ckasset]: https://developer.apple.com/documentation/cloudkit/ckasset
+[ckws]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/index.html
+[ckauth]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/SettingUpWebServices.html
+[cklimits]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/PropertyMetrics.html
+[console]: https://icloud.developer.apple.com/dashboard/

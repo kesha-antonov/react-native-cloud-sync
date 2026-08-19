@@ -26,12 +26,12 @@
 
 ## ✨ Features
 
-- ☁️ **Three providers, one API** - `NSUbiquitousKeyValueStore`, CloudKit records and Google Drive `appDataFolder`, each usable directly or through a single facade.
-- 🍏 **CloudKit from Android and the web** - the same private database your iOS app writes to, over CloudKit Web Services. No other React Native library offers this.
+- ☁️ **Three providers, one API** - [`NSUbiquitousKeyValueStore`][kvs], [CloudKit][ck] records and Google Drive [`appDataFolder`][appdata], each usable directly or through a single facade.
+- 🍏 **CloudKit from Android and the web** - the same [private database][ckdb] your iOS app writes to, over [CloudKit Web Services][ckws]. No other React Native library offers this.
 - 🚨 **Errors you can act on** - every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...). `null` means one thing only: the key does not exist.
-- 👤 **Real account lifecycle** - all five `CKAccountStatus` values, plus `onAccountChange` with an `identityChanged` flag so you can drop user-scoped caches when the Apple ID changes.
+- 👤 **Real account lifecycle** - all five [`CKAccountStatus`][ckstatus] values, plus `onAccountChange` with an `identityChanged` flag so you can drop user-scoped caches when the Apple ID changes.
 - 🔔 **Remote change events** - `onRemoteChange` with typed reasons, so a write on another device shows up without polling.
-- 📦 **Automatic size tiering** - small values to the key-value store, larger to a CloudKit record, larger still to a `CKAsset`. Store limits stop leaking into your product code.
+- 📦 **Automatic size tiering** - small values to the key-value store, larger to a [`CKRecord`][ckrecord] field. Binary assets go in as a [`CKAsset`][ckasset] through their own API. Store limits stop leaking into your product code.
 - 🔁 **Durable outbox** - retryable failures are queued and retried with backoff that honours server retry hints; failures the user must act on surface immediately instead.
 - 🧪 **A real testing story** - an in-memory provider with fault injection, exported from the package (`/testing`) and documented, so signed-out, offline, quota-exceeded and account-switch paths are all testable in Jest.
 - ⚙️ **Old and new architecture** - React Native 0.71 through 0.86+, with the `#ifdef` bridge to prove it.
@@ -43,6 +43,48 @@ Cloud storage in React Native is fragmented into single-provider wrappers, and a
 The common thread is that failure paths are treated as an afterthought. A `catch { return null }` makes "not signed in", "offline", "out of storage" and "no such key" indistinguishable - so apps cannot tell the user anything useful, and cannot decide whether to retry.
 
 This library starts from the opposite end: the error contract first, then the providers.
+
+## 📚 Upstream documentation
+
+This package is a wrapper. When something behaves unexpectedly, the answer is usually in Apple's or Google's documentation rather than ours - so here is where to look.
+
+**Apple**
+
+| | |
+|---|---|
+| [`NSUbiquitousKeyValueStore`][kvs] | The iCloud key-value store, and its 1 MB / 1024-key limits |
+| [CloudKit][ck] · [`CKDatabase`][ckdb] · [`CKRecord`][ckrecord] | Records in the user's private database |
+| [`CKAsset`][ckasset] · [`CKRecordZone`][ckzone] | Binary assets and custom zones |
+| [`CKAccountStatus`][ckstatus] | The five account states this package surfaces verbatim |
+| [CloudKit Web Services][ckws] | The REST API behind the Android and web paths |
+| [Authentication][ckauth] · [Data size limits][cklimits] · [Error codes][ckerrors] | The three pages worth reading before shipping CloudKit on Android |
+| [iCloud entitlements][entitlements] | The keys the config plugin writes |
+| [CloudKit Console][console] | Where containers, schemas, API tokens and the sign-in callback live |
+
+**Google**
+
+| | |
+|---|---|
+| [The `appDataFolder`][appdata] | The hidden per-app folder this package stores into |
+| [Drive `files` resource][drivefiles] | The REST endpoints behind the provider |
+| [Drive API scopes][drivescopes] | Why `drive.appdata` and not something broader |
+
+[kvs]: https://developer.apple.com/documentation/foundation/nsubiquitouskeyvaluestore
+[ck]: https://developer.apple.com/documentation/cloudkit
+[ckdb]: https://developer.apple.com/documentation/cloudkit/ckdatabase
+[ckrecord]: https://developer.apple.com/documentation/cloudkit/ckrecord
+[ckasset]: https://developer.apple.com/documentation/cloudkit/ckasset
+[ckzone]: https://developer.apple.com/documentation/cloudkit/ckrecordzone
+[ckstatus]: https://developer.apple.com/documentation/cloudkit/ckaccountstatus
+[ckws]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/index.html
+[ckauth]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/SettingUpWebServices.html
+[cklimits]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/PropertyMetrics.html
+[ckerrors]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/ErrorCodes.html
+[entitlements]: https://developer.apple.com/documentation/bundleresources/entitlements/com_apple_developer_icloud-services
+[console]: https://icloud.developer.apple.com/dashboard/
+[appdata]: https://developers.google.com/workspace/drive/api/guides/appdata
+[drivefiles]: https://developers.google.com/workspace/drive/api/reference/rest/v3/files
+[drivescopes]: https://developers.google.com/workspace/drive/api/guides/api-specific-auth
 
 ## ⚖️ Comparison
 
