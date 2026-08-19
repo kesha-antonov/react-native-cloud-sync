@@ -91,7 +91,7 @@ try {
   return showSyncError(e)
 }
 
-if (value == null) {
-  // Genuinely nothing stored yet. Safe to seed.
-}
+// Genuinely nothing stored yet, so seeding is safe.
+if (value == null)
+  seedInitialState()
 ```

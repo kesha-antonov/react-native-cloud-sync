@@ -42,9 +42,9 @@ Every failure rejects with a typed error - see [Error handling](../errors.md).
 ## Availability and account state
 
 ```ts
-if (!(await icloudKV.isAvailable())) {
-  // Not signed in, restricted, or not an Apple platform.
-}
+// False when not signed in, restricted, or not on an Apple platform.
+if (!(await icloudKV.isAvailable()))
+  return
 
 const status = await icloudKV.getAccountStatus()
 // 'available' | 'noAccount' | 'restricted'
@@ -68,11 +68,10 @@ const unsubscribe = icloudKV.onRemoteChange(({ keys, reason }) => {
 
 ```ts
 icloudKV.onAccountChange(({ status, identityChanged }) => {
-  if (identityChanged) {
-    // A DIFFERENT Apple ID is now signed in. Anything cached for the previous
-    // user is now wrong.
+  // A DIFFERENT Apple ID is now signed in, so anything cached for the previous
+  // user is now wrong.
+  if (identityChanged)
     clearUserScopedCaches()
-  }
 })
 ```
 

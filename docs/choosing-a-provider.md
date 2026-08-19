@@ -151,9 +151,8 @@ const options = (
 **Deleting means deleting everything.** When a user turns sync off and asks you to remove the backup, remove every key you ever wrote - not the two obvious ones. Enumerate rather than hardcode:
 
 ```ts
-for (const key of await provider.getAllKeys()) {
+for (const key of await provider.getAllKeys())
   await provider.removeItem(key)
-}
 ```
 
 Leaving stray keys behind after someone explicitly asked you to delete their data is worse than never having offered the switch.

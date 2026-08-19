@@ -65,9 +65,9 @@ Keys are file names inside `appDataFolder`.
 ## Availability
 
 ```ts
-if (!(await googleDrive.isAvailable())) {
-  // Not configured, or no token available - prompt a connect.
-}
+// False when not configured, or when no token is available.
+if (!(await googleDrive.isAvailable()))
+  promptConnect()
 ```
 
 `isAvailable()` only checks that a token can be obtained; it makes no network request, so it is safe on a render path.

@@ -18,6 +18,8 @@ export default [
       'jest.config.cjs',
       'babel.config.cjs',
       'react-native.config.js',
+      // Build tooling, not library source.
+      'scripts/**',
       'app.plugin.js',
     ],
   },

@@ -52,11 +52,10 @@ interface Blob { data: AppState, updatedAt: number }
 const remoteRaw = await store.getItem(KEY)
 const remote = remoteRaw == null ? null : (JSON.parse(remoteRaw) as Blob)
 
-if (remote == null || local.updatedAt > remote.updatedAt) {
+if (remote == null || local.updatedAt > remote.updatedAt)
   await store.setItem(KEY, JSON.stringify(local))
-} else if (remote.updatedAt > local.updatedAt) {
+else if (remote.updatedAt > local.updatedAt)
   applyRemote(remote.data)
-}
 // Equal timestamps: nothing to do.
 ```
 
@@ -72,9 +71,8 @@ function SyncBadge () {
     const tick = () => setPending(store.pendingWrites().length)
     tick()
     const sub = AppState.addEventListener('change', s => {
-      if (s === 'active') {
+      if (s === 'active')
         store.flushOutbox().then(tick).catch(() => undefined)
-      }
     })
     return () => sub.remove()
   }, [])
@@ -245,9 +243,8 @@ Two separate questions - stop syncing, and remove the existing copy. Ask them se
 
 ```ts
 export async function turnOff (previous: Choice, alsoDelete: boolean) {
-  if (alsoDelete && previous !== 'off') {
+  if (alsoDelete && previous !== 'off')
     await deleteEverything(previous)
-  }
   setChoice('off')
 }
 
@@ -265,18 +262,17 @@ async function deleteEverything (name: ProviderName) {
   const keys = await provider.getAllKeys()
   const failed: string[] = []
 
-  for (const key of keys) {
+  for (const key of keys)
     try {
       await provider.removeItem(key)
-    } catch {
+    }
+    catch {
       failed.push(key)
     }
-  }
 
   // Report honestly rather than claiming success.
-  if (failed.length > 0) {
+  if (failed.length > 0)
     throw new Error(`Could not delete ${failed.length} of ${keys.length} items`)
-  }
 }
 ```
 
