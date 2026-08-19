@@ -337,15 +337,28 @@ RCT_EXPORT_METHOD(ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fiel
 }
 #endif
 
-- (void)setLogsEnabled:(BOOL)enabled
+// The only void method here, and so the only one where both architectures want
+// the exact same selector: RCT_EXPORT_METHOD(setLogsEnabled:) expands to
+// `-setLogsEnabled:`, which collides with the protocol method of the same name.
+// The promise methods avoid this by accident - their legacy exports use
+// `resolver:`/`rejecter:` where the protocol uses `resolve:`/`reject:`.
+//
+// So share one implementation and give each architecture a thin wrapper, the
+// same shape react-native-background-downloader uses for its void methods.
+- (void)_setLogsEnabledInternal:(BOOL)enabled
 {
     [CloudSyncImpl.shared setLogsEnabled:enabled];
 }
 
-#ifndef RCT_NEW_ARCH_ENABLED
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)setLogsEnabled:(BOOL)enabled
+{
+    [self _setLogsEnabledInternal:enabled];
+}
+#else
 RCT_EXPORT_METHOD(setLogsEnabled:(BOOL)enabled)
 {
-    [CloudSyncImpl.shared setLogsEnabled:enabled];
+    [self _setLogsEnabledInternal:enabled];
 }
 #endif
 
