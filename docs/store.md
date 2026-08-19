@@ -148,7 +148,7 @@ createCloudStore({
 
 `tiering: 'off'` always writes to the preferred provider.
 
-If a value is too large for the key-value store and no larger-capacity provider is configured, the write rejects with `ERR_PAYLOAD_TOO_LARGE` naming the fix, rather than failing somewhere in the OS.
+If a value is too large for a provider and no larger-capacity provider is configured and available, the write rejects with `ERR_PAYLOAD_TOO_LARGE` naming the fix, rather than failing somewhere in the OS.
 
 Binary assets are **not** part of tiering - they are an explicit API, because you pass a file path rather than a string. See [CloudKit assets](providers/cloudkit.md#assets).
 
@@ -156,7 +156,7 @@ Binary assets are **not** part of tiering - they are an explicit API, because yo
 
 A write that fails for a **retryable** reason - offline, rate limited, account temporarily unavailable - is queued and retried with exponential backoff, honouring `retryAfterMs` when the server supplies one.
 
-A write that fails for a reason **the user must act on** - signed out, quota exceeded - is *not* queued. It rejects immediately, because retrying it forever would only hide it.
+A write that fails for a reason **the user must act on** - signed out, quota exceeded - is *not* queued. It rejects immediately, because retrying it forever would only hide it. The same rule applies on the way out: if a queued write later fails for one of those reasons, it is reported through `onError` and dropped rather than retried forever.
 
 ```ts
 // On reconnect, or on app foreground:

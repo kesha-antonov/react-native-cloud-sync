@@ -33,6 +33,11 @@ interface DriveFile {
   name: string
 }
 
+/** True for the 404 the client tags when a file id no longer resolves. */
+function isNotFound(e: unknown): boolean {
+  return e instanceof CloudSyncError && e.serverErrorCode === 'NOT_FOUND'
+}
+
 export class GoogleDriveClient {
   private readonly config: GoogleDriveConfig
   /**
@@ -110,6 +115,15 @@ export class GoogleDriveClient {
         '[RNCloudSync] Google Drive storage quota exceeded.',
         { provider: 'googleDrive' }
       )
+    // Tagged so callers can tell "this file id is gone" from a generic failure.
+    // Without the tag a stale memoised id was indistinguishable from a real
+    // error, so it could never be recovered from.
+    if (res.status === 404)
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] Google Drive has no file with that id.',
+        { provider: 'googleDrive', serverErrorCode: 'NOT_FOUND' }
+      )
 
     throw new CloudSyncError(
       ErrorCode.UNKNOWN,
@@ -118,10 +132,17 @@ export class GoogleDriveClient {
     )
   }
 
-  /** Resolves a file name to its id within appDataFolder, or null if absent. */
-  private async findFileId(name: string): Promise<string | null> {
-    const cached = this.idCache.get(name)
-    if (cached != null) return cached
+  /**
+   * Resolves a file name to its id within appDataFolder, or null if absent.
+   *
+   * Pass `refresh` to bypass the memo after a cached id turned out to be stale.
+   */
+  private async findFileId(name: string, refresh = false): Promise<string | null> {
+    if (!refresh) {
+      const cached = this.idCache.get(name)
+      if (cached != null) return cached
+    }
+    this.idCache.delete(name)
 
     // Scope the query server-side. Escaping matters: an apostrophe in a key
     // would otherwise terminate the quoted literal and produce a malformed query.
@@ -141,21 +162,42 @@ export class GoogleDriveClient {
     const id = await this.findFileId(name)
     if (id == null) return null
 
-    const res = await this.request(`${FILES_URL}/${id}?alt=media`, { method: 'GET' })
+    try {
+      const res = await this.request(`${FILES_URL}/${id}?alt=media`, { method: 'GET' })
+      return await res.text()
+    }
+    catch (e) {
+      if (!isNotFound(e)) throw e
+    }
+
+    // The memoised id pointed at a file that is no longer there - another device
+    // deleted it. Look the name up again rather than throwing off a stale memo
+    // forever, and report a genuine absence as absent.
+    const fresh = await this.findFileId(name, true)
+    if (fresh == null) return null
+
+    const res = await this.request(`${FILES_URL}/${fresh}?alt=media`, { method: 'GET' })
     return await res.text()
   }
 
   async setItem(name: string, value: string): Promise<void> {
     const id = await this.findFileId(name)
 
-    if (id != null) {
-      await this.request(`${UPLOAD_URL}/${id}?uploadType=media`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: value,
-      })
-      return
-    }
+    if (id != null)
+      try {
+        await this.request(`${UPLOAD_URL}/${id}?uploadType=media`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: value,
+        })
+        return
+      }
+      catch (e) {
+        // Same stale-memo case. Fall through and create the file again instead
+        // of failing every future write to this key.
+        if (!isNotFound(e)) throw e
+        this.idCache.delete(name)
+      }
 
     // Multipart create: metadata part pins the file into appDataFolder, second
     // part carries the content.
@@ -182,8 +224,16 @@ export class GoogleDriveClient {
     // Already absent is the desired end state, not a failure.
     if (id == null) return
 
-    await this.request(`${FILES_URL}/${id}`, { method: 'DELETE' })
-    this.idCache.delete(name)
+    try {
+      await this.request(`${FILES_URL}/${id}`, { method: 'DELETE' })
+    }
+    catch (e) {
+      // Deleted from under us: the end state the caller asked for already holds.
+      if (!isNotFound(e)) throw e
+    }
+    finally {
+      this.idCache.delete(name)
+    }
   }
 
   async getAllKeys(): Promise<string[]> {

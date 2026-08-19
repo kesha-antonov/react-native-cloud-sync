@@ -55,11 +55,9 @@ export const cloudKit: CloudProvider = {
 
     if (!isCloudKitConfigured()) return false
     try {
-      // A lookup of a key that is not expected to exist. A `null` result and a
-      // NOT_FOUND both mean "reachable and authenticated"; only a thrown
-      // auth/network/config error means unavailable.
-      await getCloudKitClient().getRecord('__rncs_availability_probe__')
-      return true
+      // Memoised inside the client: the store asks before every provider read,
+      // and an unmemoised probe made each read cost two network round trips.
+      return await getCloudKitClient().isReachable()
     }
     catch {
       return false

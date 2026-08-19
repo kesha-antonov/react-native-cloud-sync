@@ -52,9 +52,18 @@ const withCloudSync: ConfigPlugin<CloudSyncPluginOptions | void> = (config, opti
     const entitlements = mod.modResults
 
     if (cloudKit) {
-      entitlements['com.apple.developer.icloud-container-identifiers'] = [containerIdentifier]
-      // Merge rather than overwrite: a project may already declare
-      // CloudDocuments for an unrelated feature.
+      // Merge rather than overwrite, for both keys: a project may already
+      // declare a second container, or CloudDocuments for an unrelated feature.
+      // Assigning the container list outright silently dropped every container
+      // the app already had, which breaks that other feature at runtime with no
+      // build error to point at.
+      const containers = new Set<string>(
+        (entitlements['com.apple.developer.icloud-container-identifiers'] as string[] | undefined)
+        ?? []
+      )
+      containers.add(containerIdentifier)
+      entitlements['com.apple.developer.icloud-container-identifiers'] = [...containers]
+
       const services = new Set<string>(
         (entitlements['com.apple.developer.icloud-services'] as string[] | undefined) ?? []
       )

@@ -61,3 +61,57 @@ describe('error classification', () => {
     expect(requiresUserAction(new CloudSyncError(code, 'x'))).toBe(expected)
   })
 })
+
+describe('normalizeError and the bridge shape', () => {
+  // React Native builds the JS error with
+  // `Object.assign(new Error(message), errorData)`, and `errorData` keeps the
+  // NSError dictionary nested under `userInfo` rather than spreading it. Reading
+  // only the top level meant every field the native layer attaches was dropped.
+  it('reads the fields iOS nests under userInfo', () => {
+    const bridged = Object.assign(new Error('too big'), {
+      code: 'ERR_PAYLOAD_TOO_LARGE',
+      userInfo: { limitBytes: 1048576, actualBytes: 2097152 },
+    })
+
+    const e = normalizeError(bridged, 'cloudKit')
+
+    expect(e.code).toBe(ErrorCode.PAYLOAD_TOO_LARGE)
+    expect(e.limitBytes).toBe(1048576)
+    expect(e.actualBytes).toBe(2097152)
+  })
+
+  it('carries a CONFLICT serverValue up from userInfo so the app can merge', () => {
+    // Documented as the whole point of the CONFLICT code, and undefined on iOS
+    // for as long as the nested dictionary went unread.
+    const bridged = Object.assign(new Error('newer on server'), {
+      code: 'ERR_CONFLICT',
+      userInfo: { serverValue: '{"text":"theirs"}' },
+    })
+
+    expect(normalizeError(bridged).serverValue).toBe('{"text":"theirs"}')
+  })
+
+  it('coerces a stringified retry hint out of userInfo', () => {
+    const bridged = Object.assign(new Error('slow down'), {
+      code: 'ERR_RATE_LIMITED',
+      userInfo: { retryAfterMs: '90000' },
+    })
+
+    expect(normalizeError(bridged).retryAfterMs).toBe(90_000)
+  })
+
+  it('prefers a top-level field over the nested copy', () => {
+    const bridged = Object.assign(new Error('slow down'), {
+      code: 'ERR_RATE_LIMITED',
+      retryAfterMs: 1000,
+      userInfo: { retryAfterMs: 90_000 },
+    })
+
+    expect(normalizeError(bridged).retryAfterMs).toBe(1000)
+  })
+
+  it('is unbothered by a userInfo that is not an object', () => {
+    const bridged = { code: 'ERR_UNKNOWN', message: 'x', userInfo: 'nope' }
+    expect(normalizeError(bridged).code).toBe(ErrorCode.UNKNOWN)
+  })
+})

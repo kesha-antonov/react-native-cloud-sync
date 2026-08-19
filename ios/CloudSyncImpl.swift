@@ -27,6 +27,21 @@ import Foundation
     /// found on object of type 'CloudSyncImpl *'".
     @objc public var emit: ((String, [String: Any]) -> Void)?
 
+    /// Opaque identity of the bridge instance that installed `emit`.
+    ///
+    /// React Native holds two module instances briefly across a reload: the
+    /// replacement installs its callback, and only then does the outgoing one
+    /// dealloc. Without an identity check that dealloc tore down the *new*
+    /// instance's callback and removed its notification observers, so remote
+    /// change and account events stopped firing until the next reload.
+    ///
+    /// A raw pointer rather than a reference on purpose: `strong` would keep the
+    /// bridge module alive forever behind this singleton, and `weak` is already
+    /// nil by the time that module's `dealloc` runs - which is precisely where
+    /// the comparison has to happen. It is only ever compared, never
+    /// dereferenced.
+    @objc public var emitOwner: UnsafeMutableRawPointer?
+
     private let kvStore = NSUbiquitousKeyValueStore.default
 
     /// Resolved once. `CKContainer(identifier:)` is not free, and the previous
@@ -40,14 +55,21 @@ import Foundation
 
     // MARK: - Configuration
 
+    /// The container id declared in the bundle's entitlement listing, if it is
+    /// readable at all. `nil` means "could not confirm", never "definitely
+    /// absent" - entitlements live in the code signature, and the API that reads
+    /// those (`SecTaskCopyValueForEntitlement`) is not public on iOS.
+    static func declaredContainerIdentifier() -> String? {
+        guard let ids = Bundle.main.object(
+            forInfoDictionaryKey: "com.apple.developer.icloud-container-identifiers"
+        ) as? [String] else { return nil }
+        return ids.first
+    }
+
     /// Reads the container id straight out of the app's entitlements, so apps do
     /// not have to repeat it in JavaScript and cannot get the two out of sync.
     static func resolveContainerIdentifier() -> String? {
-        if let ids = Bundle.main.object(
-            forInfoDictionaryKey: "com.apple.developer.icloud-container-identifiers"
-        ) as? [String], let first = ids.first {
-            return first
-        }
+        if let declared = declaredContainerIdentifier() { return declared }
         // Entitlements are not in Info.plist on a device build; fall back to the
         // conventional `iCloud.<bundle id>` form.
         guard let bundleId = Bundle.main.bundleIdentifier else { return nil }
@@ -55,10 +77,17 @@ import Foundation
     }
 
     @objc public func getConstants() -> [String: Any] {
-        let identifier = Self.resolveContainerIdentifier()
         return [
-            "containerIdentifier": identifier ?? "",
-            "hasICloudEntitlement": identifier != nil,
+            "containerIdentifier": Self.resolveContainerIdentifier() ?? "",
+            // Derived from the DECLARED identifier, not the resolved one.
+            // `resolveContainerIdentifier` falls back to `iCloud.<bundle id>`
+            // whenever the declaration is unreadable, so deriving this from it
+            // made the constant `true` for every app that has a bundle id -
+            // including one with no iCloud capability at all, which is exactly
+            // the case a caller reads this to detect. It is a confirmation, not
+            // a guarantee: false means "not confirmed here", and the async
+            // account-status path is the authoritative check.
+            "hasICloudEntitlement": Self.declaredContainerIdentifier() != nil,
         ]
     }
 
@@ -375,27 +404,41 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
-            let operation = CKQueryOperation(query: query)
-            if let zoneName = zoneName {
-                operation.zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
+            let zoneID = zoneName.map {
+                CKRecordZone.ID(zoneName: $0, ownerName: CKCurrentUserDefaultName)
             }
-            operation.desiredKeys = []
 
             var names: [String] = []
-            operation.recordMatchedBlock = { recordID, result in
-                if case .success = result { names.append(recordID.recordName) }
-            }
-            operation.queryResultBlock = { result in
-                switch result {
-                case .success:
-                    resolve(names)
-                case let .failure(error):
-                    let mapped = CloudSyncError.from(error)
-                    reject(mapped.code, mapped.message, mapped.asNSError)
+
+            // CKQueryOperation returns one page of results and hands back a
+            // cursor for the rest. Resolving on the first page silently
+            // truncated getAllKeys(), and migrate() is built on getAllKeys() -
+            // so it surfaced as a migration that quietly copied part of the
+            // data and reported success. Follow the cursor to exhaustion.
+            func run(_ operation: CKQueryOperation) {
+                operation.zoneID = zoneID
+                operation.desiredKeys = []
+                operation.recordMatchedBlock = { recordID, result in
+                    if case .success = result { names.append(recordID.recordName) }
                 }
+                operation.queryResultBlock = { result in
+                    switch result {
+                    case let .success(cursor):
+                        guard let cursor = cursor else {
+                            resolve(names)
+                            return
+                        }
+                        run(CKQueryOperation(cursor: cursor))
+                    case let .failure(error):
+                        let mapped = CloudSyncError.from(error)
+                        reject(mapped.code, mapped.message, mapped.asNSError)
+                    }
+                }
+                database.add(operation)
             }
-            database.add(operation)
+
+            let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+            run(CKQueryOperation(query: query))
         } catch {
             let mapped = CloudSyncError.from(error)
             reject(mapped.code, mapped.message, mapped.asNSError)

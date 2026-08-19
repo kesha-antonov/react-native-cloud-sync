@@ -177,3 +177,59 @@ describe('resolveByTimestamp', () => {
     ])).toBe(stamped('a', 5))
   })
 })
+
+describe('read repair and providers that failed to answer', () => {
+  it('does not overwrite a provider whose read merely failed', async () => {
+    // The dangerous case: Drive holds the NEWER copy, but its read blips. The
+    // read resolves from the only candidate it could see - iCloud's older copy -
+    // and repair used to write that back to every provider it had asked,
+    // including the one that never answered. The newer value was destroyed by a
+    // transient network error.
+    const icloudBase = createMemoryProvider({
+      initial: { note: stamped('from-iphone', 1_000) },
+    })
+    const driveBase = createMemoryProvider({
+      initial: { note: stamped('from-android', 5_000) },
+      faults: { getItem: { code: 'ERR_NETWORK_UNAVAILABLE' } },
+    })
+
+    const phone = createCloudStore({
+      providers: ['icloudKV', 'googleDrive'],
+      writeMode: 'mirror',
+      resolve: resolveByTimestamp('updatedAt'),
+    })
+    phone.registerProvider({ ...icloudBase, name: 'icloudKV' })
+    phone.registerProvider({ ...driveBase, name: 'googleDrive' })
+
+    // The read can only see iCloud, so that is the honest answer.
+    expect(textOf(await phone.getItem('note'))).toBe('from-iphone')
+    await new Promise(r => setTimeout(r, 0))
+
+    // But Drive must still hold the newer value, so the next successful read
+    // resolves to it.
+    expect(textOf(driveBase.dump().note)).toBe('from-android')
+  })
+
+  it('still repairs providers that answered with a stale value', async () => {
+    // The behaviour the guard must not break.
+    const icloudBase = createMemoryProvider({
+      initial: { note: stamped('from-iphone', 1_000) },
+    })
+    const driveBase = createMemoryProvider({
+      initial: { note: stamped('from-android', 5_000) },
+    })
+
+    const phone = createCloudStore({
+      providers: ['icloudKV', 'googleDrive'],
+      writeMode: 'mirror',
+      resolve: resolveByTimestamp('updatedAt'),
+    })
+    phone.registerProvider({ ...icloudBase, name: 'icloudKV' })
+    phone.registerProvider({ ...driveBase, name: 'googleDrive' })
+
+    expect(textOf(await phone.getItem('note'))).toBe('from-android')
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(textOf(icloudBase.dump().note)).toBe('from-android')
+  })
+})

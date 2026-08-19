@@ -36,6 +36,7 @@ RCT_EXPORT_MODULE(RNCloudSync)
         CloudSyncImpl.shared.emit = ^(NSString *name, NSDictionary *payload) {
             [weakSelf safeEmitEvent:name value:payload];
         };
+        CloudSyncImpl.shared.emitOwner = (__bridge void *)self;
         [CloudSyncImpl.shared startObserving];
     }
     return self;
@@ -43,8 +44,15 @@ RCT_EXPORT_MODULE(RNCloudSync)
 
 - (void)dealloc
 {
-    [CloudSyncImpl.shared stopObserving];
-    CloudSyncImpl.shared.emit = nil;
+    // Only tear down if this instance is still the one wired up. Across a
+    // reload the replacement module installs its own callback before this
+    // dealloc runs, and clearing it here would silence every event until the
+    // next reload. Pointer comparison only - the pointee may already be gone.
+    if (CloudSyncImpl.shared.emitOwner == (__bridge void *)self) {
+        [CloudSyncImpl.shared stopObserving];
+        CloudSyncImpl.shared.emit = nil;
+        CloudSyncImpl.shared.emitOwner = NULL;
+    }
 }
 
 #pragma mark - Event emission

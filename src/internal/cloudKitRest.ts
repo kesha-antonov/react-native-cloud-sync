@@ -77,6 +77,8 @@ interface CloudKitResponse {
   reason?: string
   retryAfter?: number
   redirectURL?: string
+  /** Set when a query has more results than one response can carry. */
+  continuationMarker?: string
 }
 
 /**
@@ -93,8 +95,15 @@ function isAlreadyExists(e: unknown): boolean {
   return e.code === ErrorCode.CONFLICT
 }
 
+/** How long a reachability answer is reused. See {@link CloudKitRestClient.isReachable}. */
+const REACHABILITY_TTL_MS = 30_000
+
+/** Record name used only to prove the container is reachable and authenticated. */
+const AVAILABILITY_PROBE_RECORD = '__rncs_availability_probe__'
+
 export class CloudKitRestClient {
   private readonly config: CloudKitRestConfig
+  private reachability: { at: number; ok: boolean } | null = null
 
   constructor(config: CloudKitRestConfig) {
     this.config = config
@@ -340,12 +349,62 @@ export class CloudKitRestClient {
   }
 
   async queryRecordNames(recordType = RECORD_TYPE_DEFAULT): Promise<string[]> {
-    const json = await this.post('/records/query', {
-      query: { recordType },
-    })
-    return (json.records ?? [])
-      .map(r => r.recordName)
-      .filter((n): n is string => typeof n === 'string')
+    const names: string[] = []
+    const seenMarkers = new Set<string>()
+    let continuationMarker: string | undefined
+
+    // `/records/query` caps a response at 200 records and hands back a
+    // continuation marker for the rest. Taking only the first page silently
+    // truncated `getAllKeys()`, and `migrate()` is built on `getAllKeys()` - so
+    // it showed up as a migration that quietly copied part of the data and
+    // reported success.
+    do {
+      const json: CloudKitResponse = await this.post('/records/query', {
+        query: { recordType },
+        ...(continuationMarker != null ? { continuationMarker } : {}),
+      })
+
+      for (const record of json.records ?? [])
+        if (typeof record.recordName === 'string') names.push(record.recordName)
+
+      continuationMarker = json.continuationMarker
+      // A server that repeats a marker would loop forever; stop instead.
+      if (continuationMarker != null) {
+        if (seenMarkers.has(continuationMarker)) break
+        seenMarkers.add(continuationMarker)
+      }
+    } while (continuationMarker != null)
+
+    return names
+  }
+
+  /**
+   * Cheap reachability check backing the provider's `isAvailable()`.
+   *
+   * The probe itself is a network round trip, but `isAvailable()` is documented
+   * as safe on a render path and the store calls it before every provider read -
+   * so unmemoised, each `getItem` on Android or web cost two requests instead of
+   * one. Held briefly: long enough to collapse that pair, short enough that a
+   * token expiring mid-session is noticed.
+   */
+  async isReachable(): Promise<boolean> {
+    const now = Date.now()
+    if (this.reachability != null && now - this.reachability.at < REACHABILITY_TTL_MS)
+      return this.reachability.ok
+
+    let ok: boolean
+    try {
+      // A `null` result and a NOT_FOUND both mean reachable and authenticated;
+      // only a thrown auth/network/config error means unavailable.
+      await this.getRecord(AVAILABILITY_PROBE_RECORD)
+      ok = true
+    }
+    catch {
+      ok = false
+    }
+
+    this.reachability = { at: now, ok }
+    return ok
   }
 }
 

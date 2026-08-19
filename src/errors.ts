@@ -167,20 +167,40 @@ export function normalizeError(e: unknown, provider?: string): CloudSyncError {
   if (e instanceof CloudSyncError) return e
 
   if (isCloudSyncError(e)) {
-    const info = e as unknown as CloudSyncErrorInfo & { message?: string }
-    return new CloudSyncError(e.code, info.message ?? e.code, {
-      retryAfterMs: numeric(info.retryAfterMs),
-      limitBytes: numeric(info.limitBytes),
-      actualBytes: numeric(info.actualBytes),
-      serverValue: info.serverValue,
-      provider: info.provider ?? provider,
-      serverErrorCode: info.serverErrorCode,
+    const raw = e as unknown as CloudSyncErrorInfo & { message?: string; userInfo?: unknown }
+    const nested = nestedInfo(raw.userInfo)
+    return new CloudSyncError(e.code, raw.message ?? e.code, {
+      retryAfterMs: numeric(raw.retryAfterMs ?? nested.retryAfterMs),
+      limitBytes: numeric(raw.limitBytes ?? nested.limitBytes),
+      actualBytes: numeric(raw.actualBytes ?? nested.actualBytes),
+      serverValue: raw.serverValue ?? nested.serverValue,
+      provider: raw.provider ?? nested.provider ?? provider,
+      serverErrorCode: raw.serverErrorCode ?? nested.serverErrorCode,
       cause: e,
     })
   }
 
   const message = e instanceof Error ? e.message : String(e)
   return new CloudSyncError(ErrorCode.UNKNOWN, message, { provider, cause: e })
+}
+
+/**
+ * The extra fields a native rejection carries, which live one level down.
+ *
+ * React Native builds the JS error from `reject(code, message, nsError)` with
+ * `Object.assign(new Error(message), errorData)`, and `errorData` keeps the
+ * `NSError`'s dictionary intact under a nested `userInfo` key rather than
+ * spreading it. So everything `CloudSyncError.asNSError` attaches on iOS -
+ * `retryAfterMs`, `limitBytes`, `actualBytes`, `serverValue` - arrives as
+ * `e.userInfo.limitBytes`, never as `e.limitBytes`.
+ *
+ * Reading only the top level is why CloudKit's `retryAfter` hint never reached
+ * the outbox's backoff, and why a CONFLICT's `serverValue` - documented as the
+ * thing that lets an app merge - was always undefined on iOS.
+ */
+function nestedInfo(userInfo: unknown): CloudSyncErrorInfo {
+  if (userInfo == null || typeof userInfo !== 'object') return {}
+  return userInfo
 }
 
 /**

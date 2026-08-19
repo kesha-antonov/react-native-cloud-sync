@@ -138,13 +138,27 @@ export function createCloudStore(
   }
 
   /**
-   * Routes a value to the right backing store by size.
+   * The byte ceiling tiering imposes on a provider, or null when it imposes
+   * none. This is what routes a value to the right backing store by size.
    *
-   * Without this, size limits leak into product code - cryptoc caps its tracked
+   * Without it, size limits leak into product code - cryptoc caps its tracked
    * venue list at 40 entries by hand "because this blob goes into the iCloud
    * key-value store, which has a hard per-key size limit", while its bookmark
    * list has no cap at all and can silently exceed the same limit.
+   *
+   * Both thresholds are honoured. `recordMaxBytes` used to be documented but
+   * never read, so a value between it and CloudKit's hard 1 MB record limit was
+   * routed to CloudKit anyway and only failed at the provider - which is the
+   * opposite of what tiering is for. Drive stores whole files and has no
+   * comparable small ceiling, so it is the destination of last resort.
    */
+  function limitFor(provider: CloudProvider): number | null {
+    if (tiering == null) return null
+    if (provider.name === 'icloudKV') return tiering.kvMaxBytes
+    if (provider.name === 'cloudKit') return tiering.recordMaxBytes
+    return null
+  }
+
   /**
    * Whether a provider can hold this value at all.
    *
@@ -153,27 +167,40 @@ export function createCloudStore(
    * whole write because one destination is too small.
    */
   function canHold(provider: CloudProvider, value: string): boolean {
-    if (tiering == null) return true
-    if (provider.name !== 'icloudKV') return true
-    return byteLength(value) <= tiering.kvMaxBytes
+    const limit = limitFor(provider)
+    return limit == null || byteLength(value) <= limit
   }
 
-  function providerForSize(value: string, preferred: CloudProvider): CloudProvider {
-    if (tiering == null) return preferred
-    const bytes = byteLength(value)
+  /**
+   * Picks the destination for a `failover` write when the preferred provider is
+   * too small for the value.
+   *
+   * Candidates must be both large enough AND currently available: routing to a
+   * provider that is configured but unreachable just converts a size problem
+   * into a write failure.
+   */
+  async function providerForSize(
+    value: string,
+    preferred: CloudProvider
+  ): Promise<CloudProvider> {
+    if (canHold(preferred, value)) return preferred
 
-    if (preferred.name === 'icloudKV' && bytes > tiering.kvMaxBytes) {
-      const fallback = options.providers.find(n => n === 'cloudKit' || n === 'googleDrive')
-      if (fallback != null) return resolveProvider(fallback)
-      throw new CloudSyncError(
-        ErrorCode.PAYLOAD_TOO_LARGE,
-        `[RNCloudSync] Value is ${bytes} bytes, above the ${tiering.kvMaxBytes}-byte key-value `
-        + `limit, and no larger-capacity provider is configured. Add 'cloudKit' or 'googleDrive' `
-        + `to providers.`,
-        { limitBytes: tiering.kvMaxBytes, actualBytes: bytes, provider: preferred.name }
-      )
+    const bytes = byteLength(value)
+    for (const name of options.providers) {
+      if (name === preferred.name) continue
+      const candidate = resolveProvider(name)
+      if (!canHold(candidate, value)) continue
+      if (!(await candidate.isAvailable())) continue
+      return candidate
     }
-    return preferred
+
+    throw new CloudSyncError(
+      ErrorCode.PAYLOAD_TOO_LARGE,
+      `[RNCloudSync] Value is ${bytes} bytes, above the ${limitFor(preferred)}-byte limit for `
+      + `'${preferred.name}', and no larger-capacity provider is configured and available. Add `
+      + `'cloudKit' or 'googleDrive' to providers.`,
+      { limitBytes: limitFor(preferred) ?? undefined, actualBytes: bytes, provider: preferred.name }
+    )
   }
 
   /** Single-destination write, queueing a retryable failure. */
@@ -216,10 +243,14 @@ export function createCloudStore(
 
       // Every destination exists but the value is too large for all of them.
       const bytes = byteLength(value)
+      const largest = targets
+        .map(limitFor)
+        .filter((n): n is number => n != null)
+        .reduce<number | undefined>((a, b) => (a == null || b > a ? b : a), undefined)
       throw new CloudSyncError(
         ErrorCode.PAYLOAD_TOO_LARGE,
         `[RNCloudSync] Value is ${bytes} bytes and does not fit in any configured provider.`,
-        { actualBytes: bytes, limitBytes: tiering?.kvMaxBytes }
+        { actualBytes: bytes, limitBytes: largest }
       )
     }
 
@@ -248,6 +279,17 @@ export function createCloudStore(
 
   /** Mirrored delete, with the same at-least-one rule. */
   async function removeMany(targets: CloudProvider[], key: string): Promise<void> {
+    // Nothing to delete from is a failed delete, not a completed one. Without
+    // this, a mirrored `removeItem` with every provider unavailable resolved
+    // successfully having removed the key from nowhere - the same false success
+    // this package exists to avoid, and which `writeMany` already refuses.
+    if (targets.length === 0)
+      throw new CloudSyncError(
+        ErrorCode.NOT_SIGNED_IN,
+        `[RNCloudSync] None of the configured providers (${options.providers.join(', ')}) `
+        + `is currently available.`
+      )
+
     let removed = 0
     let fatal: CloudSyncError | null = null
 
@@ -326,8 +368,13 @@ export function createCloudStore(
         const p = resolveProvider(name)
         try {
           if (!(await p.isAvailable())) continue
-          reachable.set(p.name, p)
           const v = await p.getItem(key)
+          // Only a provider we actually read from is a repair target. Marking it
+          // reachable before the read meant a provider whose read merely failed
+          // - a transient network blip - was repaired too, overwriting whatever
+          // it held with another provider's value. If the copy we could not read
+          // was the newer one, that silently destroyed it.
+          reachable.set(p.name, p)
           if (v != null) candidates.push({ provider: p.name, value: v })
         }
         catch (e) {
@@ -352,7 +399,7 @@ export function createCloudStore(
 
     setItem: async (key: string, value: string) => {
       if (writeMode === 'failover') {
-        const target = providerForSize(value, await primary())
+        const target = await providerForSize(value, await primary())
         await writeOne(target, key, value)
         return
       }
@@ -418,12 +465,21 @@ export function createCloudStore(
         }
         catch (e) {
           const err = normalizeError(e, entry.provider)
+          options.onError?.(err)
+
+          // A write only enters the queue for a retryable reason. If retrying it
+          // now fails for one the user must act on - quota, signed out, a
+          // payload the store will never accept - re-queueing turns it into a
+          // poison entry that retries forever, never drains, and never surfaces.
+          // Dropping it after reporting it matches the rule `setItem` already
+          // follows: a failure the user must act on is raised, not queued.
+          if (!isRetryable(err)) continue
+
           const attempts = entry.attempts + 1
           // Exponential backoff, honouring a server-supplied retry hint when
           // there is one (CloudKit sends `retryAfter`, Drive `Retry-After`).
           const backoff = err.retryAfterMs ?? Math.min(2 ** attempts * 1000, 5 * 60_000)
           keep.push({ ...entry, attempts, nextAttemptAt: Date.now() + backoff })
-          options.onError?.(err)
         }
       }
 

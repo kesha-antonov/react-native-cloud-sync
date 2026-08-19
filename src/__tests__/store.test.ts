@@ -270,3 +270,139 @@ describe('write modes', () => {
     await expect(store.getItem('k')).resolves.toBeNull()
   })
 })
+
+describe('deleting when nothing is reachable', () => {
+  const offline = (p: MemoryProvider, name: 'memory' | 'googleDrive') => ({
+    ...p,
+    name,
+    isAvailable: () => Promise.resolve(false),
+  })
+
+  it('mirror rejects rather than reporting a delete that happened nowhere', async () => {
+    // The false success this package exists to avoid, in the one place it
+    // survived: with no provider available there was nothing to delete from,
+    // and `removeItem` resolved anyway.
+    const mem = createMemoryProvider({ initial: { k: 'v' } })
+    const store = createCloudStore({ providers: ['memory'], writeMode: 'mirror' })
+    store.registerProvider(offline(mem, 'memory'))
+
+    await expect(store.removeItem('k')).rejects.toMatchObject({
+      code: ErrorCode.NOT_SIGNED_IN,
+    })
+    // And the value is demonstrably still there, which is what makes the old
+    // resolved promise a lie rather than a harmless one.
+    expect(mem.dump()).toEqual({ k: 'v' })
+  })
+
+  it('failover already rejected, and still does', async () => {
+    const mem = createMemoryProvider({ initial: { k: 'v' } })
+    const store = createCloudStore({ providers: ['memory'] })
+    store.registerProvider(offline(mem, 'memory'))
+
+    await expect(store.removeItem('k')).rejects.toMatchObject({
+      code: ErrorCode.NOT_SIGNED_IN,
+    })
+  })
+})
+
+describe('outbox does not accumulate poison entries', () => {
+  it('drops a queued write that starts failing for a reason the user must act on', async () => {
+    // A write is only ever queued for a retryable reason. If the retry then
+    // hits quota, re-queueing it would retry forever, never drain, and never
+    // tell anyone - so it is reported and dropped, matching what setItem does
+    // with the same failure.
+    const errors: string[] = []
+    const mem = createMemoryProvider({
+      faults: { setItem: { code: ErrorCode.NETWORK_UNAVAILABLE } },
+    })
+    const { store } = setup(mem, { onError: (e: { code: string }) => errors.push(e.code) })
+
+    await store.setItem('k', 'v')
+    expect(store.pendingWrites()).toHaveLength(1)
+
+    // The account filled up while the write sat in the queue.
+    mem.setFault('setItem', { code: ErrorCode.QUOTA_EXCEEDED })
+    const result = await store.flushOutbox()
+
+    expect(result).toEqual({ drained: 0, remaining: 0 })
+    expect(store.pendingWrites()).toHaveLength(0)
+    expect(errors).toContain(ErrorCode.QUOTA_EXCEEDED)
+  })
+
+  it('still keeps a queued write that fails for a retryable reason', async () => {
+    const mem = createMemoryProvider({
+      faults: { setItem: { code: ErrorCode.NETWORK_UNAVAILABLE } },
+    })
+    const { store } = setup(mem)
+
+    await store.setItem('k', 'v')
+    const result = await store.flushOutbox()
+
+    expect(result).toEqual({ drained: 0, remaining: 1 })
+  })
+})
+
+describe('tiering', () => {
+  const big = (bytes: number) => 'x'.repeat(bytes)
+
+  function tiered(extra: Record<string, unknown>) {
+    const kv = { ...createMemoryProvider(), name: 'icloudKV' as const }
+    const ckBase = createMemoryProvider()
+    const ck = { ...ckBase, name: 'cloudKit' as const }
+    const driveBase = createMemoryProvider()
+    const drive = { ...driveBase, name: 'googleDrive' as const }
+    const store = createCloudStore({
+      tiering: { kvMaxBytes: 64, recordMaxBytes: 128 },
+      ...extra,
+    } as Parameters<typeof createCloudStore>[0])
+    store.registerProvider(kv)
+    store.registerProvider(ck)
+    store.registerProvider(drive)
+    return { store, ckBase, driveBase }
+  }
+
+  it('honours recordMaxBytes, which used to be documented but never read', async () => {
+    // A value between recordMaxBytes and CloudKit's hard 1 MB limit was routed
+    // to CloudKit regardless, so the threshold did nothing at all.
+    const { store, ckBase, driveBase } = tiered({
+      providers: ['cloudKit', 'googleDrive'],
+    })
+
+    await store.setItem('k', big(200))
+
+    expect(ckBase.dump()).toEqual({})
+    expect(driveBase.dump()).toEqual({ k: big(200) })
+  })
+
+  it('still routes a small value to the preferred provider', async () => {
+    const { store, ckBase, driveBase } = tiered({
+      providers: ['cloudKit', 'googleDrive'],
+    })
+
+    await store.setItem('k', big(10))
+
+    expect(ckBase.dump()).toEqual({ k: big(10) })
+    expect(driveBase.dump()).toEqual({})
+  })
+
+  it('rejects when no configured provider is large enough', async () => {
+    const { store } = tiered({ providers: ['icloudKV', 'cloudKit'] })
+
+    await expect(store.setItem('k', big(500))).rejects.toMatchObject({
+      code: ErrorCode.PAYLOAD_TOO_LARGE,
+      actualBytes: 500,
+    })
+  })
+
+  it('mirror skips a provider the value does not fit in, per threshold', async () => {
+    const { store, ckBase, driveBase } = tiered({
+      providers: ['cloudKit', 'googleDrive'],
+      writeMode: 'mirror',
+    })
+
+    await store.setItem('k', big(200))
+
+    expect(ckBase.dump()).toEqual({})
+    expect(driveBase.dump()).toEqual({ k: big(200) })
+  })
+})

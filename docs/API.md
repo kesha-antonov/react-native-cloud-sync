@@ -147,7 +147,7 @@ interface TieringConfig {
 const DEFAULT_TIERING: TieringConfig
 ```
 
-Values above `kvMaxBytes` are routed away from the key-value store to the first record-capable provider in your list. Binary assets are not part of tiering - see [`cloudKitAssets`](providers/cloudkit.md#assets).
+Each threshold caps one provider: `kvMaxBytes` the key-value store, `recordMaxBytes` a CloudKit record field. A value above a provider's cap is routed past it to the next configured provider that is both large enough and available, and Google Drive stores whole files so it has no cap of its own. Binary assets are not part of tiering - see [`cloudKitAssets`](providers/cloudkit.md#assets).
 
 ## Resolvers
 

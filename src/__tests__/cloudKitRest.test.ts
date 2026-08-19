@@ -229,3 +229,67 @@ describe('byteLength', () => {
     expect(byteLength('日本語')).toBe(9)
   })
 })
+
+describe('queryRecordNames pagination', () => {
+  // `/records/query` caps a response at 200 records and returns a continuation
+  // marker for the rest. Taking only the first page silently truncated
+  // getAllKeys(), and migrate() is built on getAllKeys() - so a migration
+  // quietly copied part of the data and reported success.
+  it('follows the continuation marker to the end', async () => {
+    const { client, calls } = makeClient([
+      {
+        json: {
+          records: [{ recordName: 'a' }, { recordName: 'b' }],
+          continuationMarker: 'marker-1',
+        },
+      },
+      { json: { records: [{ recordName: 'c' }] } },
+    ])
+
+    await expect(client.queryRecordNames()).resolves.toEqual(['a', 'b', 'c'])
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0].body).toMatchObject({ query: { recordType: 'KVBlob' } })
+    expect(calls[0].body).not.toHaveProperty('continuationMarker')
+    expect(calls[1].body).toMatchObject({ continuationMarker: 'marker-1' })
+  })
+
+  it('stops after a single page when there is no marker', async () => {
+    const { client, calls } = makeClient([{ json: { records: [{ recordName: 'a' }] } }])
+
+    await expect(client.queryRecordNames()).resolves.toEqual(['a'])
+    expect(calls).toHaveLength(1)
+  })
+
+  it('refuses to loop when a server repeats the same marker', async () => {
+    // Defensive: a marker that never advances would otherwise spin forever.
+    const { client, calls } = makeClient([
+      { json: { records: [{ recordName: 'a' }], continuationMarker: 'stuck' } },
+    ])
+
+    await expect(client.queryRecordNames()).resolves.toEqual(['a', 'a'])
+    expect(calls).toHaveLength(2)
+  })
+})
+
+describe('isReachable', () => {
+  it('memoises, so a read does not cost two round trips', async () => {
+    // `isAvailable()` is documented as safe on a render path, and the store
+    // calls it before every provider read. An unmemoised probe doubled the
+    // request count of every getItem on Android and web.
+    const { client, calls } = makeClient([{ json: { records: [] } }])
+
+    await expect(client.isReachable()).resolves.toBe(true)
+    await expect(client.isReachable()).resolves.toBe(true)
+
+    expect(calls).toHaveLength(1)
+  })
+
+  it('reports false when the container cannot be reached, without throwing', async () => {
+    const { client } = makeClient([
+      { status: 421, json: { serverErrorCode: 'AUTHENTICATION_REQUIRED' } },
+    ])
+
+    await expect(client.isReachable()).resolves.toBe(false)
+  })
+})
