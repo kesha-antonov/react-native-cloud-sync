@@ -51,6 +51,12 @@ jobs:
       - run: yarn install --immutable
 
       # example/ios is generated, not committed, so it has to be produced here.
+
+      # app.plugin.js points at plugin/build/, which is generated and
+      # gitignored. `expo prebuild` loads the config plugin, so this must
+      # exist first or prebuild dies resolving it.
+      - name: Build the config plugin
+        run: yarn build-plugin
       - name: Prebuild the example
         working-directory: example
         run: npx expo prebuild --platform ios --no-install
@@ -99,6 +105,12 @@ jobs:
 
       - run: yarn install --immutable
 
+
+      # app.plugin.js points at plugin/build/, which is generated and
+      # gitignored. `expo prebuild` loads the config plugin, so this must
+      # exist first or prebuild dies resolving it.
+      - name: Build the config plugin
+        run: yarn build-plugin
       - name: Prebuild the example
         working-directory: example
         run: npx expo prebuild --platform ios --no-install
