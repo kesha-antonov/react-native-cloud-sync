@@ -139,6 +139,21 @@ export interface OutboxEntry {
  */
 export type WriteMode = 'failover' | 'mirror'
 
+/** One provider's copy of a key, as seen during a resolving read. */
+export interface ResolveCandidate {
+  provider: ProviderName
+  value: string
+}
+
+/**
+ * Picks the winner when providers disagree.
+ *
+ * The store holds opaque strings, so it cannot know which copy is newer - only
+ * the app knows what its values mean. Returning `null` means "none of these",
+ * which reads as absent.
+ */
+export type ResolveFn = (candidates: ResolveCandidate[]) => string | null
+
 export interface CloudStoreOptions {
   /**
    * Providers in preference order.
@@ -154,6 +169,30 @@ export interface CloudStoreOptions {
    * the preferred provider does not exist.
    */
   writeMode?: WriteMode
+  /**
+   * How a read picks a value when more than one provider holds the key.
+   *
+   * Without this, `getItem` returns the first non-null value in provider order
+   * and stops. That is cheap and correct when only one device population
+   * writes - but it silently serves stale data as soon as writes come from
+   * both sides. An Apple device reading `['icloudKV', 'googleDrive']` always
+   * finds *something* in iCloud, so a newer value written from Android via
+   * Drive is never even looked at.
+   *
+   * Supplying this makes a read consult every available provider and hand you
+   * the candidates. {@link resolveByTimestamp} covers the usual case.
+   */
+  resolve?: ResolveFn
+  /**
+   * After a resolving read, write the winner back to providers that disagreed.
+   *
+   * Default true when {@link resolve} is set. This is what actually makes two
+   * populations converge: without it, the losing store keeps its old value and
+   * every read pays to resolve again forever.
+   *
+   * Best-effort - a failed repair never fails the read.
+   */
+  repairOnRead?: boolean
   tiering?: TieringConfig | 'auto' | 'off'
   /**
    * Persist failed writes and retry them with backoff.

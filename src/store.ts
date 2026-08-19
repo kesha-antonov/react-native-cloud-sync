@@ -7,6 +7,7 @@ import {
   DEFAULT_TIERING,
   type CloudProvider,
   type CloudStoreOptions,
+  type ResolveCandidate,
   type OutboxEntry,
   type ProviderName,
   type TieringConfig,
@@ -53,6 +54,10 @@ export function createCloudStore(
   const custom = new Map<string, CloudProvider>()
   const useOutbox = options.outbox ?? true
   const writeMode = options.writeMode ?? 'failover'
+  const resolveValue = options.resolve
+  // Repair defaults on with a resolver: without it the losing store keeps its
+  // old value and every read has to resolve again, forever.
+  const repairOnRead = options.repairOnRead ?? (resolveValue != null)
   const storage: OutboxStorage = options.outboxStorage ?? createMemoryOutboxStorage()
 
   const tiering: TieringConfig | null
@@ -62,7 +67,7 @@ export function createCloudStore(
         ? DEFAULT_TIERING
         : options.tiering
 
-  function resolve(name: ProviderName): CloudProvider {
+  function resolveProvider(name: ProviderName): CloudProvider {
     const found = custom.get(name) ?? (BUILT_IN as Record<string, CloudProvider>)[name]
     if (found == null)
       throw new CloudSyncError(
@@ -83,7 +88,7 @@ export function createCloudStore(
   async function allAvailable(): Promise<CloudProvider[]> {
     const found: CloudProvider[] = []
     for (const name of options.providers) {
-      const p = resolve(name)
+      const p = resolveProvider(name)
       if (await p.isAvailable()) found.push(p)
     }
     return found
@@ -92,7 +97,7 @@ export function createCloudStore(
   /** First configured+available provider, in the caller's preference order. */
   async function primary(): Promise<CloudProvider> {
     for (const name of options.providers) {
-      const p = resolve(name)
+      const p = resolveProvider(name)
       if (await p.isAvailable()) return p
     }
     throw new CloudSyncError(
@@ -159,7 +164,7 @@ export function createCloudStore(
 
     if (preferred.name === 'icloudKV' && bytes > tiering.kvMaxBytes) {
       const fallback = options.providers.find(n => n === 'cloudKit' || n === 'googleDrive')
-      if (fallback != null) return resolve(fallback)
+      if (fallback != null) return resolveProvider(fallback)
       throw new CloudSyncError(
         ErrorCode.PAYLOAD_TOO_LARGE,
         `[RNCloudSync] Value is ${bytes} bytes, above the ${tiering.kvMaxBytes}-byte key-value `
@@ -265,24 +270,84 @@ export function createCloudStore(
     if (removed === 0 && fatal != null) throw fatal
   }
 
+  /**
+   * Writes the resolved value back to providers that disagreed, and to
+   * reachable providers that were missing it entirely.
+   */
+  async function repair(
+    key: string,
+    winner: string,
+    candidates: ResolveCandidate[],
+    reachable: Map<ProviderName, CloudProvider>
+  ): Promise<void> {
+    const byProvider = new Map(candidates.map(c => [c.provider, c.value]))
+
+    for (const [name, provider] of reachable) {
+      if (byProvider.get(name) === winner) continue
+      if (!canHold(provider, winner)) continue
+      try {
+        await provider.setItem(key, winner)
+      }
+      catch (e) {
+        options.onError?.(normalizeError(e, name))
+      }
+    }
+  }
+
   const store: CloudStore = {
     getItem: async (key: string) => {
       let lastError: unknown = null
-      // Fall through the preference list: a value written on another device by
-      // a different provider should still be found.
+
+      // No resolver: first non-null wins and we stop looking. Cheap, and right
+      // when only one population of devices ever writes.
+      if (resolveValue == null) {
+        for (const name of options.providers) {
+          const p = resolveProvider(name)
+          try {
+            if (!(await p.isAvailable())) continue
+            const v = await p.getItem(key)
+            if (v != null) return v
+          }
+          catch (e) {
+            lastError = e
+          }
+        }
+        if (lastError != null) throw normalizeError(lastError)
+        return null
+      }
+
+      // With a resolver: consult every available provider, because the first
+      // one holding a value is not necessarily holding the newest. This is what
+      // makes sync work in both directions across a mixed fleet.
+      const candidates: ResolveCandidate[] = []
+      const reachable = new Map<ProviderName, CloudProvider>()
+
       for (const name of options.providers) {
-        const p = resolve(name)
+        const p = resolveProvider(name)
         try {
           if (!(await p.isAvailable())) continue
+          reachable.set(p.name, p)
           const v = await p.getItem(key)
-          if (v != null) return v
+          if (v != null) candidates.push({ provider: p.name, value: v })
         }
         catch (e) {
           lastError = e
         }
       }
-      if (lastError != null) throw normalizeError(lastError)
-      return null
+
+      if (candidates.length === 0) {
+        if (lastError != null) throw normalizeError(lastError)
+        return null
+      }
+
+      const winner = resolveValue(candidates)
+      if (winner == null) return null
+
+      // Best-effort convergence. Never fails the read - the caller already has
+      // the right answer, and a failed repair only costs another resolve later.
+      if (repairOnRead) void repair(key, winner, candidates, reachable)
+
+      return winner
     },
 
     setItem: async (key: string, value: string) => {
@@ -305,7 +370,7 @@ export function createCloudStore(
     getAllKeys: async () => {
       const seen = new Set<string>()
       for (const name of options.providers) {
-        const p = resolve(name)
+        const p = resolveProvider(name)
         try {
           if (!(await p.isAvailable())) continue
           for (const k of await p.getAllKeys()) seen.add(k)
@@ -318,8 +383,8 @@ export function createCloudStore(
     },
 
     migrate: async ({ from, to }) => {
-      const src = resolve(from)
-      const dst = resolve(to)
+      const src = resolveProvider(from)
+      const dst = resolveProvider(to)
       const keys = await src.getAllKeys()
       const copied: string[] = []
 
@@ -345,7 +410,7 @@ export function createCloudStore(
           keep.push(entry)
           continue
         }
-        const p = resolve(entry.provider)
+        const p = resolveProvider(entry.provider)
         try {
           if (entry.value == null) await p.removeItem(entry.key)
           else await p.setItem(entry.key, entry.value)

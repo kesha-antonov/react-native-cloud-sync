@@ -61,6 +61,56 @@ else if (remote.updatedAt > local.updatedAt)
 
 Note that deletions do not propagate under this scheme - a removed item reappears from whichever device still has it. If deletions matter, store tombstones rather than removing entries.
 
+## Two-way sync between Apple and non-Apple devices
+
+The setup for a fleet where any device might write - an Android phone and an
+iPad, a browser and a Mac.
+
+```ts
+import {
+  createCloudStore,
+  resolveByTimestamp,
+} from '@kesha-antonov/react-native-cloud-sync'
+
+interface Blob { data: AppState, updatedAt: number }
+
+const store = createCloudStore({
+  providers: ['icloudKV', 'googleDrive'],
+  // Put a copy in Drive, so a non-Apple device has something to read.
+  writeMode: 'mirror',
+  // Consult both, and take the newest - otherwise an Apple device returns its
+  // own stale iCloud copy without ever looking at Drive.
+  resolve: resolveByTimestamp('updatedAt'),
+  outboxStorage: mmkvAdapter,
+})
+
+export async function save (data: AppState) {
+  const blob: Blob = { data, updatedAt: Date.now() }
+  await store.setItem('state/v1', JSON.stringify(blob))
+}
+
+export async function load (): Promise<AppState | null> {
+  const raw = await store.getItem('state/v1')
+  return raw == null ? null : (JSON.parse(raw) as Blob).data
+}
+```
+
+Every write must carry the timestamp, on every platform - a value the resolver
+cannot date loses to one it can, so a device that forgets will always lose.
+
+Clock skew is the limitation. Device clocks disagree, so "newest" means "claims
+the latest timestamp". For a backup blob that is fine. For anything where a lost
+write matters, merge in `resolve` rather than picking a winner:
+
+```ts
+resolve: candidates => JSON.stringify(
+  mergeStates(candidates.map(c => JSON.parse(c.value) as Blob))
+)
+```
+
+Deletions still need tombstones under either scheme - see
+[last-write-wins](#last-write-wins-with-a-timestamp).
+
 ## Show a "pending sync" indicator
 
 ```ts

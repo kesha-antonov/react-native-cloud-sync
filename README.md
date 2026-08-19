@@ -197,17 +197,18 @@ await googleDrive.setItem('portfolio.json', JSON.stringify(holdings))
 import { createCloudStore } from '@kesha-antonov/react-native-cloud-sync'
 
 const store = createCloudStore({
-  providers: ['icloudKV', 'googleDrive'],   // preference order
-  writeMode: 'mirror',                      // write to BOTH, not just the first
-  tiering: 'auto',                          // route by size
-  outboxStorage: mmkvAdapter,               // survive restarts
+  providers: ['icloudKV', 'googleDrive'],       // preference order
+  writeMode: 'mirror',                          // write to BOTH, not just the first
+  resolve: resolveByTimestamp('updatedAt'),     // read the newest, not the first
+  tiering: 'auto',                              // route by size
+  outboxStorage: mmkvAdapter,                   // survive restarts
 })
 
 await store.setItem('portfolio', json)
-await store.flushOutbox()                   // on reconnect
+await store.flushOutbox()                       // on reconnect
 ```
 
-Reads always fall through the list. Writes go to the first available provider by default; `writeMode: 'mirror'` sends them to every one - which is what makes an iPhone's data readable on Android, since iCloud cannot be reached from there. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/store)
+Those two options are what make sync work in **both** directions across a mixed fleet - an Android phone and an iPad, a browser and a Mac. `mirror` puts a copy in Drive so a non-Apple device has something to read; `resolve` stops an Apple device serving its own stale iCloud copy without ever consulting Drive. Either platform can be the one the user started on. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/store)
 
 ### Handling failures
 

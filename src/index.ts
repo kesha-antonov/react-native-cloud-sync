@@ -13,6 +13,7 @@ export { createMemoryProvider } from './providers/memory'
 
 // The facade over them.
 export { createCloudStore, type CloudStore, type OutboxStorage } from './store'
+export { resolveByTimestamp, resolveByPreferenceOrder } from './resolvers'
 
 // Configuration for the REST-backed paths.
 export {
@@ -45,6 +46,8 @@ export type {
   OutboxEntry,
   ProviderName,
   RemoteChangeEvent,
+  ResolveCandidate,
+  ResolveFn,
   TieringConfig,
   Unsubscribe
 } from './types'

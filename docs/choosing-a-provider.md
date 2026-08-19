@@ -10,6 +10,7 @@ Three providers, each usable directly or through the [store facade](store.md). T
 | Sync structured app data, and want it on Android or web too | `cloudKit` |
 | Want one always-on backend that behaves the same everywhere | `googleDrive` |
 | Want iCloud on Apple and something sensible on Android, automatically | the [facade](store.md) with `['icloudKV', 'googleDrive']` |
+| Want the *same* data on Apple and non-Apple devices, both writing | the facade with `writeMode: 'mirror'` **and** a `resolve` function |
 
 ## Platform support
 
@@ -66,17 +67,31 @@ Read this carefully, because the list does not mean what it looks like: **writes
 
 That is the right shape when the two are alternatives. It is not cross-device sync.
 
-**Cross-platform app, same data on every device.** Add `writeMode: 'mirror'` so every write goes to both:
+**Cross-platform app, same data on every device.** Add `writeMode: 'mirror'` so every write goes to both, and a `resolve` function so reads pick the newest copy rather than the first one found:
 
 ```ts
 const store = createCloudStore({
   providers: ['icloudKV', 'googleDrive'],
   writeMode: 'mirror',
+  resolve: resolveByTimestamp('updatedAt'),
   tiering: 'auto',
 })
 ```
 
-Now the iPhone writes to iCloud *and* Drive, and Android reads it back from Drive. See [how the provider list is used](store.md#how-the-provider-list-is-used).
+Both parts are needed, and for different reasons. `mirror` puts a copy in Drive so a non-Apple device has something to read at all. `resolve` stops an Apple device returning its own stale iCloud copy without ever consulting Drive - which is what happens by default, because the first provider holding a value wins. See [two-way sync](store.md#two-way-sync-across-a-mixed-fleet).
+
+### It works in either direction
+
+Nothing here assumes Apple is the primary platform. The same configuration covers the mirror image:
+
+| Starting point | What happens |
+|---|---|
+| iPhone first, later an Android phone or a browser | Writes go to iCloud and Drive; the Android device reads Drive |
+| **Android or web first, later a Mac, iPad or iPhone** | Writes go to Drive; the new Apple device reads Drive, and mirroring starts populating iCloud too |
+
+The Apple side of that second row is worth spelling out. An Android user's data lives only in Drive. When they add an iPad, that iPad is configured with both providers - iCloud is empty, Drive has everything, and the resolver picks Drive. Read repair then copies the value into iCloud, so subsequent reads on Apple devices are served locally and their other Apple devices sync for free.
+
+The only asymmetry is Apple-side, and it is Apple's: an Android or web device cannot reach `icloudKV` at all, so Drive has to be in the list for any cross-platform story to work. Which is why Drive is the sensible always-on backend regardless of which platform came first.
 
 **Cross-platform, but the data must be the same account everywhere.** `cloudKit` everywhere, with the Android/web halves framed as an explicit import.
 
@@ -130,7 +145,9 @@ Some honesty to build into that flow:
 - **Turning it off should ask about the copy.** "Stop backing up to Drive" and "delete what is already there" are different intentions - see below.
 - **Two clouds means two ways to fail.** With `mirror` a write succeeds if either destination takes it and the other is retried in the background, so a Drive outage does not block an iCloud user. But an expired Google token still needs surfacing, or their Android restore quietly stops being current.
 
-The reverse framing works on Android, where there is no iCloud to fall back on: Drive is the only option, so it is a connect step rather than an extra.
+On Android and web the framing inverts: there is no iCloud to fall back on, so Drive is not an extra - it is the only option, and connecting it is the backup feature itself rather than an add-on. Ask for it as "Back up your data", not "also back up".
+
+And if that user later picks up an iPad, nothing needs re-explaining. The iPad connects the same Google account, reads the existing data out of Drive, and quietly starts mirroring into iCloud as well - so their Apple devices sync with each other from then on.
 
 Three more things worth getting right, each of which is easy to get wrong:
 

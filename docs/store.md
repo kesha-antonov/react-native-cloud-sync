@@ -71,7 +71,60 @@ Costs one request per provider per write, and requires the user to have connecte
 
 ### Read fallthrough
 
-In both modes `getItem` tries each available provider in order and returns the first value found, so a value written by either backend is reachable without the app branching on platform. `getAllKeys()` unions across providers, and a provider that cannot list does not hide the ones that can.
+In both modes `getItem` tries each available provider in order and returns the first value found. `getAllKeys()` unions across providers, and a provider that cannot list does not hide the ones that can.
+
+**First found is not newest.** That distinction does not matter while only one population of devices writes, and matters enormously as soon as both do - see below.
+
+## Two-way sync across a mixed fleet
+
+Mirroring gets a copy into every store. It does not, on its own, make reads correct when both sides write.
+
+Consider an iPhone configured `['icloudKV', 'googleDrive']` with `mirror`, and an Android phone that can only reach Drive:
+
+1. The iPhone writes. iCloud and Drive both hold `A`.
+2. The Android phone writes. Drive now holds `B`; iCloud still holds `A`, because Android cannot reach it.
+3. The iPhone reads. iCloud is first in the list and has a value, so it returns `A` - and never looks at Drive.
+
+The iPhone serves stale data indefinitely. The direction that breaks is always *towards* the device that can reach the preferred store.
+
+### `resolve`
+
+The store holds opaque strings, so it cannot know which copy is newer - only your app knows what its values mean. Supply a resolver and a read consults **every** available provider, then asks you which wins:
+
+```ts
+import { createCloudStore, resolveByTimestamp } from '@kesha-antonov/react-native-cloud-sync'
+
+const store = createCloudStore({
+  providers: ['icloudKV', 'googleDrive'],
+  writeMode: 'mirror',
+  resolve: resolveByTimestamp('updatedAt'),
+})
+```
+
+`resolveByTimestamp` covers the usual shape - JSON values carrying a timestamp field, newest wins. It accepts epoch millis or ISO strings, prefers a value it can date over one it cannot, and keeps the earlier provider on a tie so results do not flap.
+
+Write your own for anything else:
+
+```ts
+resolve: (candidates) => {
+  // candidates: [{ provider, value }, ...] in preference order
+  return merge(candidates.map(c => JSON.parse(c.value)))
+}
+```
+
+Returning `null` means "none of these", which reads as absent.
+
+### Read repair
+
+After resolving, the winner is written back to any provider that disagreed. That is what makes the two sides actually converge - without it the losing store keeps its old value and every read pays to resolve again, forever.
+
+It is best-effort and never fails the read: the caller already has the right answer, and a failed repair only costs another resolution later. Disable with `repairOnRead: false`.
+
+### The cost
+
+A resolving read is one request per provider instead of one, and may issue repair writes. If a key is read on a hot path, either cache it or keep that key on a single provider.
+
+Reads without a resolver are unchanged - first non-null, short-circuit.
 
 ## Tiering
 

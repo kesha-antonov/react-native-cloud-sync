@@ -99,9 +99,18 @@ createCloudStore(options: CloudStoreOptions & {
 interface CloudStoreOptions {
   providers: ProviderName[]               // preference order
   writeMode?: 'failover' | 'mirror'       // default 'failover'
+  resolve?: ResolveFn                     // consult all providers, pick a winner
+  repairOnRead?: boolean                  // default true when resolve is set
   tiering?: TieringConfig | 'auto' | 'off'
   outbox?: boolean                        // default true
   onError?: (e: CloudSyncError) => void
+}
+
+type ResolveFn = (candidates: ResolveCandidate[]) => string | null
+
+interface ResolveCandidate {
+  provider: ProviderName
+  value: string
 }
 
 interface OutboxStorage {
@@ -121,7 +130,9 @@ interface CloudStore {
 }
 ```
 
-`writeMode` decides whether a write goes to the first available provider (`failover`, the default) or to all of them (`mirror`). Reads fall through the list either way - see [how the provider list is used](store.md#how-the-provider-list-is-used).
+`writeMode` decides whether a write goes to the first available provider (`failover`, the default) or to all of them (`mirror`).
+
+`resolve` changes how a read picks a value. Without it, `getItem` returns the first non-null value in provider order and stops - which silently serves stale data once both an Apple and a non-Apple device are writing. With it, every available provider is consulted and you choose the winner; the result is then written back to providers that disagreed unless `repairOnRead` is false. See [two-way sync](store.md#two-way-sync-across-a-mixed-fleet).
 
 The default `outboxStorage` is in-memory, so queued writes do not survive a restart. Pass an MMKV- or AsyncStorage-backed adapter in production - see [the outbox](store.md#making-it-durable).
 
@@ -137,6 +148,15 @@ const DEFAULT_TIERING: TieringConfig
 ```
 
 Values above `kvMaxBytes` are routed away from the key-value store to the first record-capable provider in your list. Binary assets are not part of tiering - see [`cloudKitAssets`](providers/cloudkit.md#assets).
+
+## Resolvers
+
+```ts
+resolveByTimestamp(field = 'updatedAt'): ResolveFn
+resolveByPreferenceOrder: ResolveFn
+```
+
+`resolveByTimestamp` reads a numeric or ISO-string timestamp out of each JSON candidate and takes the newest. A candidate it cannot date loses to one it can; if nothing is datable it falls back to provider order; ties keep the earlier provider so results do not flap.
 
 ## Errors
 
