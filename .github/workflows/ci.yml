@@ -66,6 +66,12 @@ jobs:
       # app.plugin.js points at plugin/build/, which is generated and
       # gitignored. `expo prebuild` loads the config plugin, so this must
       # exist first or prebuild dies resolving it.
+
+      # Cheap pre-flight: confirms every Swift member the Objective-C++
+      # bridge calls is actually exposed to Objective-C, before spending
+      # minutes on pod install and a full build.
+      - name: Check the Objective-C surface
+        run: yarn check:objc
       - name: Build the config plugin
         run: yarn build-plugin
       - name: Prebuild the example
@@ -120,6 +126,12 @@ jobs:
       # app.plugin.js points at plugin/build/, which is generated and
       # gitignored. `expo prebuild` loads the config plugin, so this must
       # exist first or prebuild dies resolving it.
+
+      # Cheap pre-flight: confirms every Swift member the Objective-C++
+      # bridge calls is actually exposed to Objective-C, before spending
+      # minutes on pod install and a full build.
+      - name: Check the Objective-C surface
+        run: yarn check:objc
       - name: Build the config plugin
         run: yarn build-plugin
       - name: Prebuild the example

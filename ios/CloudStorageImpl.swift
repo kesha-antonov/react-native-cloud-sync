@@ -20,7 +20,12 @@ import Foundation
 
     /// Emits (eventName, payload) to whichever architecture is listening. The
     /// bridge installs this; until it does, events are buffered (see below).
-    public var emit: ((String, [String: Any]) -> Void)?
+    ///
+    /// `@objc` is required. Swift does not expose members to Objective-C
+    /// automatically just because the class is `@objc` and inherits NSObject,
+    /// so without it the bridge fails to compile with "property 'emit' not
+    /// found on object of type 'CloudStorageImpl *'".
+    @objc public var emit: ((String, [String: Any]) -> Void)?
 
     private let kvStore = NSUbiquitousKeyValueStore.default
 

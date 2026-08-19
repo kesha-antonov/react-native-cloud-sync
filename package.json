@@ -94,6 +94,7 @@
     "build-plugin": "tsc --project plugin/tsconfig.json",
     "typecheck": "tsc --noEmit",
     "validate:podspec": "ruby scripts/validate-podspec.rb",
+    "check:objc": "bash scripts/check-objc-surface.sh",
     "lint": "eslint .",
     "test": "jest",
     "test:watch": "jest --watch",
