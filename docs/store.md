@@ -27,11 +27,51 @@ const store = createCloudStore({
 | `pendingWrites()` | Queued entries, for a "pending sync" indicator |
 | `registerProvider(p)` | Adds a provider - e.g. the in-memory test double |
 
-## Read fallthrough
+## How the provider list is used
 
-`getItem` tries each provider in order and returns the first value it finds. That matters on a mixed fleet: a value written from an iPhone through `icloudKV` is still found on Android, where only `googleDrive` is available - without the app branching on platform.
+This is the part worth reading carefully, because the obvious reading of `providers: ['icloudKV', 'googleDrive']` is "both", and by default it is not.
 
-`getAllKeys()` unions across providers, and a provider that cannot list does not hide the ones that can.
+| | Default (`failover`) | `writeMode: 'mirror'` |
+|---|---|---|
+| `setItem` | first available provider **only** | **every** available provider |
+| `removeItem` | first available provider only | every available provider |
+| `getItem` | falls through the list | falls through the list |
+| `getAllKeys` | union across all | union across all |
+
+### `failover` - the providers are alternatives
+
+```ts
+createCloudStore({ providers: ['icloudKV', 'googleDrive'] })
+```
+
+On an iPhone with iCloud signed in, writes go to **iCloud only**. Drive is a read fallback, not a second destination.
+
+Use this when the providers are alternatives - iCloud where it exists, Drive otherwise - and each device only needs to reach its own copy.
+
+**It does not give you cross-platform sync.** If that iPhone only ever wrote to iCloud, an Android device has nothing to read: iCloud is unreachable there, and Drive was never written to. For that you need `mirror`, or you need the user on Drive.
+
+### `mirror` - the same data in more than one place
+
+```ts
+createCloudStore({
+  providers: ['icloudKV', 'googleDrive'],
+  writeMode: 'mirror',
+})
+```
+
+Every write goes to every available provider. Now the iPhone writes to iCloud *and* Drive, and Android - which can only see Drive - finds the data.
+
+Costs one request per provider per write, and requires the user to have connected each one.
+
+**Partial failure is a success.** If one destination stores the value and another is offline, the write resolves and the failed one goes to the [outbox](#the-outbox) to be retried on its own. One good copy plus a queued retry is a better outcome than rejecting a write the user has already been told about. It rejects only when *nothing* stored it.
+
+**Deletes mirror too.** Removing from only the preferred provider would leave a copy that reads then fall through to, resurrecting deleted data.
+
+**Values too large for a provider are skipped, not fatal.** A 200 KB value goes to Drive and skips the iCloud key-value store rather than failing the whole write. If it fits nowhere, that rejects with `ERR_PAYLOAD_TOO_LARGE`.
+
+### Read fallthrough
+
+In both modes `getItem` tries each available provider in order and returns the first value found, so a value written by either backend is reachable without the app branching on platform. `getAllKeys()` unions across providers, and a provider that cannot list does not hide the ones that can.
 
 ## Tiering
 

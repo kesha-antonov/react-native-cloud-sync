@@ -98,6 +98,7 @@ createCloudStore(options: CloudStoreOptions & {
 ```ts
 interface CloudStoreOptions {
   providers: ProviderName[]               // preference order
+  writeMode?: 'failover' | 'mirror'       // default 'failover'
   tiering?: TieringConfig | 'auto' | 'off'
   outbox?: boolean                        // default true
   onError?: (e: CloudSyncError) => void
@@ -119,6 +120,8 @@ interface CloudStore {
   registerProvider: (p: CloudProvider) => void
 }
 ```
+
+`writeMode` decides whether a write goes to the first available provider (`failover`, the default) or to all of them (`mirror`). Reads fall through the list either way - see [how the provider list is used](store.md#how-the-provider-list-is-used).
 
 The default `outboxStorage` is in-memory, so queued writes do not survive a restart. Pass an MMKV- or AsyncStorage-backed adapter in production - see [the outbox](store.md#making-it-durable).
 

@@ -192,6 +192,30 @@ export function buildStore (choice: Choice) {
 }
 ```
 
+### Or: one primary, plus an optional second copy
+
+Instead of a single choice, offer a primary provider and a tick for mirroring to
+another - which is what makes an Apple user's data reachable on Android. See
+[Also back up to Google Drive](choosing-a-provider.md#also-back-up-to-google-drive).
+
+```ts
+export function buildMirroredStore (primary: ProviderName, alsoDrive: boolean) {
+  return createCloudStore({
+    providers: alsoDrive ? [primary, 'googleDrive'] : [primary],
+    writeMode: alsoDrive ? 'mirror' : 'failover',
+    tiering: 'auto',
+    outboxStorage: mmkvAdapter,
+  })
+}
+
+/** Enabling only mirrors FUTURE writes - copy what already exists, once. */
+export async function enableDriveMirror (primary: ProviderName) {
+  const store = buildMirroredStore(primary, true)
+  await store.migrate({ from: primary, to: 'googleDrive' })
+  return store
+}
+```
+
 Persist the choice locally, and rebuild the store when it changes:
 
 ```ts

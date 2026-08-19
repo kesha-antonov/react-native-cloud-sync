@@ -165,3 +165,108 @@ describe('provider fallthrough', () => {
     await expect(store.getItem('k')).resolves.toBe('from-drive')
   })
 })
+
+describe('write modes', () => {
+  function twoProviders() {
+    const apple = createMemoryProvider()
+    const driveBase = createMemoryProvider()
+    const drive = { ...driveBase, name: 'googleDrive' as const }
+    return { apple, driveBase, drive }
+  }
+
+  it('failover writes to the first available provider ONLY', () => {
+    // The default. Worth pinning explicitly, because the natural reading of
+    // providers: ['icloudKV', 'googleDrive'] is "both", and it is not.
+    const { apple, driveBase, drive } = twoProviders()
+    const store = createCloudStore({ providers: ['memory', 'googleDrive'] })
+    store.registerProvider(apple)
+    store.registerProvider(drive)
+
+    return store.setItem('k', 'v').then(() => {
+      expect(apple.dump()).toEqual({ k: 'v' })
+      // Nothing reached the second provider - so a device that can only read
+      // that one would find nothing.
+      expect(driveBase.dump()).toEqual({})
+    })
+  })
+
+  it('mirror writes to every available provider', async () => {
+    const { apple, driveBase, drive } = twoProviders()
+    const store = createCloudStore({
+      providers: ['memory', 'googleDrive'],
+      writeMode: 'mirror',
+    })
+    store.registerProvider(apple)
+    store.registerProvider(drive)
+
+    await store.setItem('k', 'v')
+
+    expect(apple.dump()).toEqual({ k: 'v' })
+    expect(driveBase.dump()).toEqual({ k: 'v' })
+  })
+
+  it('mirror succeeds when one destination is down, and queues that one', async () => {
+    const apple = createMemoryProvider()
+    const driveBase = createMemoryProvider({
+      faults: { setItem: { code: ErrorCode.NETWORK_UNAVAILABLE } },
+    })
+    const drive = { ...driveBase, name: 'googleDrive' as const }
+
+    const outboxStorage = makeOutboxStorage()
+    const store = createCloudStore({
+      providers: ['memory', 'googleDrive'],
+      writeMode: 'mirror',
+      outboxStorage,
+    })
+    store.registerProvider(apple)
+    store.registerProvider(drive)
+
+    // One good copy plus a queued retry beats rejecting a write the user has
+    // already been told about.
+    await expect(store.setItem('k', 'v')).resolves.toBeUndefined()
+
+    expect(apple.dump()).toEqual({ k: 'v' })
+    const pending = store.pendingWrites()
+    expect(pending).toHaveLength(1)
+    expect(pending[0].provider).toBe('googleDrive')
+  })
+
+  it('mirror rejects when nothing stored the value', async () => {
+    const apple = createMemoryProvider({
+      faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },
+    })
+    const driveBase = createMemoryProvider({
+      faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },
+    })
+    const drive = { ...driveBase, name: 'googleDrive' as const }
+
+    const store = createCloudStore({
+      providers: ['memory', 'googleDrive'],
+      writeMode: 'mirror',
+    })
+    store.registerProvider(apple)
+    store.registerProvider(drive)
+
+    await expect(store.setItem('k', 'v')).rejects.toMatchObject({
+      code: ErrorCode.QUOTA_EXCEEDED,
+    })
+  })
+
+  it('mirror deletes from every provider, so a copy cannot resurrect', async () => {
+    const { apple, driveBase, drive } = twoProviders()
+    const store = createCloudStore({
+      providers: ['memory', 'googleDrive'],
+      writeMode: 'mirror',
+    })
+    store.registerProvider(apple)
+    store.registerProvider(drive)
+
+    await store.setItem('k', 'v')
+    await store.removeItem('k')
+
+    expect(apple.dump()).toEqual({})
+    expect(driveBase.dump()).toEqual({})
+    // And a read must not find it via fallthrough.
+    await expect(store.getItem('k')).resolves.toBeNull()
+  })
+})

@@ -125,12 +125,35 @@ export interface OutboxEntry {
   enqueuedAt: number
 }
 
+/**
+ * How a write is distributed across the configured providers.
+ *
+ * - `failover` - write to the first available provider only. The rest are read
+ *   fallbacks. Cheapest, and right when the providers are alternatives.
+ * - `mirror` - write to every available provider. Costs one request per
+ *   provider, and is what makes a value written on an iPhone readable on
+ *   Android: the Apple-only providers cannot be reached from there, so unless
+ *   something also wrote to Drive, there is nothing for Android to find.
+ *
+ * Reads fall through the list in both modes.
+ */
+export type WriteMode = 'failover' | 'mirror'
+
 export interface CloudStoreOptions {
   /**
-   * Providers in preference order. The first available one wins for writes;
-   * reads fall through the list until a value is found.
+   * Providers in preference order.
+   *
+   * Reads fall through this list until a value is found. Writes go to the first
+   * available provider, or to all of them - see {@link writeMode}.
    */
   providers: ProviderName[]
+  /**
+   * Default `failover`.
+   *
+   * Use `mirror` when the same data has to be reachable from a platform where
+   * the preferred provider does not exist.
+   */
+  writeMode?: WriteMode
   tiering?: TieringConfig | 'auto' | 'off'
   /**
    * Persist failed writes and retry them with backoff.

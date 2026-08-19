@@ -52,6 +52,7 @@ export function createCloudStore(
 ): CloudStore {
   const custom = new Map<string, CloudProvider>()
   const useOutbox = options.outbox ?? true
+  const writeMode = options.writeMode ?? 'failover'
   const storage: OutboxStorage = options.outboxStorage ?? createMemoryOutboxStorage()
 
   const tiering: TieringConfig | null
@@ -69,6 +70,22 @@ export function createCloudStore(
         `[RNCloudSync] Unknown provider '${name}'. Register it with registerProvider() first.`
       )
 
+    return found
+  }
+
+  /**
+   * Every configured provider that is currently usable, in preference order.
+   *
+   * Ordering is preserved so `mirror` writes hit the preferred store first -
+   * if the process dies mid-write, the copy that landed is the one reads reach
+   * first.
+   */
+  async function allAvailable(): Promise<CloudProvider[]> {
+    const found: CloudProvider[] = []
+    for (const name of options.providers) {
+      const p = resolve(name)
+      if (await p.isAvailable()) found.push(p)
+    }
     return found
   }
 
@@ -123,6 +140,19 @@ export function createCloudStore(
    * key-value store, which has a hard per-key size limit", while its bookmark
    * list has no cap at all and can silently exceed the same limit.
    */
+  /**
+   * Whether a provider can hold this value at all.
+   *
+   * Used by `mirror` to skip a store the value does not fit in - the iCloud
+   * key-value store is capped far below the others - rather than failing the
+   * whole write because one destination is too small.
+   */
+  function canHold(provider: CloudProvider, value: string): boolean {
+    if (tiering == null) return true
+    if (provider.name !== 'icloudKV') return true
+    return byteLength(value) <= tiering.kvMaxBytes
+  }
+
   function providerForSize(value: string, preferred: CloudProvider): CloudProvider {
     if (tiering == null) return preferred
     const bytes = byteLength(value)
@@ -139,6 +169,100 @@ export function createCloudStore(
       )
     }
     return preferred
+  }
+
+  /** Single-destination write, queueing a retryable failure. */
+  async function writeOne(target: CloudProvider, key: string, value: string): Promise<void> {
+    try {
+      await target.setItem(key, value)
+    }
+    catch (e) {
+      const err = normalizeError(e, target.name)
+      if (useOutbox && isRetryable(err)) {
+        enqueue(key, value, target.name)
+        options.onError?.(err)
+        return
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Mirrored write.
+   *
+   * Succeeds if at least one destination took the value, because one good copy
+   * plus a queued retry is a better outcome than rejecting a write the user has
+   * already been told about. Retryable failures go to the outbox per provider,
+   * so they converge without re-sending to the ones that already succeeded.
+   *
+   * Rejects only when nothing stored it - silence there would be the false
+   * success this package exists to avoid.
+   */
+  async function writeMany(targets: CloudProvider[], key: string, value: string): Promise<void> {
+    const eligible = targets.filter(t => canHold(t, value))
+
+    if (eligible.length === 0) {
+      if (targets.length === 0)
+        throw new CloudSyncError(
+          ErrorCode.NOT_SIGNED_IN,
+          `[RNCloudSync] None of the configured providers (${options.providers.join(', ')}) `
+          + `is currently available.`
+        )
+
+      // Every destination exists but the value is too large for all of them.
+      const bytes = byteLength(value)
+      throw new CloudSyncError(
+        ErrorCode.PAYLOAD_TOO_LARGE,
+        `[RNCloudSync] Value is ${bytes} bytes and does not fit in any configured provider.`,
+        { actualBytes: bytes, limitBytes: tiering?.kvMaxBytes }
+      )
+    }
+
+    let stored = 0
+    let fatal: CloudSyncError | null = null
+
+    for (const target of eligible)
+      try {
+        await target.setItem(key, value)
+        stored += 1
+      }
+      catch (e) {
+        const err = normalizeError(e, target.name)
+        if (useOutbox && isRetryable(err)) {
+          enqueue(key, value, target.name)
+          options.onError?.(err)
+          continue
+        }
+        fatal ??= err
+        options.onError?.(err)
+      }
+
+    // Nothing stored it and nothing was queued - that has to surface.
+    if (stored === 0 && fatal != null) throw fatal
+  }
+
+  /** Mirrored delete, with the same at-least-one rule. */
+  async function removeMany(targets: CloudProvider[], key: string): Promise<void> {
+    let removed = 0
+    let fatal: CloudSyncError | null = null
+
+    for (const target of targets)
+      try {
+        await target.removeItem(key)
+        removed += 1
+      }
+      catch (e) {
+        const err = normalizeError(e, target.name)
+        if (useOutbox && isRetryable(err)) {
+          enqueue(key, null, target.name)
+          options.onError?.(err)
+          continue
+        }
+        fatal ??= err
+        options.onError?.(err)
+      }
+
+    if (removed === 0 && fatal != null) throw fatal
   }
 
   const store: CloudStore = {
@@ -162,35 +286,20 @@ export function createCloudStore(
     },
 
     setItem: async (key: string, value: string) => {
-      const target = providerForSize(value, await primary())
-      try {
-        await target.setItem(key, value)
+      if (writeMode === 'failover') {
+        const target = providerForSize(value, await primary())
+        await writeOne(target, key, value)
+        return
       }
-      catch (e) {
-        const err = normalizeError(e, target.name)
-        if (useOutbox && isRetryable(err)) {
-          enqueue(key, value, target.name)
-          options.onError?.(err)
-          return
-        }
-        throw err
-      }
+      await writeMany(await allAvailable(), key, value)
     },
 
     removeItem: async (key: string) => {
-      const target = await primary()
-      try {
-        await target.removeItem(key)
-      }
-      catch (e) {
-        const err = normalizeError(e, target.name)
-        if (useOutbox && isRetryable(err)) {
-          enqueue(key, null, target.name)
-          options.onError?.(err)
-          return
-        }
-        throw err
-      }
+      // A mirrored write must be a mirrored delete. Removing from only the
+      // preferred provider would leave a copy behind that reads then fall
+      // through to and resurrect.
+      const targets = writeMode === 'mirror' ? await allAvailable() : [await primary()]
+      await removeMany(targets, key)
     },
 
     getAllKeys: async () => {

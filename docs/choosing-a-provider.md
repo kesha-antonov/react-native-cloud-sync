@@ -53,7 +53,7 @@ Data lives in Drive's hidden `appDataFolder`, so nothing appears in the user's v
 
 **Apple-first app, real data.** `cloudKit` alone on iOS. Add `googleDrive` if you ship Android.
 
-**Cross-platform app.** The facade with `['icloudKV', 'googleDrive']`. Apple users get zero-friction iCloud; everyone else gets Drive; reads fall through so a value written by either is found.
+**Cross-platform app, each device on its own cloud.** The facade with `['icloudKV', 'googleDrive']`. Apple users get zero-friction iCloud; everyone else gets Drive.
 
 ```ts
 const store = createCloudStore({
@@ -61,6 +61,22 @@ const store = createCloudStore({
   tiering: 'auto',
 })
 ```
+
+Read this carefully, because the list does not mean what it looks like: **writes go to the first available provider only.** On an iPhone that is iCloud, and Drive never receives anything. Reads fall through, so each device finds its own copy - but an Android device has nothing to find, because iCloud is unreachable there and nothing wrote to Drive.
+
+That is the right shape when the two are alternatives. It is not cross-device sync.
+
+**Cross-platform app, same data on every device.** Add `writeMode: 'mirror'` so every write goes to both:
+
+```ts
+const store = createCloudStore({
+  providers: ['icloudKV', 'googleDrive'],
+  writeMode: 'mirror',
+  tiering: 'auto',
+})
+```
+
+Now the iPhone writes to iCloud *and* Drive, and Android reads it back from Drive. See [how the provider list is used](store.md#how-the-provider-list-is-used).
 
 **Cross-platform, but the data must be the same account everywhere.** `cloudKit` everywhere, with the Android/web halves framed as an explicit import.
 
@@ -85,7 +101,38 @@ const store = createCloudStore({
 })
 ```
 
-Three things worth getting right, each of which is easy to get wrong:
+### "Also back up to Google Drive"
+
+Mirroring is worth surfacing as its own opt-in, because it buys the user something specific and costs them something specific.
+
+An iPhone user is already synced across their Apple devices for free, with no sign-in. Connecting Drive as well buys exactly one thing: **their data becomes reachable from a non-Apple device.** So ask for it in those terms, at a moment when it means something - not as a checkbox labelled "enable mirroring".
+
+```
+☑  Also back up to Google Drive
+    Your data already syncs across your Apple devices via iCloud.
+    Connecting Google Drive as well lets you restore it on an Android
+    device or in a browser.
+```
+
+```ts
+const store = createCloudStore({
+  providers: alsoUseDrive ? ['icloudKV', 'googleDrive'] : ['icloudKV'],
+  writeMode: alsoUseDrive ? 'mirror' : 'failover',
+  tiering: 'auto',
+  outboxStorage: mmkvAdapter,
+})
+```
+
+Some honesty to build into that flow:
+
+- **It needs a Google sign-in.** Do not present it as a free toggle; ticking it opens an account picker and a consent screen. Let the user cancel without the setting flipping.
+- **Existing data does not move by itself.** Turning it on starts mirroring *future* writes. Run `migrate({ from: 'icloudKV', to: 'googleDrive' })` once on enable, or the Android device only sees what changed after the tick.
+- **Turning it off should ask about the copy.** "Stop backing up to Drive" and "delete what is already there" are different intentions - see below.
+- **Two clouds means two ways to fail.** With `mirror` a write succeeds if either destination takes it and the other is retried in the background, so a Drive outage does not block an iCloud user. But an expired Google token still needs surfacing, or their Android restore quietly stops being current.
+
+The reverse framing works on Android, where there is no iCloud to fall back on: Drive is the only option, so it is a connect step rather than an extra.
+
+Three more things worth getting right, each of which is easy to get wrong:
 
 **Only offer what actually works here.** Filter with `isAvailable()` rather than listing every provider and letting the user pick one that will immediately fail:
 

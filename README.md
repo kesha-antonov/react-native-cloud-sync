@@ -198,6 +198,7 @@ import { createCloudStore } from '@kesha-antonov/react-native-cloud-sync'
 
 const store = createCloudStore({
   providers: ['icloudKV', 'googleDrive'],   // preference order
+  writeMode: 'mirror',                      // write to BOTH, not just the first
   tiering: 'auto',                          // route by size
   outboxStorage: mmkvAdapter,               // survive restarts
 })
@@ -206,7 +207,7 @@ await store.setItem('portfolio', json)
 await store.flushOutbox()                   // on reconnect
 ```
 
-Reads fall through the list, so a value written from an iPhone via iCloud is still found on Android via Drive. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/store)
+Reads always fall through the list. Writes go to the first available provider by default; `writeMode: 'mirror'` sends them to every one - which is what makes an iPhone's data readable on Android, since iCloud cannot be reached from there. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/store)
 
 ### Handling failures
 
