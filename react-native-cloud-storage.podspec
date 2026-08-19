@@ -28,18 +28,21 @@ Pod::Spec.new do |s|
   # React Native core dependency, codegen wiring and the new-arch flags.
   install_modules_dependencies(s)
 
-  s.pod_target_xcconfig = {
+  # Built up locally and assigned once: `pod_target_xcconfig` is a writer on
+  # Pod::Specification with no matching reader, so it cannot be read back and
+  # merged into.
+  xcconfig = {
     # Required so the generated `react_native_cloud_storage-Swift.h` exists for
     # the Objective-C++ bridge to import.
     'DEFINES_MODULE' => 'YES',
-    'SWIFT_VERSION' => '5.0',
+    'SWIFT_VERSION' => '5.0'
   }
 
   if ENV['RCT_NEW_ARCH_ENABLED'] == '1'
     s.compiler_flags = folly_compiler_flags + ' -DRCT_NEW_ARCH_ENABLED=1'
-    s.pod_target_xcconfig = s.pod_target_xcconfig.merge({
-      'HEADER_SEARCH_PATHS' => "\"$(PODS_ROOT)/boost\"",
-      'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17'
-    })
+    xcconfig['HEADER_SEARCH_PATHS'] = "\"$(PODS_ROOT)/boost\""
+    xcconfig['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
   end
+
+  s.pod_target_xcconfig = xcconfig
 end

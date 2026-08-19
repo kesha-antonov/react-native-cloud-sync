@@ -34,6 +34,14 @@ jobs:
 
       - run: yarn test
 
+      # Catches podspec bugs on a Linux runner, without waiting for a macOS
+      # job. `ruby -c` only parses - it accepted a podspec that raised the
+      # moment CocoaPods evaluated it, which broke every iOS build.
+      - name: Validate the podspec
+        run: |
+          gem install cocoapods-core --no-document --quiet
+          yarn validate:podspec
+
   ios:
     name: iOS build (New Architecture)
     runs-on: macos-15
