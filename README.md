@@ -62,8 +62,8 @@ This library starts from the opposite end: the error contract first, then the pr
 | Identity-change event | ✅ | ⚠️ [^4] | – | ✅ | – | – |
 | Remote-change event | ✅ | ✅ | – | n/a | ❌ [^5] | ✅ |
 | Offline write queue | ✅ | – | – | ✅ | – | – |
-| Size tiering / chunking | ✅ | – | – | – | – | – |
-| Binary / assets | ✅ | ✅ | ❌ [^6] | ✅ | – | – |
+| Size tiering | ✅ | – | – | – | – | – |
+| Binary / assets | ✅ [^9] | ✅ | ❌ [^6] | ✅ | – | – |
 | Exported test harness | ✅ | – | – | ⚠️ [^7] | – | – |
 | Mac Catalyst | ✅ | – | – | ⚠️ | – | – |
 | Actively maintained | ✅ | ✅ | ✅ | ❌ [^8] | ❌ [^5] | ❌ |
@@ -76,6 +76,7 @@ This library starts from the opposite end: the error contract first, then the pr
 [^6]: Its field type is `string | number | null`, so binary data cannot be stored at all.
 [^7]: A mock factory exists but is not exported from the package entry and is not mentioned in the README.
 [^8]: No commits since April; four npm releases shipped with Swift that did not compile.
+[^9]: `CKAsset`, streamed from disk, on Apple platforms. Not yet implemented over CloudKit Web Services, so on Android and web asset calls reject with `ERR_UNSUPPORTED_PLATFORM` rather than appearing to work - use Google Drive for binaries there.
 
 [kuatsu]: https://github.com/kuatsu/react-native-cloud-storage
 [ik]: https://github.com/BogdanGeorgian91/react-native-icloud-kit
@@ -83,18 +84,20 @@ This library starts from the opposite end: the error contract first, then the pr
 [ok]: https://github.com/okwasniewski/expo-icloud-storage
 [jp]: https://github.com/jacobp100/react-native-cloudkit-storage
 
-## 📖 Table of Contents
+## 📖 Documentation
 
-- [Requirements](#-requirements)
-- [Installation](#-installation)
-- [Usage](#-usage)
-- [Advanced Configuration](#-advanced-configuration)
-- [API](#-api)
-- [Platform Notes](#-platform-notes)
-- [Testing](#-testing)
-- [Troubleshooting](#-troubleshooting)
-- [Example App](#-example-app)
-- [Contributing](#-contributing)
+| | |
+|---|---|
+| [Choosing a provider](https://kesha-antonov.github.io/react-native-cloud-sync/choosing-a-provider) | Which one, and what each costs you |
+| [iCloud key-value store](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-kv) | Small settings, zero friction, Apple only |
+| [CloudKit](https://kesha-antonov.github.io/react-native-cloud-sync/providers/cloudkit) | Records, zones, assets - and the Android/web path |
+| [Google Drive](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive) | The always-on cross-platform backend |
+| [The store facade](https://kesha-antonov.github.io/react-native-cloud-sync/store) | Tiering, outbox, migration, fallthrough |
+| [Error handling](https://kesha-antonov.github.io/react-native-cloud-sync/errors) | The typed contract |
+| [Recipes](https://kesha-antonov.github.io/react-native-cloud-sync/recipes) | Backup/restore, migration, offline-first |
+| [Testing](https://kesha-antonov.github.io/react-native-cloud-sync/testing) | Fault injection without a device |
+| [API reference](https://kesha-antonov.github.io/react-native-cloud-sync/api) | Every export |
+| [Platform notes](https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes) | Entitlements, architectures, build config |
 
 ## 📋 Requirements
 
@@ -102,30 +105,27 @@ This library starts from the opposite end: the error contract first, then the pr
 |---|---|
 | React Native | 0.71 |
 | iOS | 15.1 |
-| Xcode | 15 |
 | Node | 20 |
 
-Both the New and the Legacy architecture are supported. React Native 0.82 removed the Legacy Architecture entirely, so that half matters only if you are on 0.81 or below.
+Both architectures are supported. React Native 0.82 removed the Legacy Architecture, so that half matters only on 0.81 and below.
 
 ### Platform support per provider
 
-| | iOS | Android | Web |
+|  | iOS / macOS | Android | Web |
 |---|:---:|:---:|:---:|
 | `icloudKV` | native | – | – |
 | `cloudKit` | native | REST | REST |
 | `googleDrive` | REST | REST | REST |
 
-`icloudKV` rejects with `ERR_UNSUPPORTED_PLATFORM` where it does not exist, rather than silently doing nothing. Every provider exposes `isAvailable()` so you can branch without a `try`/`catch`.
+Where a provider is unavailable it rejects with `ERR_UNSUPPORTED_PLATFORM` rather than silently doing nothing. [Choosing a provider](https://kesha-antonov.github.io/react-native-cloud-sync/choosing-a-provider) covers the trade-offs.
 
 ## 📦 Installation
-
-### Expo
 
 ```sh
 npx expo install @kesha-antonov/react-native-cloud-sync
 ```
 
-Add the config plugin to `app.json`, then rebuild:
+Add the config plugin, then rebuild:
 
 ```json
 {
@@ -139,83 +139,74 @@ Add the config plugin to `app.json`, then rebuild:
 }
 ```
 
-```sh
-npx expo prebuild --clean
-```
+Bare React Native, and the raw entitlement keys if you manage `ios/` yourself: see [Installation](https://kesha-antonov.github.io/react-native-cloud-sync/installation).
 
-### Bare React Native
+## 🚀 Quick start
 
-```sh
-yarn add @kesha-antonov/react-native-cloud-sync
-cd ios && pod install
-```
+### iCloud key-value store
 
-Then add the iCloud entitlements by hand - the plugin is optional, and a committed `ios/` directory is often easier to manage directly:
-
-```xml
-<key>com.apple.developer.icloud-container-identifiers</key>
-<array>
-  <string>iCloud.com.your.app</string>
-</array>
-<key>com.apple.developer.icloud-services</key>
-<array>
-  <string>CloudKit</string>
-</array>
-<key>com.apple.developer.ubiquity-kvstore-identifier</key>
-<string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
-```
-
-## 🚀 Usage
-
-### The key-value store
+No sign-in, no UI - it uses the account already on the device.
 
 ```ts
 import { icloudKV } from '@kesha-antonov/react-native-cloud-sync'
 
-try {
-  await icloudKV.setItem('settings/theme', 'dark')
+await icloudKV.setItem('settings/theme', 'dark')
+const theme = await icloudKV.getItem('settings/theme')
+// null means the key does not exist. Nothing else returns null.
 
-  const theme = await icloudKV.getItem('settings/theme')
-  // `null` here means the key does not exist - nothing else.
-} catch (e) {
-  console.warn(e.code) // ERR_NOT_SIGNED_IN | ERR_QUOTA_EXCEEDED | ...
-}
+icloudKV.onRemoteChange(({ keys }) => reload(keys))
 ```
 
-### Reacting to other devices
+[Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-kv)
+
+### CloudKit
+
+The same private database from iOS, Android and web.
 
 ```ts
-const unsubscribe = icloudKV.onRemoteChange(({ keys, reason }) => {
-  // reason: serverChange | initialSync | quotaViolation | accountChange
-  refresh(keys)
-})
+import { cloudKit, cloudKitAssets } from '@kesha-antonov/react-native-cloud-sync'
 
-icloudKV.onAccountChange(({ status, identityChanged }) => {
-  // A different Apple ID is now signed in - anything cached for the previous
-  // user must be dropped.
-  if (identityChanged) clearUserScopedCaches()
-})
+await cloudKit.setItem('portfolio', JSON.stringify(holdings))
+const raw = await cloudKit.getItem('portfolio')
+
+// Anything above the 1 MB record limit goes in as a streamed CKAsset.
+await cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image', fileUri })
 ```
 
-### The facade
+On Android and web this needs an Apple ID sign-in whose token lasts at most two weeks, so treat it as an explicit import rather than background sync. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/providers/cloudkit)
+
+### Google Drive
+
+Identical behaviour on every platform, no periodic re-auth.
+
+```ts
+import { configureGoogleDrive, googleDrive } from '@kesha-antonov/react-native-cloud-sync'
+
+configureGoogleDrive({
+  getAccessToken: async () => (await GoogleSignin.getTokens()).accessToken,
+})
+
+await googleDrive.setItem('portfolio.json', JSON.stringify(holdings))
+```
+
+[Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive)
+
+### All of them at once
 
 ```ts
 import { createCloudStore } from '@kesha-antonov/react-native-cloud-sync'
 
 const store = createCloudStore({
-  providers: ['icloudKV', 'googleDrive'],
-  tiering: 'auto',
-  outboxStorage: mmkvAdapter, // persist queued writes across restarts
+  providers: ['icloudKV', 'googleDrive'],   // preference order
+  tiering: 'auto',                          // route by size
+  outboxStorage: mmkvAdapter,               // survive restarts
 })
 
-await store.setItem('portfolio', JSON.stringify(holdings))
-const raw = await store.getItem('portfolio')
-
-// On reconnect or foreground:
-await store.flushOutbox()
+await store.setItem('portfolio', json)
+await store.flushOutbox()                   // on reconnect
 ```
 
-Reads fall through the provider list, so a value written on another device by a different backend is still found.
+Reads fall through the list, so a value written from an iPhone via iCloud is still found on Android via Drive. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/store)
 
 ### Handling failures
 
@@ -225,128 +216,26 @@ import { isRetryable, requiresUserAction } from '@kesha-antonov/react-native-clo
 try {
   await store.setItem('k', 'v')
 } catch (e) {
-  if (requiresUserAction(e)) promptUser(e.code)   // signed out, out of storage
+  if (requiresUserAction(e)) promptUser(e.code)      // signed out, out of storage
   else if (isRetryable(e)) scheduleRetry(e.retryAfterMs)
 }
 ```
 
-## ⚙️ Advanced Configuration
-
-### CloudKit on Android and the web
-
-```ts
-import { configureCloudKit } from '@kesha-antonov/react-native-cloud-sync'
-
-configureCloudKit({
-  containerIdentifier: 'iCloud.com.your.app',
-  apiToken: CLOUDKIT_CLIENT_TOKEN,   // a Client token, never a server-to-server key
-  environment: 'production',
-  getAuthToken: () => secureStore.get('ckWebAuthToken'),
-  onAuthExpired: () => promptAppleSignIn(),
-})
-```
-
-You need three things in the CloudKit Console first:
-
-1. A **Client** API token under API Access. (A server-to-server key will not work - see Platform Notes.)
-2. A **Sign In Callback** set to `cloudkit-<container-id>://callback`.
-3. Your schema **deployed to Production**, if `environment` is `'production'`. Development and Production are separate datastores.
-
-### Google Drive
-
-```ts
-import { configureGoogleDrive } from '@kesha-antonov/react-native-cloud-sync'
-
-configureGoogleDrive({
-  getAccessToken: async () => (await GoogleSignin.getTokens()).accessToken,
-  onAuthExpired: () => reconnectDrive(),
-})
-```
-
-The library never owns the consent flow, so it stays independent of any particular sign-in library and the same code runs in a browser.
-
-## 📚 API
-
-| Export | Purpose |
-|---|---|
-| `icloudKV` | `NSUbiquitousKeyValueStore`, Apple platforms |
-| `cloudKit` | CloudKit private database, every platform |
-| `cloudKitZones` | Custom zones (native only) |
-| `googleDrive` | Drive `appDataFolder`, every platform |
-| `createCloudStore` | Facade: tiering, outbox, migration, fallthrough |
-| `configureCloudKit` / `configureGoogleDrive` | Credentials for the REST paths |
-| `ErrorCode`, `isCloudSyncError`, `isRetryable`, `requiresUserAction` | Error handling |
-| `createMemoryProvider` | In-memory provider with fault injection |
-| `setLogsEnabled` | Verbose logging, JS and native |
-
-Every provider implements the same shape:
-
-```ts
-isAvailable(): Promise<boolean>
-getAccountStatus(): Promise<AccountStatus>
-getItem(key): Promise<string | null>
-setItem(key, value): Promise<void>
-removeItem(key): Promise<void>
-getAllKeys(): Promise<string[]>
-onRemoteChange?(cb): Unsubscribe
-onAccountChange?(cb): Unsubscribe
-```
-
-Full reference: [`docs/API.md`](docs/API.md).
-
-## 📱 Platform Notes
-
-### CloudKit on Android and the web has a token lifetime you must design around
-
-A `ckWebAuthToken` expires after **30 minutes**, or **2 weeks** if the user ticks "Keep me signed in", and Apple documents no refresh mechanism. There is no way around this:
-
-- A **server-to-server key cannot reach a private database.** Apple: *"Use a server-to-server key to access the **public** database of a container as the developer who created the key."*
-- **Sign in with Apple cannot bootstrap it.** Per Apple DTS, *"The unique user identifiers for Sign in with Apple and CloudKit are not linked."*
-
-So an interactive Apple ID sign-in is the only mechanism that exists. Design CloudKit-on-Android as a deliberate **import/export** ("bring my iPhone data to this device"), and use Google Drive as the always-on backend there.
-
-The REST path uses no crypto at all - just two query parameters on a `fetch` - so it is unaffected by the missing-`crypto` problem that killed earlier CloudKit JS attempts in React Native.
-
-### `sync()` does not mean "stored"
-
-`icloudKVSync()` maps to `NSUbiquitousKeyValueStore.synchronize()`, which schedules an upload and returns. A resolved promise means *queued*, never *stored in iCloud*.
-
-More detail: [`docs/PLATFORM_NOTES.md`](docs/PLATFORM_NOTES.md).
+[Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/errors)
 
 ## 🧪 Testing
 
 ```ts
 import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
-import { ErrorCode } from '@kesha-antonov/react-native-cloud-sync'
 
 const provider = createMemoryProvider({
-  initial: { 'user/id': '42' },
   faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },
 })
 
-store.registerProvider(provider)
-
-// Fail twice, then succeed - asserts retry logic converges.
-provider.setFault('getItem', { code: ErrorCode.NETWORK_UNAVAILABLE, times: 2 })
-
-// Simulate another device, or an Apple ID switch.
-provider.emitRemoteChange({ keys: ['user/id'], reason: 'serverChange' })
 provider.emitAccountChange({ status: 'available', identityChanged: true })
 ```
 
-This matters because iCloud on the simulator is unreliable enough that the most-used library in this space [stopped testing on it entirely](https://github.com/kuatsu/react-native-cloud-storage/issues/41), which leaves exactly the failure paths that matter least exercised.
-
-## ❓ Troubleshooting
-
-**"The native module doesn't seem to be linked"** - run `pod install` and rebuild the app. Restarting Metro is not enough, and Expo Go cannot load custom native modules.
-
-**Writes appear to work but nothing reaches iCloud** - check `getAccountStatus()`. A signed-out device accepts key-value writes locally and never uploads them.
-
-**`ERR_CONTAINER_MISCONFIGURED`** - the app has no iCloud entitlement, or the container identifier does not match the one in the entitlements file.
-
-**Android CloudKit stops working after a while** - expected; the web auth token expired. Handle `ERR_AUTH_EXPIRED` by prompting for sign-in again.
-
-**Nothing appears on the other device** - Development and Production are separate CloudKit datastores. A debug build and a TestFlight build do not share data.
+Signed-out, offline, quota-exceeded, rate-limited and account-switch paths, all in Jest without a device. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/testing)
 
 ## 🧪 Example App
 
@@ -358,11 +247,11 @@ yarn installDevBuild:ios     # or :android
 yarn start:web
 ```
 
-Tabs: **Sync** (shared counter across devices), **iCloud KV**, **CloudKit**, **Drive**, **Store** (tiering, outbox, migration) and **Faults** (inject every failure on demand).
+Tabs: **Sync** (shared counter across devices), **iCloud KV**, **CloudKit**, **Drive**, **Store** and **Faults**.
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome. Run `yarn lint`, `yarn typecheck` and `yarn test` before opening one.
+Issues and pull requests welcome. Run `yarn lint`, `yarn typecheck` and `yarn test` before opening one.
 
 ## 👥 Authors
 

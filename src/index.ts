@@ -7,7 +7,7 @@
 
 // Providers, each usable directly.
 export { icloudKV, sync as icloudKVSync } from './providers/icloudKV'
-export { cloudKit, zones as cloudKitZones } from './providers/cloudKit'
+export { cloudKit, zones as cloudKitZones, assets as cloudKitAssets } from './providers/cloudKit'
 export { googleDrive } from './providers/googleDrive'
 export { createMemoryProvider } from './providers/memory'
 
@@ -38,6 +38,7 @@ export type { CloudSyncErrorInfo } from './errors'
 export type {
   AccountChangeEvent,
   AccountStatus,
+  AssetProgressEvent,
   ChangeReason,
   CloudProvider,
   CloudStoreOptions,

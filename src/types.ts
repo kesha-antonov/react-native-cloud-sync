@@ -47,6 +47,13 @@ export interface AccountChangeEvent {
   provider: ProviderName
 }
 
+export interface AssetProgressEvent {
+  recordName: string
+  fieldName: string
+  bytesTransferred: number
+  bytesTotal: number
+}
+
 export type ProviderName = 'icloudKV' | 'cloudKit' | 'googleDrive' | 'memory'
 
 export type Unsubscribe = () => void

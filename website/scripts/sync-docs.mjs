@@ -24,12 +24,19 @@ const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
  */
 const key = text => text.toLowerCase().replace(/[^a-z0-9]/g, '')
 
-/** Pages in sidebar order. `sections` pulls from README; `file` copies whole. */
+/**
+ * Pages in sidebar order.
+ *
+ * `sections` pulls named `##` blocks out of README.md; `file` copies a whole
+ * markdown file. Either way the repository root stays the single source of
+ * truth, so the site cannot drift from what a reader sees on GitHub or npm.
+ */
 const PAGES = [
   {
     id: 'intro',
     slug: '/',
-    title: 'React Native Cloud Storage',
+    category: 'Getting started',
+    title: 'React Native Cloud Sync',
     sidebarLabel: 'Introduction',
     description:
       'iCloud key-value store, CloudKit and Google Drive behind one API for React Native and Expo - '
@@ -38,6 +45,7 @@ const PAGES = [
   },
   {
     id: 'comparison',
+    category: 'Getting started',
     title: 'Comparison with other libraries',
     sidebarLabel: 'Comparison',
     description:
@@ -47,20 +55,98 @@ const PAGES = [
   },
   {
     id: 'installation',
+    category: 'Getting started',
     title: 'Installation',
     sidebarLabel: 'Installation',
     description: 'Install and configure the library in an Expo or bare React Native project.',
     sections: ['📋 Requirements', '📦 Installation'],
   },
   {
-    id: 'usage',
-    title: 'Usage',
-    sidebarLabel: 'Usage',
-    description: 'Reading and writing values, reacting to remote changes, and handling failures.',
-    sections: ['🚀 Usage', '⚙️ Advanced Configuration'],
+    id: 'choosing-a-provider',
+    category: 'Getting started',
+    title: 'Choosing a provider',
+    sidebarLabel: 'Choosing a provider',
+    description:
+      'Which of iCloud key-value, CloudKit or Google Drive to use, what each one costs the user, '
+      + 'and which combinations make sense for cross-platform apps.',
+    file: 'docs/choosing-a-provider.md',
+  },
+
+  {
+    id: 'providers/icloud-kv',
+    category: 'Providers',
+    title: 'iCloud key-value store',
+    sidebarLabel: 'iCloud key-value store',
+    description:
+      'NSUbiquitousKeyValueStore in React Native: zero-friction sync across a user\'s Apple devices, '
+      + 'its 1 MB limits, remote-change and Apple ID switch events.',
+    file: 'docs/providers/icloud-kv.md',
   },
   {
+    id: 'providers/cloudkit',
+    category: 'Providers',
+    title: 'CloudKit',
+    sidebarLabel: 'CloudKit',
+    description:
+      'CloudKit records, custom zones and CKAsset uploads from React Native - natively on Apple '
+      + 'platforms and over CloudKit Web Services on Android and the web.',
+    file: 'docs/providers/cloudkit.md',
+  },
+  {
+    id: 'providers/google-drive',
+    category: 'Providers',
+    title: 'Google Drive',
+    sidebarLabel: 'Google Drive',
+    description:
+      "Google Drive's hidden appDataFolder from React Native: identical behaviour on iOS, Android "
+      + 'and web, with auth supplied by your app.',
+    file: 'docs/providers/google-drive.md',
+  },
+
+  {
+    id: 'store',
+    category: 'Core',
+    title: 'The store facade',
+    sidebarLabel: 'Store facade',
+    description:
+      'One API over several providers: size tiering, a durable offline outbox, read fallthrough '
+      + 'and migration between clouds.',
+    file: 'docs/store.md',
+  },
+  {
+    id: 'errors',
+    category: 'Core',
+    title: 'Error handling',
+    sidebarLabel: 'Error handling',
+    description:
+      'Typed error codes instead of null: telling "not signed in" from "offline" from "no such key", '
+      + 'and deciding when to retry.',
+    file: 'docs/errors.md',
+  },
+  {
+    id: 'recipes',
+    category: 'Core',
+    title: 'Recipes',
+    sidebarLabel: 'Recipes',
+    description:
+      'Backup and restore, safe first-launch restore, pending-sync indicators, Apple ID switches, '
+      + 'provider migration and offline-first writes.',
+    file: 'docs/recipes.md',
+  },
+  {
+    id: 'testing',
+    category: 'Core',
+    title: 'Testing',
+    sidebarLabel: 'Testing',
+    description:
+      'Fault injection with the in-memory provider, so signed-out, offline, quota-exceeded and '
+      + 'account-switch paths are testable in Jest without a device.',
+    file: 'docs/testing.md',
+  },
+
+  {
     id: 'api',
+    category: 'Reference',
     title: 'API Reference',
     sidebarLabel: 'API',
     description: 'Every provider, the facade, the error vocabulary and the test harness.',
@@ -68,24 +154,19 @@ const PAGES = [
   },
   {
     id: 'platform-notes',
+    category: 'Reference',
     title: 'Platform Notes',
     sidebarLabel: 'Platform Notes',
     description: 'iOS entitlements, CloudKit on Android, web support and the two architectures.',
     file: 'docs/PLATFORM_NOTES.md',
   },
   {
-    id: 'testing',
-    title: 'Testing',
-    sidebarLabel: 'Testing',
-    description: 'Fault injection with the in-memory provider, so failure paths are actually testable.',
-    sections: ['🧪 Testing'],
-  },
-  {
     id: 'troubleshooting',
+    category: 'Reference',
     title: 'Troubleshooting',
     sidebarLabel: 'Troubleshooting',
     description: 'Common problems and what they usually mean.',
-    sections: ['❓ Troubleshooting', '🧪 Example App'],
+    file: 'docs/troubleshooting.md',
   },
 ]
 
@@ -118,8 +199,24 @@ function splitSections (markdown) {
  * Relative repo paths become absolute GitHub URLs; in-README anchors become
  * site-relative links to whichever page now owns that section.
  */
-function rewriteLinks (markdown, ownerByAnchor) {
-  return markdown
+/** Source markdown path (e.g. "docs/PLATFORM_NOTES.md") -> page id. */
+const idByFile = new Map(
+  PAGES.filter(p => p.file != null).map(p => [p.file.replace(/^docs\//, ''), p.id])
+)
+
+function rewriteLinks (markdown, ownerByAnchor, page) {
+  // Links between doc files are relative on GitHub (../errors.md) but must be
+  // site-relative here (/errors). Strip the extension and any leading ../.
+  const docLink = markdown.replace(
+    /\]\((?:\.\.\/)*((?:providers\/)?[A-Za-z0-9_-]+)\.md(#[a-zA-Z0-9_-]+)?\)/g,
+    (whole, target, hash) => {
+      const id = idByFile.get(`${target}.md`)
+      if (id == null) return whole
+      return `](/${id}${hash ?? ''})`
+    }
+  )
+
+  return docLink
     .replace(/\]\((docs\/[^)]+|example\/[^)]*|LICENSE)\)/g, (_m, path) => `](${REPO}/blob/main/${path})`)
     .replace(/\]\(#([a-z0-9-]+)\)/g, (whole, anchor) => {
       const owner = ownerByAnchor.get(key(anchor))
@@ -128,9 +225,14 @@ function rewriteLinks (markdown, ownerByAnchor) {
 }
 
 function frontMatter (page) {
+  // Docusaurus builds the full document id from the file path, and rejects a
+  // slash in the front-matter id - so a nested page declares only its leaf
+  // ("cloudkit"), while the sidebar refers to it by path ("providers/cloudkit").
+  const leafId = page.id.split('/').pop()
+
   const lines = [
     '---',
-    `id: ${page.id}`,
+    `id: ${leafId}`,
     `title: ${JSON.stringify(page.title)}`,
     `sidebar_label: ${JSON.stringify(page.sidebarLabel)}`,
     `description: ${JSON.stringify(page.description)}`,
@@ -144,7 +246,7 @@ function main () {
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const sections = splitSections(readme)
 
-  // Which page will own each README section, so cross-links can be rewritten.
+  // Which page owns each README section, so cross-links can be rewritten.
   const ownerByAnchor = new Map()
   for (const page of PAGES) {
     const target = page.slug ?? `/${page.id}`
@@ -171,11 +273,45 @@ function main () {
       body = parts.join('\n\n')
     }
 
-    const content = frontMatter(page) + rewriteLinks(body, ownerByAnchor) + '\n'
-    writeFileSync(join(OUT, `${page.id}.md`), content, 'utf8')
+    const out = join(OUT, `${page.id}.md`)
+    // Nested ids (providers/cloudkit) need their directory to exist.
+    mkdirSync(dirname(out), { recursive: true })
+    writeFileSync(out, frontMatter(page) + rewriteLinks(body, ownerByAnchor, page) + '\n', 'utf8')
   }
 
+  writeSidebar()
+
   console.log(`sync-docs: wrote ${PAGES.length} pages to website/docs`)
+}
+
+/**
+ * Generates sidebars.js from PAGES.
+ *
+ * Derived rather than hand-maintained: a hand-written sidebar silently drops a
+ * page when someone adds one here and forgets the other file.
+ */
+function writeSidebar () {
+  const categories = []
+  for (const page of PAGES) {
+    const name = page.category ?? 'Docs'
+    let group = categories.find(c => c.label === name)
+    if (group == null) {
+      group = { label: name, items: [] }
+      categories.push(group)
+    }
+    group.items.push(page.id)
+  }
+
+  const body = categories
+    .map(c => `    {\n      type: 'category',\n      label: ${JSON.stringify(c.label)},\n`
+      + `      collapsed: false,\n      items: [${c.items.map(i => `'${i}'`).join(', ')}],\n    },`)
+    .join('\n')
+
+  const file = `// GENERATED by scripts/sync-docs.mjs - do not edit.\n`
+    + `// Edit the PAGES list in that script instead.\n`
+    + `module.exports = {\n  docs: [\n${body}\n  ],\n}\n`
+
+  writeFileSync(join(HERE, '..', 'sidebars.js'), file, 'utf8')
 }
 
 main()

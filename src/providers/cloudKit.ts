@@ -2,17 +2,19 @@ import { Platform } from 'react-native'
 
 import { getNativeModule, hasNativeModule, requireNativeModule, subscribeNativeEvent } from '../internal/nativeModule'
 import { getCloudKitClient, isCloudKitConfigured } from '../config'
-import { normalizeError } from '../errors'
+import { normalizeError, unsupportedPlatform } from '../errors'
 import { toAccountStatus, toChangeReason } from '../internal/enums'
 import type {
   AccountChangeEvent,
   AccountStatus,
+  AssetProgressEvent,
   CloudProvider,
   RemoteChangeEvent,
   Unsubscribe,
 } from '../types'
 import type {
   AccountChangeNativeEvent,
+  AssetProgressNativeEvent,
   RemoteChangeNativeEvent,
 } from '../specs/NativeRNCloudSync'
 
@@ -178,5 +180,100 @@ export const zones = {
     catch (e) {
       throw normalizeError(e, NAME)
     }
+  },
+}
+
+/**
+ * Binary assets (`CKAsset`).
+ *
+ * Native only. CloudKit Web Services does expose an asset upload flow, but it
+ * is a separate multi-step protocol (request an upload URL, POST the bytes,
+ * then reference the returned token in a record) that this package does not
+ * implement yet - so on Android and web these reject with
+ * `ERR_UNSUPPORTED_PLATFORM` rather than appearing to work.
+ *
+ * Assets are deliberately an explicit API rather than something the store
+ * facade routes to automatically: the caller passes a file path, not a string,
+ * so there is no way to infer the intent from a `setItem` call.
+ */
+export const assets = {
+  /**
+   * Uploads a local file as a field on a record.
+   *
+   * Progress is reported per record through {@link onProgress}; a CKAsset is
+   * streamed from disk, so a large file does not have to be held in memory the
+   * way a base64 round trip would.
+   */
+  save: async (
+    options: {
+      recordName: string
+      fieldName: string
+      /** `file://` URL or a plain path. */
+      fileUri: string
+      recordType?: string
+      zoneName?: string | null
+    }
+  ): Promise<void> => {
+    if (!isNative())
+      throw unsupportedPlatform(
+        NAME,
+        'CKAsset upload is implemented natively only. On Android and web, store the file '
+        + 'with the googleDrive provider instead.'
+      )
+
+    try {
+      await requireNativeModule().ckSaveAsset(
+        options.recordType ?? 'KVBlob',
+        options.recordName,
+        options.fieldName,
+        options.fileUri,
+        options.zoneName ?? null
+      )
+    }
+    catch (e) {
+      throw normalizeError(e, NAME)
+    }
+  },
+
+  /**
+   * Downloads an asset field and resolves a local file path, or `null` when the
+   * record or field does not exist.
+   */
+  fetch: async (
+    options: { recordName: string; fieldName: string; zoneName?: string | null }
+  ): Promise<string | null> => {
+    if (!isNative())
+      throw unsupportedPlatform(
+        NAME,
+        'CKAsset download is implemented natively only.'
+      )
+
+    try {
+      return await requireNativeModule().ckFetchAsset(
+        options.recordName,
+        options.fieldName,
+        options.zoneName ?? null
+      )
+    }
+    catch (e) {
+      throw normalizeError(e, NAME)
+    }
+  },
+
+  /** Upload/download progress for asset transfers. Native only. */
+  onProgress: (listener: (e: AssetProgressEvent) => void): Unsubscribe => {
+    if (getNativeModule() == null) return () => undefined
+    return subscribeNativeEvent<AssetProgressNativeEvent>(
+      'onAssetProgress',
+      'assetProgress',
+      (e) => {
+        listener({
+          recordName: e.recordName,
+          fieldName: e.fieldName,
+          bytesTransferred: e.bytesTransferred,
+          bytesTotal: e.bytesTotal,
+        })
+      }
+    )
   },
 }

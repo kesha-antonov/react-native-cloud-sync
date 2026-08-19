@@ -1,10 +1,10 @@
 # API Reference
 
-Every operation rejects with a [`CloudSyncError`](#errors) on failure. `getItem` resolves `null` for exactly one condition: the key does not exist.
+Compact reference. For narrative, see the provider guides and [the facade](store.md).
 
 ## Providers
 
-All four providers implement `CloudProvider`:
+All providers implement `CloudProvider`:
 
 ```ts
 interface CloudProvider {
@@ -20,176 +20,167 @@ interface CloudProvider {
 }
 ```
 
-### `icloudKV`
+`getItem` resolves `null` if and only if the key does not exist. Every other outcome rejects.
 
-`NSUbiquitousKeyValueStore`. Apple platforms only; rejects `ERR_UNSUPPORTED_PLATFORM` elsewhere.
+| Export | Provider | Guide |
+|---|---|---|
+| `icloudKV` | `NSUbiquitousKeyValueStore` | [iCloud key-value store](providers/icloud-kv.md) |
+| `icloudKVSync()` | flush pending KV changes | [same](providers/icloud-kv.md#sync-does-not-mean-stored) |
+| `cloudKit` | CloudKit private database | [CloudKit](providers/cloudkit.md) |
+| `cloudKitZones` | `create` · `list` · `remove` (native only) | [zones](providers/cloudkit.md#custom-zones) |
+| `cloudKitAssets` | `save` · `fetch` · `onProgress` (native only) | [assets](providers/cloudkit.md#assets) |
+| `googleDrive` | Drive `appDataFolder` | [Google Drive](providers/google-drive.md) |
+| `createMemoryProvider` | in-memory + fault injection | [Testing](testing.md) |
 
-Limits, enforced locally rather than left to fail server-side: **1 MB total**, **1 MB per key**, **1024 keys**.
-
-```ts
-import { icloudKV, icloudKVSync } from '@kesha-antonov/react-native-cloud-sync'
-
-await icloudKV.setItem('settings/theme', 'dark')
-await icloudKVSync() // schedules an upload; does NOT confirm one
-```
-
-### `cloudKit`
-
-CloudKit private database. Native on iOS/macOS, REST on Android and web (requires `configureCloudKit`).
+### `cloudKitZones`
 
 ```ts
-import { cloudKit, cloudKitZones } from '@kesha-antonov/react-native-cloud-sync'
-
-await cloudKit.setItem('portfolio', json)
-
-await cloudKitZones.create('MyZone')   // native only
-await cloudKitZones.list()
-await cloudKitZones.remove('MyZone')
+create(zoneName: string): Promise<void>
+list(): Promise<string[]>
+remove(zoneName: string): Promise<void>
 ```
 
-Records are capped at **1 MB** excluding assets. Oversized writes reject locally with `ERR_PAYLOAD_TOO_LARGE`, carrying `limitBytes` and `actualBytes`.
-
-### `googleDrive`
-
-Drive `appDataFolder` - a hidden, per-app, per-account folder that survives app uninstall. Works identically on every platform. Requires `configureGoogleDrive`.
-
-### `createMemoryProvider`
-
-See [Testing](#testing).
-
-## The facade
+### `cloudKitAssets`
 
 ```ts
-const store = createCloudStore({
-  providers: ['icloudKV', 'googleDrive'],  // preference order
-  tiering: 'auto' | 'off' | TieringConfig,
-  outbox: true,
-  outboxStorage: adapter,
-  onError: (e) => report(e),
-})
+save(options: {
+  recordName: string
+  fieldName: string
+  fileUri: string            // file:// URL or a plain path
+  recordType?: string        // default 'KVBlob'
+  zoneName?: string | null
+}): Promise<void>
+
+fetch(options: {
+  recordName: string
+  fieldName: string
+  zoneName?: string | null
+}): Promise<string | null>   // local path, or null if absent
+
+onProgress(cb: (e: AssetProgressEvent) => void): Unsubscribe
 ```
 
-| Method | Behaviour |
-|---|---|
-| `getItem(key)` | Falls through the provider list until a value is found |
-| `setItem(key, value)` | Writes to the first available provider, routed by size |
-| `removeItem(key)` | Removes from the first available provider |
-| `getAllKeys()` | Union across all available providers |
-| `migrate({ from, to })` | Copies every key. The source is left intact |
-| `flushOutbox()` | Retries queued writes that are due |
-| `pendingWrites()` | Queued entries, for a "pending sync" indicator |
-| `registerProvider(p)` | Adds a provider (e.g. the in-memory double) |
+## Configuration
 
-### Tiering
+```ts
+configureCloudKit(config: CloudKitRestConfig): void
+isCloudKitConfigured(): boolean
 
-| Payload | Backing store |
-|---|---|
-| ≤ 64 KB | iCloud key-value store |
-| ≤ 900 KB | CloudKit record field |
-| larger | `CKAsset`, chunked |
+configureGoogleDrive(config: GoogleDriveConfig): void
+isGoogleDriveConfigured(): boolean
+```
 
-Thresholds are configurable via `TieringConfig`. With `tiering: 'off'` values always go to the preferred provider.
+```ts
+interface CloudKitRestConfig {
+  containerIdentifier: string
+  apiToken: string                        // a Client token, never server-to-server
+  environment: 'development' | 'production'
+  getAuthToken: () => Promise<string | null> | string | null
+  onAuthExpired?: () => Promise<void> | void
+  fetchImpl?: typeof fetch                // overridable for tests
+}
 
-### Outbox
+interface GoogleDriveConfig {
+  getAccessToken: () => Promise<string | null> | string | null
+  onAuthExpired?: () => Promise<void> | void
+  fetchImpl?: typeof fetch
+}
+```
 
-A write that fails for a **retryable** reason (offline, rate limited, account temporarily unavailable) is queued and retried with exponential backoff, honouring `retryAfterMs` when the server supplies one.
+## `createCloudStore`
 
-A write that fails for a reason **the user must act on** (signed out, quota exceeded) is *not* queued - it rejects immediately, because retrying it forever would only hide it.
+```ts
+createCloudStore(options: CloudStoreOptions & {
+  outboxStorage?: OutboxStorage
+}): CloudStore
+```
 
-Pass `outboxStorage` backed by MMKV or AsyncStorage so the queue survives a restart. The default is in-memory.
+```ts
+interface CloudStoreOptions {
+  providers: ProviderName[]               // preference order
+  tiering?: TieringConfig | 'auto' | 'off'
+  outbox?: boolean                        // default true
+  onError?: (e: CloudSyncError) => void
+}
+
+interface OutboxStorage {
+  getString: (key: string) => string | null | undefined
+  set: (key: string, value: string) => void
+}
+
+interface CloudStore {
+  getItem: (key: string) => Promise<string | null>
+  setItem: (key: string, value: string) => Promise<void>
+  removeItem: (key: string) => Promise<void>
+  getAllKeys: () => Promise<string[]>
+  migrate: (o: { from: ProviderName, to: ProviderName }) => Promise<{ copied: string[] }>
+  flushOutbox: () => Promise<{ drained: number, remaining: number }>
+  pendingWrites: () => OutboxEntry[]
+  registerProvider: (p: CloudProvider) => void
+}
+```
+
+The default `outboxStorage` is in-memory, so queued writes do not survive a restart. Pass an MMKV- or AsyncStorage-backed adapter in production - see [the outbox](store.md#making-it-durable).
+
+## Tiering
+
+```ts
+interface TieringConfig {
+  kvMaxBytes: number       // default 65536
+  recordMaxBytes: number   // default 921600
+}
+
+const DEFAULT_TIERING: TieringConfig
+```
+
+Values above `kvMaxBytes` are routed away from the key-value store to the first record-capable provider in your list. Binary assets are not part of tiering - see [`cloudKitAssets`](providers/cloudkit.md#assets).
 
 ## Errors
 
 ```ts
-try {
-  await store.setItem(key, value)
-} catch (e) {
-  e.code           // ErrorCode
-  e.retryAfterMs   // on ERR_RATE_LIMITED
-  e.limitBytes     // on ERR_PAYLOAD_TOO_LARGE
-  e.actualBytes    // on ERR_PAYLOAD_TOO_LARGE
-  e.serverValue    // on ERR_CONFLICT
-  e.provider       // which provider raised it
-}
-```
-
-| Code | Meaning |
-|---|---|
-| `ERR_NOT_SIGNED_IN` | No account signed in |
-| `ERR_ACCOUNT_RESTRICTED` | Parental controls or MDM |
-| `ERR_ACCOUNT_UNAVAILABLE` | `temporarilyUnavailable` - retry later |
-| `ERR_ACCOUNT_UNDETERMINED` | Status could not be determined |
-| `ERR_AUTH_EXPIRED` | Credential expired; re-auth needed |
-| `ERR_NETWORK_UNAVAILABLE` | Offline or unreachable |
-| `ERR_QUOTA_EXCEEDED` | Storage full |
-| `ERR_RATE_LIMITED` | Backing off; see `retryAfterMs` |
-| `ERR_PAYLOAD_TOO_LARGE` | Above the store's limit |
-| `ERR_CONFLICT` | Concurrent write won; see `serverValue` |
-| `ERR_CONTAINER_MISCONFIGURED` | Entitlement, container or token problem |
-| `ERR_UNSUPPORTED_PLATFORM` | Provider not available here |
-| `ERR_CANCELLED` | Cancelled by the caller |
-| `ERR_UNKNOWN` | Unclassified; `cause` holds the original |
-
-Helpers:
-
-```ts
-isCloudSyncError(e)   // shape-based guard, works on bridged plain objects
-isRetryable(e)           // worth retrying automatically
-requiresUserAction(e)    // needs the user to do something
-```
-
-## Events
-
-```ts
-interface RemoteChangeEvent {
-  keys: string[]
-  reason: 'serverChange' | 'initialSync' | 'quotaViolation' | 'accountChange' | 'unknown'
-  provider: ProviderName
+class CloudSyncError extends Error {
+  readonly code: ErrorCode
+  readonly retryAfterMs?: number
+  readonly limitBytes?: number
+  readonly actualBytes?: number
+  readonly serverValue?: string | null
+  readonly provider?: string
+  readonly serverErrorCode?: string
+  readonly cause?: unknown
 }
 
-interface AccountChangeEvent {
-  status: AccountStatus
-  identityChanged: boolean   // a DIFFERENT Apple ID is now signed in
-  provider: ProviderName
-}
+isCloudSyncError(e: unknown): e is CloudSyncError
+isRetryable(e: unknown): boolean
+requiresUserAction(e: unknown): boolean
 ```
 
-`identityChanged: true` means every user-scoped cache must be dropped. Native events are buffered until JS binds its listener, so an event that fires during startup is delivered rather than lost - or crashing.
+Full code table: [Error handling](errors.md#codes).
 
-## Account status
+## Types
 
 ```ts
 type AccountStatus =
-  | 'available'
-  | 'noAccount'
-  | 'restricted'
-  | 'temporarilyUnavailable'
-  | 'couldNotDetermine'
+  | 'available' | 'noAccount' | 'restricted'
+  | 'temporarilyUnavailable' | 'couldNotDetermine'
+
+type ChangeReason =
+  | 'serverChange' | 'initialSync' | 'quotaViolation'
+  | 'accountChange' | 'unknown'
+
+type ProviderName = 'icloudKV' | 'cloudKit' | 'googleDrive' | 'memory'
+
+interface RemoteChangeEvent { keys: string[], reason: ChangeReason, provider: ProviderName }
+interface AccountChangeEvent { status: AccountStatus, identityChanged: boolean, provider: ProviderName }
+interface AssetProgressEvent { recordName: string, fieldName: string, bytesTransferred: number, bytesTotal: number }
+interface OutboxEntry { key: string, value: string | null, provider: ProviderName, attempts: number, nextAttemptAt: number, enqueuedAt: number }
+
+type Unsubscribe = () => void
 ```
 
-Five values, not a boolean: "temporarily unavailable" means retry silently, "no account" means prompt the user, "could not determine" means do nothing yet. Collapsing them loses that distinction.
-
-## Testing
+## Diagnostics
 
 ```ts
-import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
-
-const provider = createMemoryProvider({
-  initial: { 'k': 'v' },
-  faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },
-  accountStatus: 'available',
-  latencyMs: 0,
-})
+setLogsEnabled(enabled: boolean): void
 ```
 
-| Member | Purpose |
-|---|---|
-| `dump()` | Backing map, bypassing faults |
-| `seed(data)` | Replace data without going through `setItem` |
-| `reset()` | Clear data, faults and listeners |
-| `setFault(op, fault)` | Install or clear a fault at runtime |
-| `emitRemoteChange(e)` | Simulate another device |
-| `emitAccountChange(e)` | Simulate sign-out or an Apple ID switch |
-| `calls` | Per-operation call counts, for asserting retries |
-
-A `Fault` may carry `times`, so it fails N times and then succeeds - the shape retry and outbox logic must converge on.
+Off by default - a storage library logging every read is noise, and payloads can contain user data that should not reach a device log.

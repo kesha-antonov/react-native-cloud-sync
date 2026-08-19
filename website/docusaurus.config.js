@@ -58,6 +58,7 @@ const config = {
         title: 'react-native-cloud-sync',
         items: [
           { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
+          { to: '/choosing-a-provider', label: 'Choosing a provider', position: 'left' },
           { to: '/comparison', label: 'Comparison', position: 'left' },
           { to: '/api', label: 'API', position: 'left' },
           {
@@ -75,7 +76,8 @@ const config = {
             title: 'Docs',
             items: [
               { label: 'Installation', to: '/installation' },
-              { label: 'Usage', to: '/usage' },
+              { label: 'Choosing a provider', to: '/choosing-a-provider' },
+              { label: 'Recipes', to: '/recipes' },
               { label: 'API', to: '/api' },
               { label: 'Platform Notes', to: '/platform-notes' },
             ],
