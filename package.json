@@ -95,6 +95,7 @@
     "typecheck": "tsc --noEmit",
     "validate:podspec": "ruby scripts/validate-podspec.rb",
     "check:objc": "bash scripts/check-objc-surface.sh",
+    "check:catalyst": "bash scripts/check-catalyst.sh",
     "check:docs": "node scripts/check-docs-style.mjs",
     "lint": "eslint .",
     "test": "jest",

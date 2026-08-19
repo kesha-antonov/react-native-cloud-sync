@@ -172,31 +172,22 @@ jobs:
             -quiet \
             build
 
-      # Reuses the pods installed above rather than paying for a second
-      # install. Mac Catalyst builds from the iOS slice, so this is the same
-      # pod compiled for a different destination - which is exactly where a
-      # Swift/Objective-C++ pod tends to break, and what consuming apps
-      # otherwise carry hand-written Podfile repairs for.
-      - name: Build for Mac Catalyst
-        working-directory: example/ios
-        run: |
-          set -euo pipefail
-          WORKSPACE=$(ls -d ./*.xcworkspace | head -1)
-          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
-          xcodebuild \
-            -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
-            -configuration Debug \
-            -destination 'platform=macOS,variant=Mac Catalyst' \
-            -derivedDataPath build-catalyst \
-            SUPPORTS_MACCATALYST=YES \
-            CODE_SIGNING_ALLOWED=NO \
-            -quiet \
-            build
+      # A full Mac Catalyst app build is not attempted: React Native does not
+      # officially support Catalyst, and the generated Expo project exposes no
+      # Catalyst destination, so that would be testing Expo rather than this
+      # package. What is in scope is that this pod's own sources compile for the
+      # Catalyst triple, which is what the check below does - alongside the iOS
+      # device and simulator triples.
+      - name: Compile for iOS, iOS device and Mac Catalyst
+        run: yarn check:catalyst
 
   legacy-architecture:
-    name: Legacy Architecture (RN 0.76)
-    runs-on: macos-26
+    name: Legacy Architecture (RN 0.81)
+    # macos-15 for Xcode 16. React Native 0.76-0.81 predate Xcode 26, and its
+    # bundled fmt fails to compile there with "call to consteval function ... is
+    # not a constant expression" - a toolchain mismatch inside React Native, not
+    # anything this package controls.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
 
@@ -216,11 +207,11 @@ jobs:
       # Native 0.86, and 0.82 removed the Legacy Architecture outright - so no
       # Expo 57 app can exercise the #ifndef RCT_NEW_ARCH_ENABLED half of the
       # bridge. A bare fixture on 0.76 is the only way to compile it.
-      - name: Create a bare React Native 0.76 fixture
+      - name: Create a bare React Native 0.81 fixture
         run: |
           set -euo pipefail
-          npx --yes @react-native-community/cli@15 init LegacyFixture \
-            --version 0.76.9 \
+          npx --yes @react-native-community/cli@latest init LegacyFixture \
+            --version 0.81.4 \
             --skip-install \
             --skip-git-init \
             --directory /tmp/legacy-fixture

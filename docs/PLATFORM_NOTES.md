@@ -35,7 +35,11 @@ CloudKit keeps entirely separate datastores for Development and Production. A de
 
 ### Mac Catalyst
 
-Supported - Catalyst builds from the iOS slice. Both CloudKit and `NSUbiquitousKeyValueStore` are available there.
+Supported - Catalyst builds from the iOS slice, and both CloudKit and `NSUbiquitousKeyValueStore` are available there.
+
+CI compiles this package's sources for the Catalyst triple (`arm64-apple-ios*-macabi`) alongside the iOS device and simulator triples, so its own code is known to be Catalyst-clean.
+
+What CI does **not** do is build a whole app for Catalyst. React Native does not officially support Catalyst, so whether your app links depends on every other pod you use, not on this one - apps that ship Catalyst generally carry their own Podfile repairs for pods that omit a Catalyst slice.
 
 ## Android
 
@@ -81,6 +85,7 @@ One Swift implementation sits behind both; the `.mm` file picks a base class wit
 React Native 0.82 removed the Legacy Architecture, so that path matters only on 0.81 and below.
 
 > **CI coverage.** The example app is Expo SDK 57, which pins React Native 0.86 - a version
-> that cannot run the Legacy Architecture at all. CI therefore compiles the New Architecture
-> path only. The `#ifdef`'d legacy path is implemented and reviewed but not yet exercised by
-> an automated build; if you are on 0.81 or below and hit a problem, please open an issue.
+> that cannot run the Legacy Architecture at all. So CI builds the example for the New
+> Architecture, and separately generates a bare React Native 0.81 fixture - the last version
+> that supports the Legacy Architecture - installs this package into it, and builds it with
+> `RCT_NEW_ARCH_ENABLED=0`. That is what compiles the `#ifndef` half of the bridge.
