@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: yarn
+
+      # `prepare` runs `bob build`, so a successful install also proves the
+      # package builds.
+      - run: yarn install --immutable
+
+      - run: yarn lint
+
+      - run: yarn typecheck
+
+      - run: yarn test
+
+  ios:
+    name: iOS (RN ${{ matrix.react-native }}, ${{ matrix.arch }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The legacy architecture is only reachable on RN <= 0.81; 0.82
+          # removed it outright, so newArchEnabled=false is ignored from there
+          # on. This matrix is what keeps the #ifdef'd bridge honest.
+          - react-native: '0.71.19'
+            arch: legacy
+            new-arch: '0'
+          - react-native: '0.76.9'
+            arch: legacy
+            new-arch: '0'
+          - react-native: '0.76.9'
+            arch: new
+            new-arch: '1'
+          - react-native: '0.86.2'
+            arch: new
+            new-arch: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: yarn
+
+      - run: yarn install --immutable
+
+      - name: Pin React Native for this matrix entry
+        working-directory: example
+        run: yarn add -D react-native@${{ matrix.react-native }}
+
+      - name: Install pods
+        working-directory: example/ios
+        env:
+          RCT_NEW_ARCH_ENABLED: ${{ matrix.new-arch }}
+        run: pod install --repo-update
+
+      - name: Build (iOS simulator)
+        working-directory: example/ios
+        run: |
+          xcodebuild \
+            -workspace CloudStorageExample.xcworkspace \
+            -scheme CloudStorageExample \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || exit 1
+
+  ios-catalyst:
+    name: iOS static frameworks + Mac Catalyst
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: yarn
+
+      - run: yarn install --immutable
+
+      # Both of these break naive pods. Static linkage changes how the Swift
+      # module is emitted, and Mac Catalyst needs a slice that many pods simply
+      # do not ship - consuming apps then carry hand-written Podfile repairs for
+      # every one that gets it wrong. Building both here keeps that off them.
+      - name: Install pods with static frameworks
+        working-directory: example/ios
+        env:
+          RCT_NEW_ARCH_ENABLED: '1'
+          USE_FRAMEWORKS: static
+        run: pod install --repo-update
+
+      - name: Build Mac Catalyst slice
+        working-directory: example/ios
+        run: |
+          xcodebuild \
+            -workspace CloudStorageExample.xcworkspace \
+            -scheme CloudStorageExample \
+            -configuration Debug \
+            -destination 'platform=macOS,variant=Mac Catalyst' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || exit 1

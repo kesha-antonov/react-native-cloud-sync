@@ -1,0 +1,28 @@
+node_modules/
+lib/
+plugin/build/
+# Yarn: keep the pinned release binary so CI resolves the same Yarn version,
+# but never the cache - those are binary blobs that bloat the repo permanently.
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+yarn-error.log
+coverage/
+
+# native
+ios/build/
+ios/Pods/
+android/build/
+android/.gradle/
+android/local.properties
+*.xcuserdatad
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

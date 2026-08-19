@@ -1,0 +1,53 @@
+{
+  "name": "example",
+  "version": "0.0.1",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "npx expo start --dev-client --clear",
+    "start:android": "npx expo start --android --dev-client --clear",
+    "start:ios": "npx expo start --ios --dev-client --clear",
+    "start:web": "npx expo start --web --clear",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "fresh": "yarn start --reset-cache",
+    "installDevBuild:ios": "npx expo run:ios",
+    "installDevBuild:android": "npx expo run:android",
+    "rebuildNativeDeps": "npx expo prebuild",
+    "rebuildNativeDeps:clean": "npx expo prebuild --clean",
+    "freshAndroid": "npx expo prebuild --clean && expo run:android",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@kesha-antonov/react-native-cloud-storage": "workspace:*",
+    "expo": "^57.0.10",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.2",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "~0.21.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@eslint/js": "^10.0.1",
+    "@react-native-community/cli": "^20.2.0",
+    "@react-native/metro-config": "^0.86.2",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/react": "~19.2.18",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "react-native-monorepo-config": "^0.4.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.67.0"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "installConfig": {
+    "hoistingLimits": "workspaces"
+  }
+}
