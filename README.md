@@ -26,7 +26,7 @@
 
 ## ✨ Features
 
-- ☁️ **Three providers, one API** - [`NSUbiquitousKeyValueStore`][kvs], [CloudKit][ck] records and Google Drive [`appDataFolder`][appdata], each usable directly or through a single facade.
+- ☁️ **Three providers, one API** - [`NSUbiquitousKeyValueStore`][kvs] (iCloud's key-value store), [CloudKit][ck] records and Google Drive [`appDataFolder`][appdata], each usable directly or through a single facade.
 - 🍏 **CloudKit from Android and the web** - the same [private database][ckdb] your iOS app writes to, over [CloudKit Web Services][ckws]. No other React Native library offers this.
 - 🚨 **Errors you can act on** - every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...). `null` means one thing only: the key does not exist.
 - 👤 **Real account lifecycle** - all five [`CKAccountStatus`][ckstatus] values, plus `onAccountChange` with an `identityChanged` flag so you can drop user-scoped caches when the Apple ID changes.
