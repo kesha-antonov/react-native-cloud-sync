@@ -13,10 +13,12 @@ const ROOT = join(HERE, '..', '..')
 const OUT = join(HERE, '..', 'docs')
 
 const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
-// raw.githubusercontent.com resolves LFS-tracked files (like the screenshots
-// under assets/) to their actual bytes for a public repo, so pages can embed
-// them without copying binaries into website/static and drifting from main.
-const RAW = 'https://raw.githubusercontent.com/kesha-antonov/react-native-cloud-sync/main'
+// raw.githubusercontent.com serves the LFS *pointer* text for LFS-tracked
+// files (like the screenshots under assets/), not the image bytes.
+// media.githubusercontent.com/media/... is GitHub's LFS media proxy - the
+// same host the "raw" button on github.com redirects to for an LFS file -
+// so pages can embed the real PNG without copying it into website/static.
+const RAW = 'https://media.githubusercontent.com/media/kesha-antonov/react-native-cloud-sync/main'
 
 /**
  * Canonical key for a heading.
