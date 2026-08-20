@@ -1,6 +1,6 @@
 import { createCloudStore } from '../store'
 import { createMemoryProvider } from '../providers/memory'
-import { resolveByTimestamp } from '../resolvers'
+import { resolveByTimestamp, resolveByUnion } from '../resolvers'
 
 /**
  * A mixed fleet, modelled honestly:
@@ -175,6 +175,50 @@ describe('resolveByTimestamp', () => {
       { provider: 'icloudKV', value: stamped('a', 5) },
       { provider: 'googleDrive', value: stamped('b', 5) },
     ])).toBe(stamped('a', 5))
+  })
+})
+
+describe('resolveByUnion', () => {
+  const resolve = resolveByUnion()
+
+  it('merges primitive arrays, deduplicated', () => {
+    expect(resolve([
+      { provider: 'icloudKV', value: JSON.stringify(['a', 'b']) },
+      { provider: 'googleDrive', value: JSON.stringify(['b', 'c']) },
+    ])).toBe(JSON.stringify(['a', 'b', 'c']))
+  })
+
+  it('orders the merge by first appearance across candidates', () => {
+    expect(resolve([
+      { provider: 'icloudKV', value: JSON.stringify([3, 1]) },
+      { provider: 'googleDrive', value: JSON.stringify([2, 1]) },
+    ])).toBe(JSON.stringify([3, 1, 2]))
+  })
+
+  it('dedupes objects by a supplied key, keeping the first-seen copy', () => {
+    const resolveById = resolveByUnion<{ id: string; label: string }>({ key: item => item.id })
+    expect(resolveById([
+      { provider: 'icloudKV', value: JSON.stringify([{ id: '1', label: 'from-icloud' }]) },
+      { provider: 'googleDrive', value: JSON.stringify([{ id: '1', label: 'from-drive' }, { id: '2', label: 'new' }]) },
+    ])).toBe(JSON.stringify([{ id: '1', label: 'from-icloud' }, { id: '2', label: 'new' }]))
+  })
+
+  it('drops candidates that are not a JSON array rather than treating them as empty', () => {
+    expect(resolve([
+      { provider: 'icloudKV', value: 'not json' },
+      { provider: 'googleDrive', value: JSON.stringify(['b']) },
+    ])).toBe(JSON.stringify(['b']))
+  })
+
+  it('falls back to preference order when nothing is a readable array', () => {
+    expect(resolve([
+      { provider: 'icloudKV', value: 'not json' },
+      { provider: 'googleDrive', value: JSON.stringify({ not: 'an array' }) },
+    ])).toBe('not json')
+  })
+
+  it('returns null for no candidates', () => {
+    expect(resolve([])).toBe(null)
   })
 })
 

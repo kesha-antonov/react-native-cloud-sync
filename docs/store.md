@@ -103,6 +103,16 @@ const store = createCloudStore({
 
 `resolveByTimestamp` covers the usual shape - JSON values carrying a timestamp field, newest wins. It accepts epoch millis or ISO strings, prefers a value it can date over one it cannot, and keeps the earlier provider on a tie so results do not flap.
 
+Not every value should have one write clobber another, though. For a JSON array where two devices adding *different* elements should both survive - a list of favorited item ids, dismissed-tip ids - use `resolveByUnion` instead. It merges every candidate's array rather than picking one:
+
+```ts
+import { resolveByUnion } from 'react-native-cloud-sync'
+
+resolve: resolveByUnion({ key: item => item.id })
+```
+
+Deletions do not propagate through a union - removing an element on one device does not remove it from the merged result, since a plain array carries no record of what used to be there. Track removals yourself (a separate `removedIds` set, synced the same way) if that matters.
+
 Write your own for anything else:
 
 ```ts

@@ -113,6 +113,81 @@ export function resolveByModifiedAt(
 }
 
 /**
+ * Resolves by merging JSON arrays across every candidate - the union of
+ * elements, not a winner-take-all pick.
+ *
+ * The case {@link resolveByTimestamp} and {@link resolveByModifiedAt} do not
+ * cover: a list of favorited item ids, a set of dismissed-tip ids, anything
+ * where two devices adding *different* elements between syncs should both
+ * survive rather than one write clobbering the other.
+ *
+ * Deletions do not propagate. Removing an element on one device and syncing
+ * does not remove it from the merged result, because nothing in a plain union
+ * distinguishes "never added" from "removed" - a plain array carries no
+ * tombstones. Track removals yourself (a separate `removedIds` set, synced the
+ * same way) if that matters for your data.
+ *
+ * A candidate that is not valid JSON, or whose JSON is not an array, is
+ * dropped rather than treated as empty - a value you cannot read as a list is
+ * not evidence that the list is empty. If every candidate drops out this way,
+ * falls back to preference order rather than returning `[]` and reading as
+ * "nothing favorited" on every device.
+ *
+ * Elements are deduplicated and ordered by first appearance across candidates
+ * in provider order, so the merged result is stable rather than reshuffling on
+ * every resolve. When two candidates hold the "same" element with different
+ * fields (an object whose non-key fields differ), the first-seen copy wins -
+ * this merges *membership*, not per-element conflicts. Primitives are
+ * deduplicated by value; supply `key` for arrays of objects.
+ *
+ * ```ts
+ * createCloudStore({
+ *   providers: ['icloudKV', 'googleDrive'],
+ *   writeMode: 'mirror',
+ *   resolve: resolveByUnion({ key: item => item.id }),
+ * })
+ * ```
+ */
+export function resolveByUnion<T = unknown>(
+  options: { key?: (item: T) => string | number } = {}
+): ResolveFn {
+  const keyOf = options.key ?? ((item: T) => JSON.stringify(item))
+
+  return (candidates: ResolveCandidate[]): string | null => {
+    if (candidates.length === 0) return null
+
+    const merged = new Map<string | number, T>()
+    let sawArray = false
+
+    for (const candidate of candidates) {
+      const items = arrayOf<T>(candidate.value)
+      if (items == null) continue
+      sawArray = true
+      for (const item of items) {
+        const key = keyOf(item)
+        if (!merged.has(key)) merged.set(key, item)
+      }
+    }
+
+    // Nothing was a readable array: defer to preference order rather than
+    // manufacturing an empty list.
+    if (!sawArray) return candidates[0].value
+
+    return JSON.stringify([...merged.values()])
+  }
+}
+
+function arrayOf<T>(value: string): T[] | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? (parsed as T[]) : null
+  }
+  catch {
+    return null
+  }
+}
+
+/**
  * Tries each resolver in turn and takes the first non-null answer.
  *
  * The practical combination for a mixed fleet: server time where the provider

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **`resolveByUnion`** - a resolver for JSON arrays where two devices adding
+  *different* elements between syncs should both survive, rather than one
+  write clobbering the other (a list of favorited item ids, dismissed-tip ids).
+  `resolveByTimestamp` and `resolveByModifiedAt` pick one candidate whole;
+  this instead merges every candidate's array, deduplicated and ordered by
+  first appearance, with a `key` option for deduplicating arrays of objects.
+  Deletions do not propagate - a plain array has no tombstones - and a
+  candidate that is not a JSON array is dropped rather than treated as empty.
+
 ## 0.1.0 - 2026-08-20
 
 First release.

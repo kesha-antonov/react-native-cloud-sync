@@ -37,6 +37,7 @@ export {
   resolveByTimestamp,
   resolveByModifiedAt,
   resolveByPreferenceOrder,
+  resolveByUnion,
   resolveFirstOf
 } from './resolvers'
 

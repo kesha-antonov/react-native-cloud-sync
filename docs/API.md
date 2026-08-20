@@ -462,6 +462,7 @@ Each threshold caps one provider: `kvMaxBytes` the key-value store, `recordMaxBy
 resolveByTimestamp(field = 'updatedAt'): ResolveFn
 resolveByModifiedAt(options?: { fallback?: ResolveFn }): ResolveFn
 resolveByPreferenceOrder: ResolveFn
+resolveByUnion(options?: { key?: (item) => string | number }): ResolveFn
 resolveFirstOf(...resolvers: ResolveFn[]): ResolveFn
 ```
 
@@ -470,6 +471,8 @@ resolveFirstOf(...resolvers: ResolveFn[]): ResolveFn
 `resolveByModifiedAt` orders on the **server's** modification time instead, which both CloudKit (`modified.timestamp`) and Drive (`modifiedTime`) already report and which this package now reads. That removes a real constraint: your values no longer have to be JSON carrying a field you remembered to update, so it works on plain strings and on payloads written before you thought about sync.
 
 The catch, and why it is not the default: `NSUbiquitousKeyValueStore` exposes no per-key timestamp at all, so an `icloudKV` candidate never carries one. An undated candidate loses to any dated one; when *nothing* is dated the `fallback` decides (preference order unless you say otherwise).
+
+`resolveByUnion` is for a different shape entirely: JSON arrays where two devices adding *different* elements should both survive, rather than one write clobbering the other - a list of favorited item ids, dismissed-tip ids. It merges every candidate's array, deduplicated and ordered by first appearance; primitives dedupe by value, and `key` says how to dedupe objects. Deletions do not propagate - a plain array has no tombstones, so removing an element on one device does not remove it from the merge. A candidate that is not a JSON array is dropped, not treated as empty; if none of them are, it falls back to preference order.
 
 `resolveFirstOf` tries resolvers in turn and takes the first non-null answer - the practical combination for a mixed fleet:
 
