@@ -349,11 +349,7 @@ yarn start:web
 Tabs: **Sync** (shared counter across devices, including a one-tap mirror mode that writes to iCloud and Drive at once), **iCloud KV**, **CloudKit**, **Drive**, **Files** (large-file backup/restore, including a working `GoogleDriveFileAdapter`), **Store** and **Faults**.
 
 <p align="center">
-  <img src="assets/screenshots/sync.png" width="19%" alt="Sync demo tab - shared counter with mirror provider selection" />
-  <img src="assets/screenshots/icloud-kv.png" width="19%" alt="iCloud key-value store tab" />
-  <img src="assets/screenshots/cloudkit.png" width="19%" alt="CloudKit tab - record read/write and oversized-write handling" />
-  <img src="assets/screenshots/drive.png" width="19%" alt="Google Drive tab - OAuth token configuration and file operations" />
-  <img src="assets/screenshots/store.png" width="19%" alt="Store facade tab - size tiering across providers" />
+  <img src="assets/screenshots/sync.png" width="18%" alt="Sync demo tab - shared counter with mirror provider selection" />&nbsp;&nbsp;<img src="assets/screenshots/icloud-kv.png" width="18%" alt="iCloud key-value store tab" />&nbsp;&nbsp;<img src="assets/screenshots/cloudkit.png" width="18%" alt="CloudKit tab - record read/write and oversized-write handling" />&nbsp;&nbsp;<img src="assets/screenshots/drive.png" width="18%" alt="Google Drive tab - OAuth token configuration and file operations" />&nbsp;&nbsp;<img src="assets/screenshots/store.png" width="18%" alt="Store facade tab - size tiering across providers" />
 </p>
 
 ## 🤝 Contributing
