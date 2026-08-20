@@ -4,20 +4,18 @@ import { getNativeModule, hasNativeModule, requireNativeModule, subscribeNativeE
 import { getCloudKitClient, isCloudKitConfigured } from '../config'
 import { CloudKitRestClient, type CloudKitRestConfig } from '../internal/cloudKitRest'
 import { normalizeError, unsupportedPlatform } from '../errors'
-import { toAccountStatus, toChangeReason } from '../internal/enums'
+import { toAccountStatus } from '../internal/enums'
 import type {
   AccountChangeEvent,
   AccountStatus,
   AssetProgressEvent,
   CloudProvider,
   ProviderName,
-  RemoteChangeEvent,
   Unsubscribe,
 } from '../types'
 import type {
   AccountChangeNativeEvent,
   AssetProgressNativeEvent,
-  RemoteChangeNativeEvent,
 } from '../specs/NativeRNCloudSync'
 
 const NAME = 'cloudKit' as const
@@ -206,18 +204,28 @@ export const cloudKit: CloudProvider = {
     }
   },
 
-  onRemoteChange: (listener: (e: RemoteChangeEvent) => void): Unsubscribe => {
-    // REST has no push channel without APNs, so this is a native-only signal.
-    if (getNativeModule() == null) return () => undefined
-    return subscribeNativeEvent<RemoteChangeNativeEvent>(
-      'onRemoteChange',
-      'remoteChange',
-      (e) => {
-        if (e.provider !== NAME) return
-        listener({ keys: e.keys, reason: toChangeReason(e.reason), provider: NAME })
-      }
-    )
-  },
+  /**
+   * Deliberately absent, rather than present and silent.
+   *
+   * This provider used to expose `onRemoteChange`, and it could never fire: the
+   * only `remoteChange` the native layer emits comes from
+   * `NSUbiquitousKeyValueStore.didChangeExternallyNotification` and is tagged
+   * `icloudKV`, so the filter here never matched. A subscription that accepts a
+   * listener and never calls it is worse than no method at all - the caller has
+   * no way to tell it apart from "nothing has changed yet".
+   *
+   * Implementing it properly is not a small gap to paper over. CloudKit reports
+   * record changes through `CKFetchRecordZoneChangesOperation` with a server
+   * change token, and that only works in a **custom zone** - the default zone,
+   * which this provider uses so that record names stay addressable from the
+   * REST client, does not support change tokens at all. The alternatives are a
+   * `CKDatabaseSubscription` delivered over APNs, which needs push entitlements
+   * and a silent-notification handler in the host app. Either is a real feature
+   * with a schema or entitlement cost, not a missing line.
+   *
+   * Until then: `cloudKit.onRemoteChange == null` is checkable, `icloudKV` and
+   * `googleDrive` both report changes, and `onAccountChange` below does fire.
+   */
 
   onAccountChange: (listener: (e: AccountChangeEvent) => void): Unsubscribe => {
     if (getNativeModule() == null) return () => undefined

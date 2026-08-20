@@ -33,6 +33,21 @@ export interface GoogleDriveConfig {
    */
   chunkBytes?: number
   /**
+   * What to do when `appDataFolder` holds more than one file with the same
+   * name. Default `'newest'`.
+   *
+   * Drive names are not unique - it is a file store with ids, not a key-value
+   * store - so two devices creating the same key while both are offline
+   * genuinely produce two files. Picking whichever the API happened to list
+   * first is the worst option: the choice is unspecified, so two devices can
+   * settle on different files and diverge permanently with no error anywhere.
+   *
+   * `'newest'` picks the most recently modified, which every device agrees on.
+   * `'error'` raises {@link ErrorCode.CONFLICT} instead, for apps that would
+   * rather reconcile explicitly than have one copy quietly win.
+   */
+  onDuplicateName?: 'newest' | 'error'
+  /**
    * Abandon a request that has not answered in this long. Default 60000.
    *
    * Longer than the CloudKit client's because one "request" here can be a whole
@@ -241,14 +256,45 @@ export class GoogleDriveClient {
 
     const res = await this.request(url, { method: 'GET' })
     const json = (await res.json()) as { files?: DriveFile[] }
-    const file = json.files?.find(f => f.name === name)
-    if (file == null) {
+    const matches = (json.files ?? []).filter(f => f.name === name)
+
+    if (matches.length === 0) {
       this.metaCache.delete(name)
       return null
     }
 
+    const file = matches.length === 1 ? matches[0] : this.pickAmongDuplicates(name, matches)
     this.remember(file)
     return file.id
+  }
+
+  /**
+   * Chooses between several files that share a name.
+   *
+   * Deterministically, and that is the whole point: the list order Drive
+   * returns is unspecified, so picking the first match lets two devices settle
+   * on two different files for the same key and diverge forever, silently.
+   * Ordering by modification time - newest first, ties broken by id - gives
+   * every device the same answer.
+   */
+  private pickAmongDuplicates(name: string, matches: DriveFile[]): DriveFile {
+    if (this.config.onDuplicateName === 'error')
+      throw new CloudSyncError(
+        ErrorCode.CONFLICT,
+        `[RNCloudSync] Google Drive holds ${matches.length} files named '${name}'. `
+        + `Reconcile them, or configure onDuplicateName: 'newest' to always take the `
+        + `most recently modified.`,
+        { provider: 'googleDrive', serverErrorCode: 'DUPLICATE_NAME' }
+      )
+
+    return [...matches].sort((a, b) => {
+      const at = a.modifiedTime == null ? 0 : Date.parse(a.modifiedTime)
+      const bt = b.modifiedTime == null ? 0 : Date.parse(b.modifiedTime)
+      if (bt !== at) return bt - at
+      // Same timestamp: id is stable and unique, so this still agrees across
+      // devices rather than depending on response order.
+      return a.id < b.id ? -1 : 1
+    })[0]
   }
 
   /** Records what a listing told us about a file, ids and metadata together. */

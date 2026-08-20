@@ -201,6 +201,8 @@ interface GoogleDriveFileAdapter {
 }
 ```
 
+`GoogleDriveConfig` also takes `onDuplicateName` (`'newest'` by default, or `'error'`). Drive file names are not unique - it is a file store with ids - so two devices creating the same key while both are offline genuinely produce two files. The list order Drive returns is unspecified, so taking the first match lets two devices settle on different files and diverge permanently with nothing reported. `'newest'` orders by modification time with the id as a tiebreak, which every device agrees on; `'error'` raises `ERR_CONFLICT` so you can reconcile explicitly.
+
 Both REST configs also take `timeoutMs` - 30000 for CloudKit, 60000 for Drive by default. `GoogleDriveConfig` additionally takes `changePollIntervalMs` (default 30000) for `onRemoteChange`.
 
 ### More than one account
@@ -289,6 +291,7 @@ interface CloudStore {
   multiGet: (keys: string[]) => Promise<[string, string | null][]>
   multiSet: (entries: [string, string][]) => Promise<void>
   multiRemove: (keys: string[]) => Promise<void>
+  getAllItems: () => Promise<Record<string, string>>
   clear: () => Promise<{ removed: string[] }>
 
   getQuota: () => Promise<QuotaInfo[]>
@@ -312,6 +315,8 @@ interface CloudStore {
 `multiGet` results are positional, so you can zip them against your input, and a missing key is `[key, null]` rather than an omitted entry.
 
 `clear()` enumerates with `getAllKeys()` first. A "delete my data" flow built on a hardcoded key list is a flow that forgets a key.
+
+`getAllItems()` is `getAllKeys()` plus `multiGet()`, returning one object. It costs whatever those cost - one batched request per provider that batches, a loop where one does not - and exists because it is the shape a debug screen or a data export actually wants.
 
 ### Migration
 

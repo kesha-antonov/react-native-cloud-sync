@@ -247,6 +247,7 @@ if (pending.length > 0) showPendingBadge(pending.length)
 const pairs = await store.multiGet(['a', 'b', 'c'])     // [['a', '1'], ['b', null], ...]
 await store.multiSet([['a', '1'], ['b', '2']])
 await store.multiRemove(['a', 'b'])
+const all = await store.getAllItems()                   // { a: '1', b: '2' }
 const { removed } = await store.clear()
 ```
 
@@ -299,6 +300,10 @@ store.onAccountChange(({ identityChanged, status }) => {
 ```
 
 Events from every configured provider are merged here, and `onRemoteChange` works the same way - previously only the raw providers exposed these, so the facade could not be subscribed to at all.
+
+Account events are deduplicated. On Apple platforms `icloudKV` and `cloudKit` both observe the same two system notifications and relabel them with their own name - correctly, since an Apple ID change matters to both - so without this a store configured with both would hand your listener one system event twice.
+
+Note that `cloudKit` reports account changes but **not** remote data changes: `cloudKit.onRemoteChange` is `undefined` rather than a subscription that never fires. CloudKit tracks record changes with a server change token, which only works in a custom zone, or through a `CKDatabaseSubscription` delivered over APNs. `icloudKV` and `googleDrive` both report changes normally.
 
 On `identityChanged: true` the store also, without being asked:
 

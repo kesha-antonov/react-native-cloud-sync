@@ -4,6 +4,24 @@
 
 ### 🐛 Bug Fixes
 
+- **Google Drive picked arbitrarily between files sharing a name.** Drive names
+  are not unique - it is a file store with ids - so two devices creating the
+  same key while both are offline genuinely produce two files, and the list
+  order Drive returns is unspecified. Taking the first match let two devices
+  settle on different files and diverge permanently with nothing reported
+  anywhere. Now ordered by modification time with the id as a tiebreak, so
+  every device agrees; `onDuplicateName: 'error'` raises `ERR_CONFLICT`
+  instead.
+- **`cloudKit.onRemoteChange` accepted listeners it could never call.** The only
+  `remoteChange` the native layer emits is tagged `icloudKV`, and the filter
+  looked for `cloudKit` - so it was a subscription that silently never fired,
+  which a caller cannot tell apart from "nothing has changed". Removed rather
+  than faked: `cloudKit.onRemoteChange` is now `undefined` and checkable.
+  Implementing it needs a custom zone (the default zone has no change tokens)
+  or an APNs `CKDatabaseSubscription`.
+- **An account change was delivered twice.** `icloudKV` and `cloudKit` both
+  observe the same two system notifications and relabel them, so a store
+  configured with both handed one system event to app listeners twice.
 - **Key validation applied CloudKit's rules to every provider.** The record-name
   alphabet and the reserved `_` prefix are CloudKit restrictions;
   `NSUbiquitousKeyValueStore` keys are plain strings with no character rules,
@@ -69,6 +87,9 @@
   never reaches Apple's servers, so CloudKit Web Services cannot decrypt either.
   Writes to its own record type (`EncryptedKVBlob`) because CloudKit records
   encryption in the schema, so it cannot share `cloudKit`'s.
+- **`store.getAllItems()`** - keys and values as one object, the shape every
+  key-value library being migrated from exposes and the one a debug screen or
+  a data export actually wants.
 - **`icloudKVGetAllItems()`** - every key and value in the iCloud key-value
   store in one bridge hop, rather than `getAllKeys()` plus a read per key. Not
   on the provider contract, because no other backend can do it without fetching

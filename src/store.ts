@@ -123,6 +123,16 @@ export interface CloudStore {
    */
   clear: () => Promise<{ removed: string[] }>
 
+  /**
+   * Every key and value the store can see, as one object.
+   *
+   * `getAllKeys()` followed by `multiGet()`, so it costs whatever those cost -
+   * one batched request per provider that batches, a loop where one does not.
+   * Here because it is the shape a debug screen or an export actually wants,
+   * and because every key-value library being migrated from has it.
+   */
+  getAllItems: () => Promise<Record<string, string>>
+
   /** Per-provider storage usage, for the providers that report it. */
   getQuota: () => Promise<QuotaInfo[]>
 
@@ -668,10 +678,40 @@ export function createCloudStore(
 
       if (p.onAccountChange != null)
         providerSubscriptions.push(p.onAccountChange((e) => {
+          if (isDuplicateAccountEvent(e)) return
           handleAccountChange(e)
           for (const l of accountListeners) l(e)
         }))
     }
+  }
+
+  /**
+   * Collapses the same account event arriving from several providers at once.
+   *
+   * On Apple platforms `icloudKV` and `cloudKit` both listen to the same two
+   * system notifications and relabel them with their own provider name -
+   * correctly, because an Apple ID change matters to both. The consequence is
+   * that a store configured with both delivers one system event to app
+   * listeners twice.
+   *
+   * Deduplicated on the event's content rather than its provider, over a short
+   * window: the providers emit within the same tick, so anything that looks
+   * identical that soon after is the same underlying notification. A genuine
+   * second change of the same shape inside the window is vanishingly unlikely,
+   * and would only cost a repeat of work that is already idempotent.
+   */
+  const ACCOUNT_EVENT_DEDUPE_MS = 250
+  let lastAccountEvent: { key: string; at: number } | null = null
+
+  function isDuplicateAccountEvent(e: AccountChangeEvent): boolean {
+    const key = `${e.status}\u0000${String(e.identityChanged)}`
+    const now = Date.now()
+    const seen = lastAccountEvent != null
+      && lastAccountEvent.key === key
+      && now - lastAccountEvent.at < ACCOUNT_EVENT_DEDUPE_MS
+
+    lastAccountEvent = { key, at: now }
+    return seen
   }
 
   /**
@@ -1013,6 +1053,17 @@ export function createCloudStore(
       if (keys.length === 0) return { removed: [] }
       await store.multiRemove(keys)
       return { removed: keys }
+    },
+
+    getAllItems: async () => {
+      const keys = await store.getAllKeys()
+      if (keys.length === 0) return {}
+
+      const out: Record<string, string> = {}
+      for (const [key, value] of await store.multiGet(keys))
+        if (value != null) out[key] = value
+
+      return out
     },
 
     getQuota: async () => {
