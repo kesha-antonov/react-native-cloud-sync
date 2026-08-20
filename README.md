@@ -7,6 +7,7 @@
   <img src="https://img.shields.io/badge/Expo-compatible-000020.svg" alt="Expo compatible" />
   <img src="https://img.shields.io/badge/New%20Architecture-supported-success.svg" alt="New Architecture supported" />
   <img src="https://img.shields.io/badge/Legacy%20Architecture-supported-success.svg" alt="Legacy Architecture supported" />
+  <a href="https://github.com/sponsors/kesha-antonov"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa.svg?logo=github-sponsors" alt="Sponsor this project" /></a>
 </p>
 
 <h1 align="center">react-native-cloud-sync</h1>
