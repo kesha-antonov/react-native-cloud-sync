@@ -129,8 +129,19 @@ export interface Spec extends TurboModule {
     fileUri: string,
     zoneName: string | null
   ) => Promise<void>
-  /** Downloads a CKAsset field. Emits `onAssetProgress` while running. */
-  ckFetchAsset: (recordName: string, fieldName: string, zoneName: string | null) => Promise<string | null>
+  /**
+   * Downloads a CKAsset field. Emits `onAssetProgress` while running.
+   *
+   * `destinationUri` is where the bytes land; null picks a temporary path.
+   * Worth passing for anything the user keeps or hands to a share sheet - the
+   * default is in `NSTemporaryDirectory`, which iOS may reclaim.
+   */
+  ckFetchAsset: (
+    recordName: string,
+    fieldName: string,
+    zoneName: string | null,
+    destinationUri: string | null
+  ) => Promise<string | null>
   /**
    * Cancels an in-flight asset transfer. Resolves true when there was one.
    *

@@ -25,6 +25,15 @@ export interface BackupOptions {
   zoneName?: string | null
   /** Called repeatedly while the transfer is in flight, scoped to this call only. */
   onProgress?: (e: BackupProgressEvent) => void
+  /**
+   * Where `restore` puts the downloaded file. Ignored by `save`.
+   *
+   * Pass one whenever the user is going to see the result - an export they
+   * save to Files, a database they hand to a share sheet. Without it the file
+   * lands in the app's temporary directory, which iOS may reclaim at any time
+   * and which the user cannot reach. Parent directories are created for you.
+   */
+  destinationUri?: string
 }
 
 /**
@@ -67,7 +76,12 @@ export const cloudKitBackup = {
 
     const unsubscribe = subscribeScoped(recordName, fieldName, options.onProgress)
     try {
-      return await assets.fetch({ recordName, fieldName, zoneName: options.zoneName })
+      return await assets.fetch({
+        recordName,
+        fieldName,
+        zoneName: options.zoneName,
+        destinationUri: options.destinationUri,
+      })
     }
     finally {
       unsubscribe()

@@ -43,6 +43,82 @@ export async function restore (): Promise<AppState | null> {
 
 Version the key (`backup/v1`) rather than the payload. When the shape changes, write `backup/v2` and keep reading v1 as a fallback - older devices keep working, and a rollback does not corrupt anything.
 
+## Let the user download their backup
+
+"Give me a local copy of my data" - an export the user saves to Files, AirDrops to a laptop, or attaches to a support email. Common for anything holding records they consider theirs: a finance app's database, a journal, a workout history.
+
+Three steps, and this package owns the first two:
+
+1. **Get the file out of the cloud** to a path you control.
+2. **Put it somewhere durable** - not the temporary directory.
+3. **Hand it to the system** so the user picks the destination.
+
+```ts
+import * as FileSystem from 'expo-file-system'
+import * as Sharing from 'expo-sharing'
+import { cloudKitBackup, googleDriveFiles } from 'react-native-cloud-sync'
+
+async function exportBackup () {
+  const stamp = new Date().toISOString().slice(0, 10)
+  const destinationUri = `${FileSystem.documentDirectory}finance-backup-${stamp}.sqlite`
+
+  const path = Platform.OS === 'ios'
+    ? await cloudKitBackup.restore({ destinationUri, onProgress: track })
+    : await googleDriveFiles.fetch({ name: 'backup.sqlite', destinationUri, onProgress: track })
+
+  if (path == null) return showNothingToExport()
+
+  await Sharing.shareAsync(path, {
+    mimeType: 'application/x-sqlite3',
+    dialogTitle: 'Export backup',
+  })
+}
+```
+
+### Always pass `destinationUri`
+
+Without it, `cloudKitBackup.restore()` lands the file in the app's **temporary** directory under a name derived from the record. iOS may reclaim that at any point, and the name is not one you would show anyone. That default is right for restoring straight back into the app and wrong for an export - which is why the option exists.
+
+`documentDirectory` is the usual choice: it survives, it is backed up, and the share sheet can read it. Parent directories are created for you.
+
+### The sharing step is not ours
+
+`expo-sharing`, `react-native-share` and `expo-document-picker` already solve presenting the system share sheet, "Save to Files", and the import picker. Wrapping them would mean a WebView-sized dependency and a second-rate copy of a solved problem, so this package stops at handing you a real path.
+
+The exception, and it is a good one on iOS: [`icloudDocuments`](providers/icloud-drive.md) puts the file straight into the user's iCloud Drive, where it shows up in Files.app with no share sheet at all.
+
+```ts
+await icloudDocuments.save({ fileUri: path, name: `finance-backup-${stamp}.sqlite` })
+```
+
+### Exporting is a privacy decision
+
+The moment that file leaves your sandbox it is outside every guarantee this package makes. A backup that was end-to-end encrypted in [`cloudKitEncrypted`](encryption.md#cloudkits-native-encryption), or behind a `codec`, is **plaintext on disk** the instant you write it somewhere the share sheet can reach - and whatever the user AirDrops it into is no longer your problem or your protection.
+
+For a finance app that usually means: encrypt the export itself, with a passphrase the user enters at export time, and say plainly in the dialog that the file is unencrypted if they decline. See [Encryption](encryption.md#where-the-key-lives) for where that key should live.
+
+### Importing it back
+
+The mirror image, and worth building at the same time - an export nobody can restore is a false promise:
+
+```ts
+const picked = await DocumentPicker.getDocumentAsync({ type: 'application/x-sqlite3' })
+if (picked.canceled) return
+
+await validateBackupFile(picked.assets[0].uri)     // yours: check it is really your schema
+await restoreFromFile(picked.assets[0].uri)
+```
+
+Validate before restoring. The file came from outside your app, may be from a much older version, and may not be your file at all.
+
+### Large databases
+
+Both fetch paths stream. `googleDriveFiles` downloads in 8 MiB chunks through the file adapter, and `cloudKitBackup` streams a `CKAsset` from disk, so neither holds the whole database in memory. Report progress - a multi-hundred-megabyte export with no feedback reads as a hang - and offer a cancel:
+
+```ts
+await cloudKitBackup.cancel()                        // rejects the restore with ERR_CANCELLED
+```
+
 ## Cross-platform large-file backup
 
 That recipe is for a JSON-sized blob. For something too big to hold in memory as a string - a SQLite export, hundreds of MB - [`cloudKitBackup`](providers/cloudkit.md#backuprestore-helper) (iOS/macOS) and [`googleDriveFiles`](providers/google-drive.md#large-files) (Android/web) are the two providers that actually stream from disk instead of loading the whole file. They are not merged into one API because their restore paths genuinely differ - CloudKit invents its own temp path, Drive writes wherever you tell it to via your file adapter - but wrapping both behind one pair of functions is a few lines:

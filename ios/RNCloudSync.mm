@@ -357,15 +357,15 @@ RCT_EXPORT_METHOD(ckSaveAsset:(NSString *)recordType recordName:(NSString *)reco
 }
 #endif
 
-- (void)ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fieldName zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+- (void)ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fieldName zoneName:(NSString *)zoneName destinationUri:(NSString *)destinationUri resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudSyncImpl.shared ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName destinationUri:destinationUri resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
-RCT_EXPORT_METHOD(ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fieldName zoneName:(NSString *)zoneName resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fieldName zoneName:(NSString *)zoneName destinationUri:(NSString *)destinationUri resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    [self ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName resolve:resolve reject:reject];
+    [self ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName destinationUri:destinationUri resolve:resolve reject:reject];
 }
 #endif
 

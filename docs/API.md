@@ -57,7 +57,10 @@ fetch(options: {
   recordName: string
   fieldName: string
   zoneName?: string | null
+  destinationUri?: string    // where it lands; defaults to a temporary path
 }): Promise<string | null>   // local path, or null if absent
+
+cancel(options: { recordName: string, fieldName: string }): Promise<boolean>
 
 onProgress(cb: (e: AssetProgressEvent) => void): Unsubscribe
 ```
@@ -75,6 +78,7 @@ interface BackupOptions {
   fieldName?: string         // default 'file'
   zoneName?: string | null
   onProgress?: (e: BackupProgressEvent) => void
+  destinationUri?: string    // restore only; where the file lands
 }
 
 interface BackupProgressEvent {
@@ -83,6 +87,8 @@ interface BackupProgressEvent {
   fraction: number            // bytesTransferred / bytesTotal, 0 until known
 }
 ```
+
+Pass `destinationUri` to `restore` for anything the user keeps or hands to a share sheet. Without it the file lands in the app's **temporary** directory under a name derived from the record - fine for restoring straight back into the app, wrong for an export, since iOS may reclaim it and the user cannot reach it. Parent directories are created for you. See [letting the user download their backup](recipes.md#let-the-user-download-their-backup).
 
 ### `googleDriveFiles`
 

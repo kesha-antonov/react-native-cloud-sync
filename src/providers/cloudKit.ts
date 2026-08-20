@@ -437,9 +437,20 @@ export const assets = {
   /**
    * Downloads an asset field and resolves a local file path, or `null` when the
    * record or field does not exist.
+   *
+   * Pass `destinationUri` for anything the user is going to keep or hand to a
+   * share sheet. Without it the file lands in the app's temporary directory
+   * under a name derived from the record, and iOS may reclaim that at any
+   * time - fine for restoring straight back into the app, wrong for an export.
+   * Parent directories are created if they do not exist.
    */
   fetch: async (
-    options: { recordName: string; fieldName: string; zoneName?: string | null }
+    options: {
+      recordName: string
+      fieldName: string
+      zoneName?: string | null
+      destinationUri?: string
+    }
   ): Promise<string | null> => {
     if (!isNative())
       throw unsupportedPlatform(
@@ -451,7 +462,8 @@ export const assets = {
       return await requireNativeModule().ckFetchAsset(
         options.recordName,
         options.fieldName,
-        options.zoneName ?? null
+        options.zoneName ?? null,
+        options.destinationUri ?? null
       )
     }
     catch (e) {

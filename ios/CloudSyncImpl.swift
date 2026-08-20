@@ -772,10 +772,19 @@ import Foundation
     /// next to the asset, so progress is reported in real bytes from the very
     /// first callback rather than jumping from 0 to 100% at the end - `CKAsset`
     /// itself exposes no size until its bytes have already landed.
+    /// - Parameter destinationUri: where to put the downloaded bytes. Pass nil
+    ///   for a temporary path this module chooses.
+    ///
+    ///   Worth passing for anything the user is going to keep or hand to a
+    ///   share sheet: the default lands in `NSTemporaryDirectory`, which iOS
+    ///   may reclaim at any time, under a name the caller did not choose. That
+    ///   is fine for "restore straight back into the app" and wrong for
+    ///   "export my data", which is the case that needs a real path.
     @objc public func ckFetchAsset(
         _ recordName: String,
         fieldName: String,
         zoneName: String?,
+        destinationUri: String?,
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
@@ -786,7 +795,8 @@ import Foundation
             fetchKnownSize(database: database, id: id, fieldName: fieldName) { [weak self] knownSize in
                 self?.fetchAsset(
                     database: database, id: id, recordName: recordName, fieldName: fieldName,
-                    knownSize: knownSize, resolve: resolve, reject: reject
+                    knownSize: knownSize, destinationUri: destinationUri,
+                    resolve: resolve, reject: reject
                 )
             }
         } catch {
@@ -824,6 +834,7 @@ import Foundation
         recordName: String,
         fieldName: String,
         knownSize: Int,
+        destinationUri: String?,
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
@@ -863,9 +874,20 @@ import Foundation
                 // CloudKit stores the download in a temporary location it
                 // may reclaim, so copy it somewhere the caller controls
                 // before handing back a path.
-                let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("rncs-\(recordName)-\(fieldName)")
+                let destination = destinationUri.map { Self.fileURL(from: $0) }
+                    ?? FileManager.default.temporaryDirectory
+                        .appendingPathComponent("rncs-\(recordName)-\(fieldName)")
                 do {
+                    // Create the parent directory when the caller named a path
+                    // inside one that does not exist yet - a copy into a missing
+                    // directory fails, and making them create it first would be
+                    // a pointless extra step in every export flow.
+                    let parent = destination.deletingLastPathComponent()
+                    if !FileManager.default.fileExists(atPath: parent.path) {
+                        try FileManager.default.createDirectory(
+                            at: parent, withIntermediateDirectories: true
+                        )
+                    }
                     if FileManager.default.fileExists(atPath: destination.path) {
                         try FileManager.default.removeItem(at: destination)
                     }

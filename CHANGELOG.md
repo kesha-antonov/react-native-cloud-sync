@@ -87,6 +87,13 @@
   never reaches Apple's servers, so CloudKit Web Services cannot decrypt either.
   Writes to its own record type (`EncryptedKVBlob`) because CloudKit records
   encryption in the schema, so it cannot share `cloudKit`'s.
+- **`destinationUri` on `cloudKitAssets.fetch` and `cloudKitBackup.restore`.**
+  They used to write into the app's temporary directory under a name derived
+  from the record - which iOS may reclaim, and which the user cannot reach - so
+  there was no way to fetch a backup somewhere it could be handed to a share
+  sheet or a "Save to Files" flow. `googleDriveFiles.fetch` and
+  `icloudDocuments.fetch` already took a destination; these now match. Parent
+  directories are created.
 - **`store.getAllItems()`** - keys and values as one object, the shape every
   key-value library being migrated from exposes and the one a debug screen or
   a data export actually wants.

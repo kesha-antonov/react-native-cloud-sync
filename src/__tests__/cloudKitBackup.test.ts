@@ -146,6 +146,27 @@ describe('cloudKitBackup on iOS', () => {
 
     await cloudKitBackup.restore({ recordName: 'export-2026', fieldName: 'blob', zoneName: 'Exports' })
 
-    expect(harness.module.ckFetchAsset).toHaveBeenCalledWith('export-2026', 'blob', 'Exports')
+    expect(harness.module.ckFetchAsset).toHaveBeenCalledWith('export-2026', 'blob', 'Exports', null)
+  })
+})
+
+describe('restoring somewhere the user can reach', () => {
+  it('passes a destination through, for an export rather than an in-app restore', async () => {
+    harness.module.ckFetchAsset.mockResolvedValueOnce('file:///docs/backup.sqlite')
+
+    await expect(cloudKitBackup.restore({
+      destinationUri: 'file:///docs/backup.sqlite',
+    })).resolves.toBe('file:///docs/backup.sqlite')
+
+    expect(harness.module.ckFetchAsset).toHaveBeenCalledWith(
+      'backup', 'file', null, 'file:///docs/backup.sqlite'
+    )
+  })
+
+  it('defaults to a temporary path when the caller does not care', async () => {
+    // Fine for restoring straight back into the app; wrong for anything the
+    // user keeps, since iOS may reclaim the temporary directory.
+    await cloudKitBackup.restore()
+    expect(harness.module.ckFetchAsset).toHaveBeenCalledWith('backup', 'file', null, null)
   })
 })
