@@ -58,6 +58,13 @@ export interface Spec extends TurboModule {
   kvRemoveItem: (key: string) => Promise<void>
   kvGetAllKeys: () => Promise<string[]>
   /**
+   * Every key and value at once - one bridge hop where `kvGetAllKeys` plus N
+   * `kvGetItem` calls would be N+1. Non-string values are omitted rather than
+   * coerced, since a stringified number would not round-trip through
+   * `kvSetItem`.
+   */
+  kvGetAllItems: () => Promise<UnsafeObject>
+  /**
    * Flushes pending KV changes to disk.
    *
    * Note this is `NSUbiquitousKeyValueStore.synchronize()`, which despite the

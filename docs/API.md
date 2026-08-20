@@ -153,6 +153,16 @@ interface DocumentFetchOptions {
 }
 ```
 
+## `icloudKVGetAllItems`
+
+```ts
+icloudKVGetAllItems(): Promise<Record<string, string>>
+```
+
+Every key *and* value in the iCloud key-value store, in one call. Not part of the `CloudProvider` contract, because no other provider can do it cheaply - CloudKit and Drive would both have to fetch every record. Here the whole store is already a local dictionary, so this is one bridge hop against the N+1 that `getAllKeys()` plus a read per key costs.
+
+Values the store holds as something other than a string (it also accepts numbers, dates and data) are omitted rather than coerced, since a stringified number would not round-trip back through `setItem`.
+
 ## Configuration
 
 ```ts
@@ -384,9 +394,19 @@ sanitizeKey(raw: string, maxBytes?: number): string
 
 One key string has to be an `NSUbiquitousKeyValueStore` key, a CloudKit `recordName` and a Drive filename at once, and the three disagree about what is legal. The store checks before the request and rejects with `ERR_INVALID_KEY`; without that, an illegal record name comes back as `BAD_REQUEST`, maps to `ERR_CONTAINER_MISCONFIGURED`, and sends you looking at your entitlements.
 
-The rules: ASCII letters, digits, `.`, `_` and `-`; no leading `_` (CloudKit reserves it); at most 255 characters when `cloudKit` is configured; at most 64 **UTF-8 bytes** when `icloudKV` is - Apple's documented key limit, and note it is bytes, so a key of emoji is four times longer than it looks.
+Every rule is scoped to the provider that imposes it, and is only checked when that provider is in your list. Rejecting a key for a restriction that cannot apply is a false alarm, and one that breaks working apps rather than pre-empting a server error.
 
-`checkKey` returns `null` when the key is fine, or `{ reason, provider }` describing the first rule it breaks. `sanitizeKey` rewrites an arbitrary string into a legal one for keys that come from somewhere you do not control - a filename, a user-entered label. Over-long keys are truncated *and* suffixed with a hash of the original, because truncation alone maps every long key with a shared prefix onto the same short key and silently merges unrelated values.
+| Rule | Applies when |
+|---|---|
+| Non-empty | always |
+| ASCII letters, digits, `.`, `_`, `-` only | `cloudKit` / `cloudKitEncrypted` configured |
+| No leading `_` (CloudKit reserves it) | `cloudKit` / `cloudKitEncrypted` configured |
+| At most 255 characters | `cloudKit` / `cloudKitEncrypted` configured |
+| At most 64 **UTF-8 bytes** | `icloudKV` configured |
+
+So `auth/anonymousUserId/v1` is a perfectly good key for a key-value-store-only app - `NSUbiquitousKeyValueStore` keys are plain strings with no character rules, and Apple documents only the length. Add `cloudKit` to that store and the same key is rejected, because it now has to serve as a record name too.
+
+`checkKey` returns `null` when the key is fine, or `{ reason, provider }` describing the first rule it breaks and which provider imposes it. `sanitizeKey` rewrites an arbitrary string into a legal one for keys that come from somewhere you do not control - a filename, a user-entered label. Over-long keys are truncated *and* suffixed with a hash of the original, because truncation alone maps every long key with a shared prefix onto the same short key and silently merges unrelated values.
 
 Set `validateKeys: false` if your keys are known good and you would rather not pay for the check.
 

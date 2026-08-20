@@ -225,6 +225,18 @@ RCT_EXPORT_METHOD(kvGetAllKeys:(RCTPromiseResolveBlock)resolve rejecter:(RCTProm
 }
 #endif
 
+- (void)kvGetAllItems:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared kvGetAllItemsWithResolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(kvGetAllItems:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self kvGetAllItems:resolve reject:reject];
+}
+#endif
+
 - (void)kvSync:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
     [CloudSyncImpl.shared kvSyncWithResolve:resolve reject:reject];

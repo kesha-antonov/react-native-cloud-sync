@@ -6,7 +6,11 @@
  */
 
 // Providers, each usable directly.
-export { icloudKV, sync as icloudKVSync } from './providers/icloudKV'
+export {
+  icloudKV,
+  getAllItems as icloudKVGetAllItems,
+  sync as icloudKVSync
+} from './providers/icloudKV'
 export {
   cloudKit,
   createCloudKitProvider,

@@ -531,3 +531,43 @@ describe('the codec and tiering together', () => {
     })
   })
 })
+
+describe('key rules are scoped to the provider that imposes them', () => {
+  // Taken from a real app (MagisteriaApp) that syncs only through the iCloud
+  // key-value store. These keys have been in production for years; a validator
+  // that rejected them would break the anonymous-user id that gates a user's
+  // purchased content.
+  const KV_ONLY_KEYS = ['auth/anonymousUserId/v1', 'tests/chosedBaseUri/v1']
+
+  it('allows a slash when only the key-value store is configured', () => {
+    // `NSUbiquitousKeyValueStore` keys are plain strings - Apple documents a
+    // 64-byte ceiling and no character rules at all.
+    for (const key of KV_ONLY_KEYS) expect(checkKey(key, ['icloudKV'])).toBeNull()
+  })
+
+  it('allows a slash for Drive-only too', () => {
+    for (const key of KV_ONLY_KEYS) expect(checkKey(key, ['googleDrive'])).toBeNull()
+  })
+
+  it('still rejects it as soon as CloudKit is in the list', () => {
+    // Now the key really does have to be a record name.
+    for (const key of KV_ONLY_KEYS) {
+      const broken = checkKey(key, ['icloudKV', 'cloudKit'])
+      expect(broken?.provider).toBe('cloudKit')
+    }
+  })
+
+  it('applies the charset rule for cloudKitEncrypted as well', () => {
+    expect(checkKey('a/b', ['cloudKitEncrypted'])?.provider).toBe('cloudKitEncrypted')
+  })
+
+  it('names the provider responsible, so the message says what to change', () => {
+    expect(checkKey('_x', ['cloudKit'])?.provider).toBe('cloudKit')
+    expect(checkKey('k'.repeat(100), ['icloudKV'])?.provider).toBe('icloudKV')
+  })
+
+  it('still rejects an empty key everywhere, since nothing can store one', () => {
+    expect(checkKey('', ['icloudKV'])).not.toBeNull()
+    expect(checkKey('', ['googleDrive'])).not.toBeNull()
+  })
+})

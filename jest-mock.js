@@ -23,6 +23,7 @@ const mockModule = {
   kvSetItem: jest.fn(() => Promise.resolve()),
   kvRemoveItem: jest.fn(() => Promise.resolve()),
   kvGetAllKeys: jest.fn(() => Promise.resolve([])),
+  kvGetAllItems: jest.fn(() => Promise.resolve({})),
   kvSync: jest.fn(() => Promise.resolve(true)),
   kvGetUsage: jest.fn(() => Promise.resolve({
     usedBytes: 0,

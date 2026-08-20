@@ -321,7 +321,17 @@ await store.setItem('settings/theme', 'dark')
 
 Without that check this reaches CloudKit as `BAD_REQUEST`, maps to `ERR_CONTAINER_MISCONFIGURED`, and sends you to look at your entitlements.
 
-The rules: ASCII letters, digits, `.`, `_`, `-`; no leading `_`; at most 255 characters with `cloudKit` configured; at most 64 **UTF-8 bytes** with `icloudKV` - Apple's documented key limit, in bytes, so a key of emoji is four times longer than it looks. The byte rule only applies when `icloudKV` is actually in your provider list, since rejecting a long key for a Drive-only app would be a false alarm.
+Every rule is scoped to the provider that imposes it, and only checked when that provider is in your list:
+
+| Rule | Applies when |
+|---|---|
+| Non-empty | always |
+| ASCII letters, digits, `.`, `_`, `-` only | `cloudKit` / `cloudKitEncrypted` configured |
+| No leading `_` | `cloudKit` / `cloudKitEncrypted` configured |
+| At most 255 characters | `cloudKit` / `cloudKitEncrypted` configured |
+| At most 64 **UTF-8 bytes** | `icloudKV` configured |
+
+`settings/theme` is a fine key for a key-value-store-only app - those keys are plain strings with no character rules. It stops being fine the moment you add `cloudKit`, because it then has to be a record name as well. Scoping matters: a validator that applied CloudKit's alphabet everywhere would reject keys that had been working in production for years.
 
 For keys you do not control - a filename, something the user typed:
 

@@ -28,14 +28,26 @@ const CK_MAX_RECORD_NAME = 255
 
 /**
  * CloudKit accepts ASCII letters, digits, `-`, `_` and `.` in a record name.
- * Drive tolerates far more, but a key is routinely written to both, so the
- * intersection is the only safe alphabet - and being strict here is much
- * cheaper than discovering it from a server error on one platform only.
+ *
+ * Checked **only when a CloudKit provider is configured**. It is a CloudKit
+ * restriction, not a universal one: `NSUbiquitousKeyValueStore` keys are plain
+ * strings with no character rules at all, and Drive file names are nearly as
+ * permissive. Applying it everywhere rejected keys that had been working in
+ * production for years - `auth/anonymousUserId/v1` in an app that only ever
+ * used the key-value store - which is a far worse outcome than the server
+ * error this check exists to pre-empt.
  */
 const SAFE_KEY = /^[A-Za-z0-9._-]+$/
 
 /** CloudKit reserves the leading underscore for its own system record names. */
 const RESERVED_PREFIX = '_'
+
+/** Providers whose keys become CloudKit record names. */
+const CLOUDKIT_PROVIDERS: readonly ProviderName[] = ['cloudKit', 'cloudKitEncrypted']
+
+function usesCloudKit(providers: readonly ProviderName[]): ProviderName | null {
+  return providers.find(p => CLOUDKIT_PROVIDERS.includes(p)) ?? null
+}
 
 export interface KeyRule {
   /** Human-readable statement of what was violated. */
@@ -56,26 +68,35 @@ export function checkKey(key: string, providers: readonly ProviderName[]): KeyRu
   if (typeof key !== 'string' || key.length === 0)
     return { reason: 'a key must be a non-empty string', provider: null }
 
-  if (!SAFE_KEY.test(key))
-    return {
-      reason:
-        'a key may contain only ASCII letters, digits, and the characters . _ - '
-        + '(CloudKit record names accept nothing else, and keys are routinely written to '
-        + 'more than one provider)',
-      provider: null,
-    }
+  // Every rule below this line belongs to a specific provider, and is only
+  // applied when that provider is actually configured. Rejecting a key for a
+  // restriction that cannot apply is not caution, it is a false alarm - and one
+  // that breaks working apps rather than pre-empting a server error.
+  const cloudKitProvider = usesCloudKit(providers)
 
-  if (key.startsWith(RESERVED_PREFIX))
-    return {
-      reason: 'a key may not start with "_", which CloudKit reserves for system records',
-      provider: null,
-    }
+  if (cloudKitProvider != null) {
+    if (!SAFE_KEY.test(key))
+      return {
+        reason:
+          'a key may contain only ASCII letters, digits, and the characters . _ - '
+          + 'once it has to serve as a CloudKit record name',
+        provider: cloudKitProvider,
+      }
 
-  if (key.length > CK_MAX_RECORD_NAME && providers.includes('cloudKit'))
-    return {
-      reason: `a CloudKit record name is limited to ${CK_MAX_RECORD_NAME} characters (got ${key.length})`,
-      provider: 'cloudKit',
-    }
+    if (key.startsWith(RESERVED_PREFIX))
+      return {
+        reason: 'a key may not start with "_", which CloudKit reserves for system records',
+        provider: cloudKitProvider,
+      }
+
+    if (key.length > CK_MAX_RECORD_NAME)
+      return {
+        reason:
+          `a CloudKit record name is limited to ${CK_MAX_RECORD_NAME} characters `
+          + `(got ${key.length})`,
+        provider: cloudKitProvider,
+      }
+  }
 
   if (providers.includes('icloudKV')) {
     const bytes = byteLength(key)

@@ -4,6 +4,14 @@
 
 ### 🐛 Bug Fixes
 
+- **Key validation applied CloudKit's rules to every provider.** The record-name
+  alphabet and the reserved `_` prefix are CloudKit restrictions;
+  `NSUbiquitousKeyValueStore` keys are plain strings with no character rules,
+  and Drive file names are nearly as permissive. Checking them unconditionally
+  rejected keys that had been in production for years - a real app syncing only
+  through the key-value store uses `auth/anonymousUserId/v1`, which would have
+  started throwing `ERR_INVALID_KEY`. Every rule is now scoped to the provider
+  that imposes it.
 - **The `codec` documentation had the ordering backwards.** It said encoding ran
   after tiering picked a destination; it runs before, so a value is routed by
   the size it will actually occupy. The behaviour was right, the docs were
@@ -61,6 +69,10 @@
   never reaches Apple's servers, so CloudKit Web Services cannot decrypt either.
   Writes to its own record type (`EncryptedKVBlob`) because CloudKit records
   encryption in the schema, so it cannot share `cloudKit`'s.
+- **`icloudKVGetAllItems()`** - every key and value in the iCloud key-value
+  store in one bridge hop, rather than `getAllKeys()` plus a read per key. Not
+  on the provider contract, because no other backend can do it without fetching
+  every record.
 - **`icloudDocuments`** - files in the user's own iCloud Drive, visible in
   Files.app. The one thing no `CKRecord` or `CKAsset` API can do: a `CKAsset`
   lives in a private database the user cannot see, open or share. Apple

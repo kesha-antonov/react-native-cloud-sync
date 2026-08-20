@@ -165,6 +165,28 @@ export const icloudKV: CloudProvider = {
 }
 
 /**
+ * Every key and value in the store, in one call.
+ *
+ * Not part of the {@link CloudProvider} contract, because no other provider can
+ * do it cheaply - CloudKit and Drive would both have to fetch every record.
+ * Here the whole store is already a local dictionary, so this is one bridge hop
+ * against the N+1 that `getAllKeys()` plus a read per key would cost.
+ *
+ * Values the store holds as something other than a string (it also accepts
+ * numbers, dates and data) are omitted rather than coerced, since a
+ * stringified number would not round-trip back through `setItem`.
+ */
+export async function getAllItems(): Promise<Record<string, string>> {
+  assertPlatform()
+  try {
+    return await requireNativeModule().kvGetAllItems()
+  }
+  catch (e) {
+    throw normalizeError(e, NAME)
+  }
+}
+
+/**
  * Flushes pending changes to disk.
  *
  * Exposed separately because it is not part of the generic {@link CloudProvider}

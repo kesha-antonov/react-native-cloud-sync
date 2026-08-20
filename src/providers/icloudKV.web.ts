@@ -35,3 +35,7 @@ export const icloudKV: CloudProvider = {
 export function sync(): Promise<boolean> {
   return reject()
 }
+
+export function getAllItems(): Promise<Record<string, string>> {
+  return reject()
+}

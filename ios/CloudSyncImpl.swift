@@ -329,6 +329,24 @@ import Foundation
         resolve(Array(kvStore.dictionaryRepresentation.keys))
     }
 
+    /// Every key and value in one call.
+    ///
+    /// `dictionaryRepresentation` is already in memory, so this is one bridge
+    /// hop where `kvGetAllKeys` + N `kvGetItem` calls would be N+1. Non-string
+    /// values are skipped rather than coerced: the store accepts numbers, dates
+    /// and data, and stringifying those would hand back something that does not
+    /// round-trip through `kvSetItem`.
+    @objc public func kvGetAllItems(
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        var items: [String: String] = [:]
+        for (key, value) in kvStore.dictionaryRepresentation {
+            if let text = value as? String { items[key] = text }
+        }
+        resolve(items)
+    }
+
     @objc public func kvSync(
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
