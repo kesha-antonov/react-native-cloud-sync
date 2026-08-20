@@ -1,11 +1,12 @@
 import type { CloudKitRestConfig } from './internal/cloudKitRest'
 import { CloudKitRestClient } from './internal/cloudKitRest'
-import type { GoogleDriveConfig } from './internal/googleDriveRest'
+import type { GoogleDriveConfig, GoogleDriveFileAdapter } from './internal/googleDriveRest'
 import { GoogleDriveClient } from './internal/googleDriveRest'
 import { CloudSyncError, ErrorCode } from './errors'
 
 let cloudKitClient: CloudKitRestClient | null = null
 let driveClient: GoogleDriveClient | null = null
+let driveFileAdapter: GoogleDriveFileAdapter | null = null
 
 /**
  * Supplies the credentials the CloudKit REST path needs.
@@ -56,8 +57,38 @@ export function isGoogleDriveConfigured(): boolean {
   return driveClient != null
 }
 
+/**
+ * Supplies local file I/O for `googleDriveFiles` - large binaries that go
+ * through Drive's resumable upload/download rather than `googleDrive`'s
+ * whole-value-as-a-string path.
+ *
+ * Separate from `configureGoogleDrive` because most apps never touch a file
+ * that large and shouldn't need to think about filesystem access to use
+ * `googleDrive`/the store facade. Only required for `googleDriveFiles`.
+ */
+export function configureGoogleDriveFiles(adapter: GoogleDriveFileAdapter): void {
+  driveFileAdapter = adapter
+}
+
+export function getGoogleDriveFileAdapter(): GoogleDriveFileAdapter {
+  if (driveFileAdapter == null)
+    throw new CloudSyncError(
+      ErrorCode.CONTAINER_MISCONFIGURED,
+      '[RNCloudSync] googleDriveFiles needs a file adapter. Call configureGoogleDriveFiles({ '
+      + 'statSize, readChunk, writeChunk, appendChunk }) before saving or fetching a file.',
+      { provider: 'googleDrive' }
+    )
+
+  return driveFileAdapter
+}
+
+export function isGoogleDriveFilesConfigured(): boolean {
+  return driveFileAdapter != null
+}
+
 /** Test seam - drops all configured clients. */
 export function __resetConfig(): void {
   cloudKitClient = null
   driveClient = null
+  driveFileAdapter = null
 }

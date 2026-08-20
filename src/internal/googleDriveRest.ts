@@ -23,10 +23,54 @@ export interface GoogleDriveConfig {
   /** Called when Drive rejects the token, so the host can prompt for reconnect. */
   onAuthExpired?: () => Promise<void> | void
   fetchImpl?: typeof fetch
+  /**
+   * Bytes per chunk for `uploadFile`/`downloadFile`. Default 8 MiB.
+   *
+   * Must be a multiple of 256 KiB (262144) - Google's resumable upload
+   * protocol requires that for every chunk but the last. Lowered in tests to
+   * exercise the multi-chunk path without a multi-MB fixture.
+   */
+  chunkBytes?: number
 }
 
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files'
 const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files'
+const DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024
+
+/** A local file `uploadFile` reads from, in fixed-size pieces. */
+export interface DriveChunkSource {
+  size: number
+  read: (start: number, length: number) => Promise<Uint8Array>
+}
+
+/** A local file `downloadFile` writes into, one piece at a time. */
+export interface DriveChunkSink {
+  write: (bytes: Uint8Array, isFirstChunk: boolean) => Promise<void>
+}
+
+/**
+ * Local file I/O for `googleDriveFiles`, supplied by the host app rather than
+ * this package depending on a filesystem library.
+ *
+ * base64 in and out - not a stream or a byte array - because that is the
+ * primitive every RN filesystem library actually exposes for a chunked
+ * read/write (`react-native-fs`'s `read`/`RNFS.write`, `expo-file-system`'s
+ * `readAsStringAsync`/`writeAsStringAsync` with `EncodingType.Base64`), so the
+ * adapter mirrors that rather than inventing an abstraction nothing implements
+ * natively. `googleDriveFiles` does the base64 <-> bytes conversion at the
+ * boundary; a chunk is capped at `chunkBytes` (8 MiB default), so the base64
+ * string is never larger than that either.
+ */
+export interface GoogleDriveFileAdapter {
+  /** Size in bytes of the local file at `uri`. */
+  statSize: (uri: string) => Promise<number>
+  /** Reads `length` bytes starting at `position` from the local file at `uri`, base64-encoded. */
+  readChunk: (uri: string, position: number, length: number) => Promise<string>
+  /** Creates (or overwrites) the local file at `uri` with these base64-encoded bytes. */
+  writeChunk: (uri: string, base64: string) => Promise<void>
+  /** Appends base64-encoded bytes to a file `writeChunk` already created. */
+  appendChunk: (uri: string, base64: string) => Promise<void>
+}
 
 interface DriveFile {
   id: string
@@ -36,6 +80,12 @@ interface DriveFile {
 /** True for the 404 the client tags when a file id no longer resolves. */
 function isNotFound(e: unknown): boolean {
   return e instanceof CloudSyncError && e.serverErrorCode === 'NOT_FOUND'
+}
+
+/** True for a transfer failure worth retrying after re-querying the real offset. */
+function isRetryableTransfer(e: unknown): boolean {
+  return e instanceof CloudSyncError
+    && (e.code === ErrorCode.NETWORK_UNAVAILABLE || e.code === ErrorCode.RATE_LIMITED)
 }
 
 export class GoogleDriveClient {
@@ -50,9 +100,11 @@ export class GoogleDriveClient {
    * A scoped `q=` query plus this cache keeps a read to one request, usually zero.
    */
   private readonly idCache = new Map<string, string>()
+  private readonly chunkBytes: number
 
   constructor(config: GoogleDriveConfig) {
     this.config = config
+    this.chunkBytes = config.chunkBytes ?? DEFAULT_CHUNK_BYTES
   }
 
   private get fetch(): typeof fetch {
@@ -71,7 +123,12 @@ export class GoogleDriveClient {
     return token
   }
 
-  private async request(url: string, init: RequestInit): Promise<Response> {
+  /**
+   * `extraOkStatuses` is for the resumable-upload protocol, where 308 ("Resume
+   * Incomplete") is an expected, successful outcome rather than an error - the
+   * caller inspects the response itself rather than getting a thrown rejection.
+   */
+  private async request(url: string, init: RequestInit, extraOkStatuses: number[] = []): Promise<Response> {
     const token = await this.requireToken()
     const headers = new Headers(init.headers)
     headers.set('Authorization', `Bearer ${token}`)
@@ -88,7 +145,7 @@ export class GoogleDriveClient {
       )
     }
 
-    if (res.ok) return res
+    if (res.ok || extraOkStatuses.includes(res.status)) return res
 
     if (res.status === 401 || res.status === 403) {
       await this.config.onAuthExpired?.()
@@ -217,6 +274,187 @@ export class GoogleDriveClient {
     })
     const json = (await res.json()) as { id?: string }
     if (json.id != null) this.idCache.set(name, json.id)
+  }
+
+  /**
+   * Uploads `source` as `name`, using Drive's resumable protocol instead of
+   * `setItem`'s single-request multipart body.
+   *
+   * Two things a whole-file `setItem(name, base64OfEverything)` cannot do at
+   * a few hundred MB: hold the payload in memory as one JS string, and recover
+   * from a dropped connection without starting over. Reading happens in fixed
+   * chunks through `source.read`, so peak memory is one chunk rather than the
+   * whole file, and a chunk that fails mid-flight is retried - by asking Drive
+   * how many bytes it actually has and resuming from there - rather than
+   * restarting the transfer.
+   *
+   * That resumability is scoped to this call: the session lives only in
+   * memory, so if the process dies mid-upload, the next call to `uploadFile`
+   * starts a fresh session from byte 0. Persisting the session URI so a
+   * restart can resume it too is future scope, not something callers should
+   * assume works today.
+   */
+  async uploadFile(
+    name: string,
+    source: DriveChunkSource,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+  ): Promise<void> {
+    const existingId = await this.findFileId(name)
+    const sessionUrl = await this.startResumableSession(name, existingId)
+
+    let offset = 0
+    let newId: string | undefined
+    const total = source.size
+
+    // A zero-byte file still needs one request to actually create it.
+    do {
+      const length = Math.min(this.chunkBytes, total - offset)
+      const step = await this.putChunkWithRetry(sessionUrl, source, offset, length, total, onProgress)
+      offset = step.nextOffset
+      if (step.id != null) newId = step.id
+    } while (offset < total)
+
+    // A create only learns its id from the final response; an update already
+    // had one via `existingId`.
+    if (newId != null) this.idCache.set(name, newId)
+
+    onProgress?.(total, total)
+  }
+
+  private async startResumableSession(name: string, existingId: string | null): Promise<string> {
+    const url = existingId != null
+      ? `${UPLOAD_URL}/${existingId}?uploadType=resumable`
+      : `${UPLOAD_URL}?uploadType=resumable&fields=id`
+    const metadata = existingId != null ? {} : { name, parents: ['appDataFolder'] }
+
+    const res = await this.request(url, {
+      method: existingId != null ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify(metadata),
+    })
+
+    const location = res.headers.get('Location')
+    if (location == null)
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] Google Drive did not return a resumable session URI.',
+        { provider: 'googleDrive' }
+      )
+
+    return location
+  }
+
+  /** One chunk, with a single retry that re-queries the server's real offset first. */
+  private async putChunkWithRetry(
+    sessionUrl: string,
+    source: DriveChunkSource,
+    offset: number,
+    length: number,
+    total: number,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+  ): Promise<{ nextOffset: number; id?: string }> {
+    try {
+      return await this.putChunk(sessionUrl, source, offset, length, total, onProgress)
+    }
+    catch (e) {
+      if (!isRetryableTransfer(e)) throw e
+      const resumeFrom = await this.queryUploadOffset(sessionUrl, total)
+      const retryLength = Math.min(this.chunkBytes, total - resumeFrom)
+      return await this.putChunk(sessionUrl, source, resumeFrom, retryLength, total, onProgress)
+    }
+  }
+
+  private async putChunk(
+    sessionUrl: string,
+    source: DriveChunkSource,
+    offset: number,
+    length: number,
+    total: number,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+  ): Promise<{ nextOffset: number; id?: string }> {
+    const bytes = await source.read(offset, length)
+    const range = total === 0 ? 'bytes */0' : `bytes ${offset}-${offset + bytes.length - 1}/${total}`
+
+    const res = await this.request(sessionUrl, {
+      method: 'PUT',
+      headers: { 'Content-Range': range },
+      // TS's DOM lib types BodyInit's BufferSource as Uint8Array<ArrayBuffer>
+      // specifically, which a plain Uint8Array read doesn't structurally
+      // match even though every fetch implementation accepts it at runtime.
+      body: bytes as BodyInit,
+    }, [308])
+
+    const nextOffset = offset + bytes.length
+    if (res.status === 308) {
+      onProgress?.(nextOffset, total)
+      return { nextOffset }
+    }
+
+    // 200/201: the file is complete.
+    const json = (await res.json().catch(() => null)) as { id?: string } | null
+    return { nextOffset: total, id: json?.id }
+  }
+
+  /** Asks Drive how much of an in-flight resumable session it actually has. */
+  private async queryUploadOffset(sessionUrl: string, total: number): Promise<number> {
+    const res = await this.request(sessionUrl, {
+      method: 'PUT',
+      headers: { 'Content-Range': `bytes */${total}` },
+    }, [308])
+
+    if (res.status !== 308) return total // already complete, unexpectedly
+
+    const range = res.headers.get('Range') // "bytes=0-8388607"
+    if (range == null) return 0
+
+    const match = /bytes=0-(\d+)/.exec(range)
+    return match ? Number(match[1]) + 1 : 0
+  }
+
+  /**
+   * Downloads `name` into `sink`, in the same fixed-size chunks `uploadFile`
+   * writes in - so a restore never holds the whole file in memory either.
+   * Resolves `false` when no such file exists, `true` once every chunk has
+   * been handed to the sink.
+   */
+  async downloadFile(
+    name: string,
+    sink: DriveChunkSink,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+  ): Promise<boolean> {
+    const id = await this.findFileId(name)
+    if (id == null) return false
+
+    const total = await this.fileSize(id)
+
+    if (total === 0) {
+      await sink.write(new Uint8Array(0), true)
+      onProgress?.(0, 0)
+      return true
+    }
+
+    let offset = 0
+    let isFirstChunk = true
+    while (offset < total) {
+      const end = Math.min(offset + this.chunkBytes, total) - 1
+      const res = await this.request(`${FILES_URL}/${id}?alt=media`, {
+        method: 'GET',
+        headers: { Range: `bytes=${offset}-${end}` },
+      })
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      await sink.write(bytes, isFirstChunk)
+      isFirstChunk = false
+      offset += bytes.length
+      onProgress?.(offset, total)
+    }
+
+    return true
+  }
+
+  private async fileSize(id: string): Promise<number> {
+    const res = await this.request(`${FILES_URL}/${id}?fields=size`, { method: 'GET' })
+    const json = (await res.json()) as { size?: string }
+    return json.size != null ? Number(json.size) : 0
   }
 
   async removeItem(name: string): Promise<void> {
