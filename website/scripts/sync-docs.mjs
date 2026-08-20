@@ -13,6 +13,10 @@ const ROOT = join(HERE, '..', '..')
 const OUT = join(HERE, '..', 'docs')
 
 const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
+// raw.githubusercontent.com resolves LFS-tracked files (like the screenshots
+// under assets/) to their actual bytes for a public repo, so pages can embed
+// them without copying binaries into website/static and drifting from main.
+const RAW = 'https://raw.githubusercontent.com/kesha-antonov/react-native-cloud-sync/main'
 
 /**
  * Canonical key for a heading.
@@ -70,6 +74,16 @@ export const PAGES = [
       'Which of iCloud key-value, CloudKit or Google Drive to use, what each one costs the user, '
       + 'and which combinations make sense for cross-platform apps.',
     file: 'docs/choosing-a-provider.md',
+  },
+  {
+    id: 'example-app',
+    category: 'Getting started',
+    title: 'Example app',
+    sidebarLabel: 'Example app',
+    description:
+      'A playground app covering every provider, plus a live side-by-side sync demo - what each '
+      + 'tab does and screenshots of the running app.',
+    sections: ['🧪 Example App'],
   },
 
   {
@@ -252,6 +266,10 @@ function rewriteLinks (markdown, ownerByAnchor, page) {
       const owner = ownerByAnchor.get(key(anchor))
       return owner == null ? whole : `](${owner})`
     })
+    // Raw <img> tags (used for the width/align attributes markdown syntax
+    // cannot express) keep repo-relative src on GitHub/npm; the site needs an
+    // absolute URL instead.
+    .replace(/src="assets\/([^"]+)"/g, (_m, path) => `src="${RAW}/assets/${path}"`)
 }
 
 function frontMatter (page) {
