@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { ScrollView } from 'react-native'
 
 import {
   createMemoryProvider,
@@ -10,9 +10,10 @@ import {
 } from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
+import { TabHeader } from '../components/Header'
 import { LogView } from '../components/LogView'
 import { Section } from '../components/Section'
-import { styles } from '../theme'
+import { styles, tabTint } from '../theme'
 import { useLog } from '../useLog'
 
 const FAULTS = [
@@ -76,17 +77,18 @@ export function FaultsTab() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View>
-        <Text style={styles.h1}>Fault injection</Text>
-        <Text style={styles.body}>
-          Every failure below is a distinct, typed rejection - not a null. Watch the log:
+      <TabHeader
+        eyebrow="Error contract"
+        title="Fault injection"
+        tint={tabTint.faults}
+        description="Every failure below is a distinct, typed rejection - not a null. Watch the log:
           each one reports its code plus whether it is worth retrying automatically or
-          needs the user to do something.
-        </Text>
-      </View>
+          needs the user to do something."
+      />
 
       <Section
         title="Inject a failure"
+        tint={tabTint.faults}
         subtitle="Each button installs a fault, performs a read, then clears it."
       >
         <ButtonRow>
@@ -98,6 +100,7 @@ export function FaultsTab() {
 
       <Section
         title="Transient failure that heals"
+        tint={tabTint.faults}
         subtitle="Fails twice, then succeeds - the shape retry and outbox logic has to converge on."
       >
         <ButtonRow>
@@ -124,6 +127,7 @@ export function FaultsTab() {
 
       <Section
         title="Account switch"
+        tint={tabTint.faults}
         subtitle="The event that leaks data between users. An app that caches user-scoped state
           must drop it when identityChanged is true."
       >
@@ -139,7 +143,7 @@ export function FaultsTab() {
         </ButtonRow>
       </Section>
 
-      <Section title="Log">
+      <Section title="Log" tint={tabTint.faults}>
         <LogView entries={log.entries} height={220} />
         <ButtonRow>
           <Button label="Clear" onPress={log.clear} />

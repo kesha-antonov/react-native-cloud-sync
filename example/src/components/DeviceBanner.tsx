@@ -7,11 +7,13 @@ import { deviceLabel } from '../deviceId'
  * Identifies which pane is which in a side-by-side recording.
  *
  * With four panes (two iOS simulators, an Android emulator and a browser) all
- * showing the same UI, a screen recording is unreadable without this.
+ * showing the same UI, a screen recording is unreadable without this. Sits in
+ * the app's top bar next to the wordmark - the top bar itself owns the outer
+ * chrome and border.
  */
 export function DeviceBanner() {
   return (
-    <View style={s.wrap}>
+    <View style={s.pill}>
       <View style={[s.dot, { backgroundColor: PLATFORM_COLOR[Platform.OS] ?? colors.textDim }]} />
       <Text style={s.text}>{deviceLabel()}</Text>
     </View>
@@ -19,31 +21,33 @@ export function DeviceBanner() {
 }
 
 const PLATFORM_COLOR: Record<string, string> = {
-  ios: '#58a6ff',
-  android: '#3fb950',
-  web: '#d29922',
-  macos: '#bc8cff',
+  ios: '#5b8cf5',
+  android: '#3ecb7a',
+  web: '#e2a53a',
+  macos: '#b285f0',
 }
 
 const s = StyleSheet.create({
-  wrap: {
+  pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
     backgroundColor: colors.panelAlt,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
   dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   text: {
-    color: colors.text,
+    color: colors.textDim,
     fontFamily: mono,
     fontSize: 11,
+    fontWeight: '600',
   },
 })

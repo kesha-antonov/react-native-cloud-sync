@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { StyleSheet, Text, TextInput, View } from 'react-native'
 
-import { colors, mono } from '../theme'
+import { colors, mono, radius } from '../theme'
 
 interface Props {
   label: string
@@ -11,6 +12,8 @@ interface Props {
 }
 
 export function Field({ label, value, onChangeText, placeholder, multiline }: Props) {
+  const [focused, setFocused] = useState(false)
+
   return (
     <View style={s.wrap}>
       <Text style={s.label}>{label}</Text>
@@ -18,34 +21,40 @@ export function Field({ label, value, onChangeText, placeholder, multiline }: Pr
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={colors.textDim}
+        placeholderTextColor={colors.textFaint}
         autoCapitalize="none"
         autoCorrect={false}
         multiline={multiline}
-        style={[s.input, multiline === true && s.multiline]}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[s.input, multiline === true && s.multiline, focused && s.inputFocused]}
       />
     </View>
   )
 }
 
 const s = StyleSheet.create({
-  wrap: { gap: 4 },
+  wrap: { gap: 5 },
   label: {
     color: colors.textDim,
     fontSize: 11,
+    fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   input: {
-    backgroundColor: colors.bg,
+    backgroundColor: colors.panelSunken,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    borderRadius: 8,
+    borderRadius: radius.sm,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 9,
     color: colors.text,
     fontFamily: mono,
     fontSize: 12,
+  },
+  inputFocused: {
+    borderColor: colors.accent,
   },
   multiline: {
     minHeight: 72,

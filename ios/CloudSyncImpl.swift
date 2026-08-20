@@ -817,13 +817,36 @@ import Foundation
     ) {
         let operation = CKFetchRecordsOperation(recordIDs: [id])
         operation.desiredKeys = [Self.sizeField(fieldName)]
+
+        // Best-effort means exactly one call to `completion`, from whichever
+        // block actually fires - never zero. Only `perRecordResultBlock` was
+        // wired here, but CloudKit does not always get that far: a failure at
+        // the OPERATION level (no signed-in account, before evaluating a
+        // single record) fires the operation-level completion block instead
+        // and never touches `perRecordResultBlock` at all. Without a fallback
+        // there, `completion` was silently never called - which means
+        // `ckFetchAsset`'s continuation into `fetchAsset` never runs, and the
+        // whole promise hangs forever with no error, no timeout, and no way
+        // for the caller to tell a stuck restore from a slow one.
+        var settled = false
+        let settle = { (size: Int) in
+            if settled { return }
+            settled = true
+            completion(size)
+        }
+
         operation.perRecordResultBlock = { _, result in
             guard case let .success(record) = result,
                   let size = record[Self.sizeField(fieldName)] as? Int else {
-                completion(0)
+                settle(0)
                 return
             }
-            completion(size)
+            settle(size)
+        }
+        operation.fetchRecordsResultBlock = { _ in
+            // Only reaches here without having settled when no per-record
+            // block fired at all - the operation-level failure case.
+            settle(0)
         }
         database.add(operation)
     }

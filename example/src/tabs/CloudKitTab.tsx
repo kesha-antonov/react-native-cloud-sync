@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { Platform, ScrollView, Text, View } from 'react-native'
+import { Platform, ScrollView, Text } from 'react-native'
 
 import { cloudKit, cloudKitZones } from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'
+import { TabHeader } from '../components/Header'
 import { LogView } from '../components/LogView'
 import { Section } from '../components/Section'
-import { styles } from '../theme'
+import { styles, tabTint } from '../theme'
 import { useLog } from '../useLog'
 
 const isApple = Platform.OS === 'ios' || Platform.OS === 'macos'
@@ -30,20 +31,22 @@ export function CloudKitTab() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View>
-        <Text style={styles.h1}>CloudKit</Text>
-        <Text style={styles.body}>
-          {isApple
-            ? 'Native CloudKit.framework against the private database. No configuration '
-            + 'needed - the signed-in iCloud account authenticates implicitly.'
-            : 'CloudKit Web Services REST against the same private database. Needs '
-              + 'configureCloudKit() with a Client API token and an Apple ID web auth token.'}
-        </Text>
-      </View>
+      <TabHeader
+        eyebrow="Apple · records"
+        title="CloudKit"
+        tint={tabTint.cloudkit}
+        description={isApple
+          ? 'Native CloudKit.framework against the private database. No configuration '
+          + 'needed - the signed-in iCloud account authenticates implicitly.'
+          : 'CloudKit Web Services REST against the same private database. Needs '
+            + 'configureCloudKit() with a Client API token and an Apple ID web auth token.'}
+      />
 
       {!isApple && (
         <Section
           title="Heads up on this platform"
+          tint={tabTint.cloudkit}
+          badge="REST"
           subtitle={
             'A ckWebAuthToken lives 30 minutes, or 2 weeks if the user ticked "Keep me '
             + 'signed in", and Apple documents no refresh. That suits a deliberate '
@@ -58,7 +61,7 @@ export function CloudKitTab() {
         </Section>
       )}
 
-      <Section title="Record">
+      <Section title="Record" tint={tabTint.cloudkit}>
         <Field label="recordName" value={key} onChangeText={setKey} />
         <Field label="value" value={value} onChangeText={setValue} multiline />
         <ButtonRow>
@@ -71,6 +74,8 @@ export function CloudKitTab() {
 
       <Section
         title="Oversized write"
+        tint={tabTint.cloudkit}
+        badge="1 MB cap"
         subtitle="CloudKit records are capped at 1 MB excluding assets. The write is rejected
           locally with ERR_PAYLOAD_TOO_LARGE and the byte counts, rather than being sent
           and silently dropped."
@@ -86,6 +91,7 @@ export function CloudKitTab() {
 
       <Section
         title="Zones"
+        tint={tabTint.cloudkit}
         subtitle={isApple ? undefined : 'Native only - the REST client uses the default zone.'}
       >
         <Field label="zoneName" value={zone} onChangeText={setZone} />
@@ -101,7 +107,7 @@ export function CloudKitTab() {
         </ButtonRow>
       </Section>
 
-      <Section title="Account">
+      <Section title="Account" tint={tabTint.cloudkit}>
         <ButtonRow>
           <Button
             label="getAccountStatus"
@@ -112,7 +118,7 @@ export function CloudKitTab() {
         </ButtonRow>
       </Section>
 
-      <Section title="Log">
+      <Section title="Log" tint={tabTint.cloudkit}>
         <LogView entries={log.entries} />
         <ButtonRow>
           <Button label="Clear" onPress={log.clear} />

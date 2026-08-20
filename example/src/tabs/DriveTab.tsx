@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { ScrollView, Text } from 'react-native'
 
 import { configureGoogleDrive, googleDrive, isGoogleDriveConfigured } from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'
+import { TabHeader } from '../components/Header'
 import { LogView } from '../components/LogView'
 import { Section } from '../components/Section'
-import { styles } from '../theme'
+import { styles, tabTint } from '../theme'
 import { useLog } from '../useLog'
 
 export function DriveTab() {
@@ -41,18 +42,19 @@ export function DriveTab() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View>
-        <Text style={styles.h1}>Google Drive</Text>
-        <Text style={styles.body}>
-          The hidden appDataFolder - nothing appears in the user&apos;s visible Drive, and
+      <TabHeader
+        eyebrow="Cross-platform · files"
+        title="Google Drive"
+        tint={tabTint.drive}
+        description="The hidden appDataFolder - nothing appears in the user's visible Drive, and
           the data outlives an app uninstall because it belongs to the account. Works
           identically on iOS, Android and web, which makes it the sensible always-on
-          backend for cross-platform apps.
-        </Text>
-      </View>
+          backend for cross-platform apps."
+      />
 
       <Section
         title="Auth"
+        tint={tabTint.drive}
         subtitle="Paste an OAuth access token with the drive.appdata scope. In a real app this
           comes from your sign-in library; the library itself stays auth-agnostic."
       >
@@ -62,7 +64,7 @@ export function DriveTab() {
         </ButtonRow>
       </Section>
 
-      <Section title="Operations">
+      <Section title="Operations" tint={tabTint.drive}>
         <Field label="file name" value={key} onChangeText={setKey} />
         <Field label="contents" value={value} onChangeText={setValue} multiline />
         <ButtonRow>
@@ -79,7 +81,7 @@ export function DriveTab() {
         </Text>
       </Section>
 
-      <Section title="Log">
+      <Section title="Log" tint={tabTint.drive}>
         <LogView entries={log.entries} />
         <ButtonRow>
           <Button label="Clear" onPress={log.clear} />

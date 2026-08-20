@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Platform, ScrollView, Text, View } from 'react-native'
+import { Platform, ScrollView, Text } from 'react-native'
 
 import { icloudKV, icloudKVSync } from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'
+import { TabHeader } from '../components/Header'
 import { LogView } from '../components/LogView'
 import { Section } from '../components/Section'
-import { styles } from '../theme'
+import { styles, tabTint } from '../theme'
 import { useLog } from '../useLog'
 
 export function ICloudKVTab() {
@@ -42,21 +43,21 @@ export function ICloudKVTab() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View>
-        <Text style={styles.h1}>iCloud key-value store</Text>
-        <Text style={styles.body}>
-          NSUbiquitousKeyValueStore. Apple platforms only - on Android and web every call
+      <TabHeader
+        eyebrow="Apple · key-value"
+        title="iCloud key-value store"
+        tint={tabTint.kv}
+        description="NSUbiquitousKeyValueStore. Apple platforms only - on Android and web every call
           rejects with ERR_UNSUPPORTED_PLATFORM rather than silently doing nothing.
-          Limits: 1 MB total, 1 MB per key, 1024 keys.
-        </Text>
-      </View>
+          Limits: 1 MB total, 1 MB per key, 1024 keys."
+      />
 
-      <Section title="Value">
+      <Section title="Value" tint={tabTint.kv}>
         <Field label="key" value={key} onChangeText={setKey} />
         <Field label="value" value={value} onChangeText={setValue} multiline />
       </Section>
 
-      <Section title="Operations">
+      <Section title="Operations" tint={tabTint.kv}>
         <ButtonRow>
           <Button label="getItem" busy={busy} onPress={run('getItem', () => icloudKV.getItem(key))} />
           <Button label="setItem" busy={busy} onPress={run('setItem', () => icloudKV.setItem(key, value))} />
@@ -70,7 +71,7 @@ export function ICloudKVTab() {
         </Text>
       </Section>
 
-      <Section title="Account">
+      <Section title="Account" tint={tabTint.kv}>
         <ButtonRow>
           <Button
             label="getAccountStatus"
@@ -86,7 +87,7 @@ export function ICloudKVTab() {
         </Text>
       </Section>
 
-      <Section title="Log">
+      <Section title="Log" tint={tabTint.kv}>
         <LogView entries={log.entries} />
         <ButtonRow>
           <Button label="Clear" onPress={log.clear} />

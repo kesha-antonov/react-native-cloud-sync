@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react'
-import { Platform, ScrollView, Text, View } from 'react-native'
+import { Platform, ScrollView, Text } from 'react-native'
 
 import {
   cloudKitBackup,
@@ -25,9 +25,10 @@ import {
 } from '../adapters/expoFileAdapter'
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'
+import { TabHeader } from '../components/Header'
 import { LogView } from '../components/LogView'
 import { Section } from '../components/Section'
-import { styles } from '../theme'
+import { styles, tabTint } from '../theme'
 import { useLog } from '../useLog'
 
 const isAppleNative = Platform.OS === 'ios' || Platform.OS === 'macos'
@@ -117,26 +118,28 @@ export function FilesTab() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View>
-        <Text style={styles.h1}>Large files</Text>
-        <Text style={styles.body}>
-          Anything too big to hold in memory as a string - a database export, an archive.
-          Two providers stream from disk instead of loading the whole file:
-          cloudKitBackup on Apple platforms, googleDriveFiles on Android and web.
-        </Text>
-        <Text style={styles.body}>
-          This device will use
-          {' '}
-          <Text style={styles.mono}>
-            {isAppleNative ? 'cloudKitBackup' : 'googleDriveFiles'}
-          </Text>
-          .
-        </Text>
-      </View>
+      <TabHeader
+        eyebrow="Large transfers"
+        title="Large files"
+        tint={tabTint.files}
+        description={(
+          <>
+            Anything too big to hold in memory as a string - a database export, an archive.
+            Two providers stream from disk instead of loading the whole file:
+            cloudKitBackup on Apple platforms, googleDriveFiles on Android and web.
+            {'\n\n'}
+            This device will use
+            {' '}
+            <Text style={styles.mono}>{isAppleNative ? 'cloudKitBackup' : 'googleDriveFiles'}</Text>
+            .
+          </>
+        )}
+      />
 
       {!isAppleNative && (
         <Section
           title="File adapter"
+          tint={tabTint.files}
           subtitle="googleDriveFiles has no filesystem dependency, so the host app supplies chunked
             reads and writes. This installs the modern expo-file-system implementation from
             src/adapters/expoFileAdapter.ts - the same code the docs show."
@@ -162,6 +165,7 @@ export function FilesTab() {
 
       <Section
         title="Source file"
+        tint={tabTint.files}
         subtitle="Generates a file of pseudo-random bytes in the cache directory, large enough
           that chunking and progress actually mean something."
       >
@@ -178,6 +182,7 @@ export function FilesTab() {
 
       <Section
         title="Transfer"
+        tint={tabTint.files}
         subtitle="Progress is a real byte fraction in both directions - the download side knows
           the total before it starts, because the upload stashed it."
       >
@@ -195,7 +200,7 @@ export function FilesTab() {
         </Text>
       </Section>
 
-      <Section title="Log">
+      <Section title="Log" tint={tabTint.files}>
         <LogView entries={log.entries} />
         <ButtonRow>
           <Button label="Clear" onPress={log.clear} />
