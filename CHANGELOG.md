@@ -135,28 +135,6 @@
   (`only`), `setAvailable()` and `cacheClears` - enough to test the signed-out
   fleet, multi-provider tiering and account switches.
 
-### 💥 Breaking Changes
-
-- `store.getItem()` **rejects with `ERR_NOT_SIGNED_IN`** when no configured
-  provider is reachable, where it previously resolved `null`. This is the point
-  of the change - see the bug fix above - but a call site that treated `null` as
-  "start fresh" will now see an error instead. That is the correct behaviour;
-  check what yours does before catching it.
-- Keys are validated by default. A key containing anything outside
-  `[A-Za-z0-9._-]`, starting with `_`, or over 64 UTF-8 bytes with `icloudKV`
-  configured, now raises `ERR_INVALID_KEY`. Pass `validateKeys: false` to
-  restore the old behaviour, and `sanitizeKey` to migrate existing keys.
-- `flushOutbox()` resolves `{ drained, remaining, dropped }` - the third field
-  is new. `migrate()` resolves `{ copied, skipped, failed }` rather than
-  `{ copied }`.
-- `ProviderName` is now an open union (`BuiltInProviderName | (string & {})`),
-  so a custom provider can finally be typed. Code that relied on it being closed
-  - an exhaustive `switch` without a `default`, say - will need a default arm.
-- `ErrorCode` gained `ERR_INVALID_KEY` and `ERR_TIMEOUT`. `isRetryable` returns
-  true for `ERR_TIMEOUT`.
-
-### 🐛 Bug Fixes (previously unreleased)
-
 - **A read no longer destroys a newer copy it failed to fetch.** With a
   `resolve` function, read repair wrote the winner back to every provider the
   read had *asked*, including one whose `getItem` threw. If the provider that
@@ -202,8 +180,6 @@
   until the whole transfer had already landed. It now reports real byte
   progress from the first callback, using a size the upload side stashes
   alongside the asset.
-
-### ✨ Features
 
 - **`cloudKitBackup`** - a `save`/`restore` helper built on `cloudKitAssets`
   for the common single-blob case (a database export, an archive), with
