@@ -13,6 +13,11 @@ import Foundation
     static let recordTypeDefault = "KVBlob"
     static let valueField = "value"
 
+    /// Where an asset's byte count is stashed alongside it, so a download can
+    /// learn the total size before the transfer starts. `CKAsset` itself
+    /// exposes no size until its bytes have already landed locally.
+    static func sizeField(_ fieldName: String) -> String { "\(fieldName)__size" }
+
     /// CloudKit's documented per-record ceiling, excluding assets.
     static let maxRecordBytes = 1024 * 1024
 
@@ -534,6 +539,16 @@ import Foundation
             let record = CKRecord(recordType: recordType, recordID: id)
             record[fieldName] = CKAsset(fileURL: fileURL)
 
+            // Sized once, not per callback - the progress block fires often.
+            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+            let totalBytes = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+
+            // Stored alongside the asset so `ckFetchAsset` can learn the size
+            // before it starts downloading, and report real progress from the
+            // first callback instead of only once the transfer completes -
+            // CKAsset itself exposes no size until its bytes have landed.
+            record[Self.sizeField(fieldName)] = totalBytes as CKRecordValue
+
             let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
             operation.savePolicy = .changedKeys
 
@@ -541,10 +556,6 @@ import Foundation
             // instead of guessing. react-native-cloud-storage reports a single
             // global number with no file identity, which cannot be attributed
             // when more than one upload is in flight.
-            // Sized once, not per callback - the progress block fires often.
-            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
-            let totalBytes = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-
             operation.perRecordProgressBlock = { [weak self] _, progress in
                 self?.emit?("assetProgress", [
                     "recordName": recordName,
@@ -572,6 +583,15 @@ import Foundation
 
     /// Downloads a CKAsset field and resolves the local file path it landed at,
     /// or nil when the record or field does not exist.
+    ///
+    /// Uses `CKFetchRecordsOperation` rather than `database.fetch(withRecordID:)`
+    /// so the download reports progress the same way `ckSaveAsset` does - a
+    /// plain completion-handler fetch gives no callback until the whole asset
+    /// (which may be hundreds of MB) has already landed on disk. It first makes
+    /// a cheap metadata-only request for the size field `ckSaveAsset` stashes
+    /// next to the asset, so progress is reported in real bytes from the very
+    /// first callback rather than jumping from 0 to 100% at the end - `CKAsset`
+    /// itself exposes no size until its bytes have already landed.
     @objc public func ckFetchAsset(
         _ recordName: String,
         fieldName: String,
@@ -581,25 +601,88 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            database.fetch(withRecordID: recordID(recordName, zoneName)) { record, error in
-                if let error = error {
-                    if let ckError = error as? CKError, ckError.code == .unknownItem {
-                        resolve(nil)
-                        return
-                    }
-                    let mapped = CloudSyncError.from(error)
-                    reject(mapped.code, mapped.message, mapped.asNSError)
-                    return
-                }
-                guard let asset = record?[fieldName] as? CKAsset,
+            let id = recordID(recordName, zoneName)
+
+            fetchKnownSize(database: database, id: id, fieldName: fieldName) { [weak self] knownSize in
+                self?.fetchAsset(
+                    database: database, id: id, recordName: recordName, fieldName: fieldName,
+                    knownSize: knownSize, resolve: resolve, reject: reject
+                )
+            }
+        } catch {
+            let mapped = CloudSyncError.from(error)
+            reject(mapped.code, mapped.message, mapped.asNSError)
+        }
+    }
+
+    /// Best-effort lookup of the size `ckSaveAsset` stored alongside the asset.
+    /// Never fails the caller - a missing size (an asset saved before this
+    /// field existed, or any other error) just means progress falls back to
+    /// reporting 0 until the transfer completes.
+    private func fetchKnownSize(
+        database: CKDatabase,
+        id: CKRecord.ID,
+        fieldName: String,
+        completion: @escaping (Int) -> Void
+    ) {
+        let operation = CKFetchRecordsOperation(recordIDs: [id])
+        operation.desiredKeys = [Self.sizeField(fieldName)]
+        operation.perRecordResultBlock = { _, result in
+            guard case let .success(record) = result,
+                  let size = record[Self.sizeField(fieldName)] as? Int else {
+                completion(0)
+                return
+            }
+            completion(size)
+        }
+        database.add(operation)
+    }
+
+    private func fetchAsset(
+        database: CKDatabase,
+        id: CKRecord.ID,
+        recordName: String,
+        fieldName: String,
+        knownSize: Int,
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        let operation = CKFetchRecordsOperation(recordIDs: [id])
+        var totalBytes = knownSize
+
+        operation.perRecordProgressBlock = { [weak self] _, progress in
+            guard let self = self, progress > 0 else { return }
+            self.emit?("assetProgress", [
+                "recordName": recordName,
+                "fieldName": fieldName,
+                "bytesTransferred": Int(progress * Double(totalBytes)),
+                "bytesTotal": totalBytes,
+            ])
+        }
+
+        operation.perRecordResultBlock = { [weak self] _, result in
+            switch result {
+            case let .success(record):
+                guard let asset = record[fieldName] as? CKAsset,
                       let url = asset.fileURL else {
                     resolve(nil)
                     return
                 }
 
-                // CloudKit stores the download in a temporary location it may
-                // reclaim, so copy it somewhere the caller controls before
-                // handing back a path.
+                if totalBytes == 0 {
+                    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                    totalBytes = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+                }
+                self?.emit?("assetProgress", [
+                    "recordName": recordName,
+                    "fieldName": fieldName,
+                    "bytesTransferred": totalBytes,
+                    "bytesTotal": totalBytes,
+                ])
+
+                // CloudKit stores the download in a temporary location it
+                // may reclaim, so copy it somewhere the caller controls
+                // before handing back a path.
                 let destination = FileManager.default.temporaryDirectory
                     .appendingPathComponent("rncs-\(recordName)-\(fieldName)")
                 do {
@@ -612,11 +695,32 @@ import Foundation
                     let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
+            case let .failure(error):
+                if let ckError = error as? CKError, ckError.code == .unknownItem {
+                    resolve(nil)
+                    return
+                }
+                let mapped = CloudSyncError.from(error)
+                reject(mapped.code, mapped.message, mapped.asNSError)
             }
-        } catch {
-            let mapped = CloudSyncError.from(error)
-            reject(mapped.code, mapped.message, mapped.asNSError)
         }
+
+        operation.fetchRecordsResultBlock = { result in
+            if case let .failure(error) = result {
+                // A per-record failure already resolved/rejected above; this
+                // only fires for operation-level failures (e.g. the record
+                // simply not existing surfaces here rather than per-record
+                // on some CloudKit versions), so guard against double-resolving.
+                if let ckError = error as? CKError, ckError.code == .unknownItem {
+                    resolve(nil)
+                    return
+                }
+                let mapped = CloudSyncError.from(error)
+                reject(mapped.code, mapped.message, mapped.asNSError)
+            }
+        }
+
+        database.add(operation)
     }
 
     /// Accepts both `file://` URLs and bare paths, since callers pass whichever

@@ -82,6 +82,7 @@ export interface Spec extends TurboModule {
     fileUri: string,
     zoneName: string | null
   ) => Promise<void>
+  /** Downloads a CKAsset field. Emits `onAssetProgress` while running. */
   ckFetchAsset: (recordName: string, fieldName: string, zoneName: string | null) => Promise<string | null>
 
   // --------------------------------------------------------------- events
