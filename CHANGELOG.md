@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-08-20
 
 - **`resolveByUnion`** - a resolver for JSON arrays where two devices adding
   *different* elements between syncs should both survive, rather than one
