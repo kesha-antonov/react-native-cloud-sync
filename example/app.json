@@ -19,7 +19,7 @@
     "plugins": [
       "expo-status-bar",
       [
-        "@kesha-antonov/react-native-cloud-sync",
+        "react-native-cloud-sync",
         {
           "containerIdentifier": "iCloud.com.example.reactnativecloudsync"
         }

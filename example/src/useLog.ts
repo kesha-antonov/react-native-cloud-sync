@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
-import { isCloudSyncError } from '@kesha-antonov/react-native-cloud-sync'
+import { isCloudSyncError } from 'react-native-cloud-sync'
 
 import type { LogEntry } from './components/LogView'
 

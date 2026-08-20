@@ -20,13 +20,13 @@
     "ios": "expo run:ios"
   },
   "dependencies": {
-    "@kesha-antonov/react-native-cloud-sync": "workspace:*",
     "expo": "^57.0.10",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-cloud-sync": "workspace:*",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-web": "~0.21.2"
   },

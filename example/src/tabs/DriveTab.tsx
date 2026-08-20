@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 
-import { configureGoogleDrive, googleDrive, isGoogleDriveConfigured } from '@kesha-antonov/react-native-cloud-sync'
+import { configureGoogleDrive, googleDrive, isGoogleDriveConfigured } from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'

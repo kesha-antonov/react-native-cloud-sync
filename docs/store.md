@@ -5,7 +5,7 @@ One API over several providers, adding size tiering, a durable outbox, read fall
 Use it when you do not want the app to care which cloud a value lives in. Use the providers directly when you do.
 
 ```ts
-import { createCloudStore } from '@kesha-antonov/react-native-cloud-sync'
+import { createCloudStore } from 'react-native-cloud-sync'
 
 const store = createCloudStore({
   providers: ['icloudKV', 'googleDrive'],  // preference order
@@ -92,7 +92,7 @@ The iPhone serves stale data indefinitely. The direction that breaks is always *
 The store holds opaque strings, so it cannot know which copy is newer - only your app knows what its values mean. Supply a resolver and a read consults **every** available provider, then asks you which wins:
 
 ```ts
-import { createCloudStore, resolveByTimestamp } from '@kesha-antonov/react-native-cloud-sync'
+import { createCloudStore, resolveByTimestamp } from 'react-native-cloud-sync'
 
 const store = createCloudStore({
   providers: ['icloudKV', 'googleDrive'],
@@ -138,7 +138,7 @@ Routes a write by size, so store limits stop leaking into product code.
 Thresholds are configurable:
 
 ```ts
-import { DEFAULT_TIERING } from '@kesha-antonov/react-native-cloud-sync'
+import { DEFAULT_TIERING } from 'react-native-cloud-sync'
 
 createCloudStore({
   providers: ['icloudKV', 'cloudKit'],
@@ -203,7 +203,7 @@ Copies every key from one provider to the other. The source is **left intact** -
 ## Registering another provider
 
 ```ts
-import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
+import { createMemoryProvider } from 'react-native-cloud-sync/testing'
 
 const fake = createMemoryProvider()
 store.registerProvider(fake)

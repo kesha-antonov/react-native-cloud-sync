@@ -25,6 +25,49 @@ export async function restore (): Promise<AppState | null> {
 
 Version the key (`backup/v1`) rather than the payload. When the shape changes, write `backup/v2` and keep reading v1 as a fallback - older devices keep working, and a rollback does not corrupt anything.
 
+## Cross-platform large-file backup
+
+That recipe is for a JSON-sized blob. For something too big to hold in memory as a string - a SQLite export, hundreds of MB - [`cloudKitBackup`](providers/cloudkit.md#backuprestore-helper) (iOS/macOS) and [`googleDriveFiles`](providers/google-drive.md#large-files) (Android/web) are the two providers that actually stream from disk instead of loading the whole file. They are not merged into one API because their restore paths genuinely differ - CloudKit invents its own temp path, Drive writes wherever you tell it to via your file adapter - but wrapping both behind one pair of functions is a few lines:
+
+```ts
+import { Platform } from 'react-native'
+import { cloudKitBackup, googleDriveFiles } from 'react-native-cloud-sync'
+
+const isAppleNative = Platform.OS === 'ios' || Platform.OS === 'macos'
+
+export async function backupLargeFile (
+  fileUri: string,
+  onProgress?: (fraction: number) => void
+) {
+  if (isAppleNative)
+    await cloudKitBackup.save(fileUri, { onProgress: e => onProgress?.(e.fraction) })
+  else
+    await googleDriveFiles.save({
+      name: 'backup',
+      fileUri,
+      onProgress: e => onProgress?.(e.fraction),
+    })
+}
+
+export async function restoreLargeFile (
+  destinationUri: string,
+  onProgress?: (fraction: number) => void
+): Promise<string | null> {
+  if (isAppleNative)
+    return cloudKitBackup.restore({ onProgress: e => onProgress?.(e.fraction) })
+
+  return googleDriveFiles.fetch({
+    name: 'backup',
+    destinationUri,
+    onProgress: e => onProgress?.(e.fraction),
+  })
+}
+```
+
+On iOS/macOS, `restoreLargeFile`'s `destinationUri` is unused - `cloudKitBackup.restore` returns its own temp path, which is why the parameter is there at all: the caller decides where the file ends up, and on Apple platforms that decision is "wherever CloudKit already put it," while on Drive it is a real filesystem path from `configureGoogleDriveFiles`'s adapter. Move or copy the result into your app's own storage before relying on it living at that path long-term - CloudKit's temp location is not guaranteed to survive past the current run.
+
+`googleDriveFiles` needs `configureGoogleDriveFiles` called once at startup (see [its setup](providers/google-drive.md#large-files)); `cloudKitBackup` needs nothing beyond the entitlements every other CloudKit call already requires.
+
 ## Restore safely on first launch
 
 The failure mode to avoid is treating "the cloud errored" as "there is no backup" and then overwriting good remote data with an empty local state.
@@ -70,7 +113,7 @@ iPad, a browser and a Mac.
 import {
   createCloudStore,
   resolveByTimestamp,
-} from '@kesha-antonov/react-native-cloud-sync'
+} from 'react-native-cloud-sync'
 
 interface Blob { data: AppState, updatedAt: number }
 
@@ -217,7 +260,7 @@ import {
   createCloudStore,
   type CloudProvider,
   type ProviderName,
-} from '@kesha-antonov/react-native-cloud-sync'
+} from 'react-native-cloud-sync'
 
 type Choice = ProviderName | 'off'
 

@@ -25,7 +25,7 @@ Entitlements only - no code configuration. See [Platform Notes](../PLATFORM_NOTE
 ## Operations
 
 ```ts
-import { icloudKV } from '@kesha-antonov/react-native-cloud-sync'
+import { icloudKV } from 'react-native-cloud-sync'
 
 await icloudKV.setItem('settings/theme', 'dark')
 
@@ -80,7 +80,7 @@ This is the event most apps miss. Without it, a device that switches Apple ID si
 ## `sync()` does not mean "stored"
 
 ```ts
-import { icloudKVSync } from '@kesha-antonov/react-native-cloud-sync'
+import { icloudKVSync } from 'react-native-cloud-sync'
 
 await icloudKVSync()
 ```

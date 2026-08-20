@@ -1,5 +1,5 @@
 /**
- * @kesha-antonov/react-native-cloud-sync
+ * react-native-cloud-sync
  *
  * iCloud key-value store, CloudKit and Google Drive behind one API, on iOS,
  * Android and the web, on both React Native architectures.
@@ -8,7 +8,9 @@
 // Providers, each usable directly.
 export { icloudKV, sync as icloudKVSync } from './providers/icloudKV'
 export { cloudKit, zones as cloudKitZones, assets as cloudKitAssets } from './providers/cloudKit'
+export { cloudKitBackup } from './providers/cloudKitBackup'
 export { googleDrive } from './providers/googleDrive'
+export { googleDriveFiles } from './providers/googleDriveFiles'
 export { createMemoryProvider } from './providers/memory'
 
 // The facade over them.
@@ -19,12 +21,14 @@ export { resolveByTimestamp, resolveByPreferenceOrder } from './resolvers'
 export {
   configureCloudKit,
   configureGoogleDrive,
+  configureGoogleDriveFiles,
   isCloudKitConfigured,
-  isGoogleDriveConfigured
+  isGoogleDriveConfigured,
+  isGoogleDriveFilesConfigured
 } from './config'
 
 export type { CloudKitRestConfig } from './internal/cloudKitRest'
-export type { GoogleDriveConfig } from './internal/googleDriveRest'
+export type { GoogleDriveConfig, GoogleDriveFileAdapter } from './internal/googleDriveRest'
 
 // Errors - the part callers branch on.
 export {
@@ -35,6 +39,9 @@ export {
   requiresUserAction
 } from './errors'
 export type { CloudSyncErrorInfo } from './errors'
+
+export type { BackupOptions, BackupProgressEvent } from './providers/cloudKitBackup'
+export type { DriveFileFetchOptions, DriveFileProgressEvent, DriveFileSaveOptions } from './providers/googleDriveFiles'
 
 export type {
   AccountChangeEvent,

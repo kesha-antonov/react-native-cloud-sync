@@ -31,7 +31,7 @@ Three things in the [CloudKit Console][console] first:
 Then configure the REST path:
 
 ```ts
-import { configureCloudKit } from '@kesha-antonov/react-native-cloud-sync'
+import { configureCloudKit } from 'react-native-cloud-sync'
 
 configureCloudKit({
   containerIdentifier: 'iCloud.com.your.app',
@@ -56,14 +56,14 @@ Intercept at the native page-load level rather than with `onShouldStartLoadWithR
 ## Records
 
 ```ts
-import { cloudKit } from '@kesha-antonov/react-native-cloud-sync'
+import { cloudKit } from 'react-native-cloud-sync'
 
-await cloudKit.setItem('portfolio', JSON.stringify(holdings))
+await cloudKit.setItem('playlist', JSON.stringify(tracks))
 
-const raw = await cloudKit.getItem('portfolio')
+const raw = await cloudKit.getItem('playlist')
 // null means no such record. Nothing else returns null.
 
-await cloudKit.removeItem('portfolio')
+await cloudKit.removeItem('playlist')
 
 const names = await cloudKit.getAllKeys()
 ```
@@ -77,7 +77,7 @@ Concurrent writes resolve last-write-wins, identically on native (`.changedKeys`
 Native only; the REST client uses the default zone.
 
 ```ts
-import { cloudKitZones } from '@kesha-antonov/react-native-cloud-sync'
+import { cloudKitZones } from 'react-native-cloud-sync'
 
 await cloudKitZones.create('Projects')
 const zones = await cloudKitZones.list()
@@ -89,7 +89,7 @@ await cloudKitZones.remove('Projects')
 For anything above the 1 MB record limit - images, audio, exports. The file is streamed from disk as a `CKAsset`, so a large file never has to be held in memory the way a base64 round trip would.
 
 ```ts
-import { cloudKitAssets } from '@kesha-antonov/react-native-cloud-sync'
+import { cloudKitAssets } from 'react-native-cloud-sync'
 
 const unsubscribe = cloudKitAssets.onProgress(
   ({ recordName, bytesTransferred, bytesTotal }) => {
@@ -115,6 +115,29 @@ Progress is reported per record, so it can be attributed when several transfers 
 Assets are an explicit API rather than something the [store facade](../store.md) routes to automatically: you pass a file path, not a string, and there is no way to infer that intent from a `setItem` call.
 
 **Native only.** CloudKit Web Services does expose an asset upload flow, but it is a separate multi-step protocol this package does not implement yet - so on Android and web these reject with `ERR_UNSUPPORTED_PLATFORM` instead of appearing to work. Use `googleDrive` for binaries there.
+
+### Backup/restore helper
+
+`cloudKitBackup` wraps `cloudKitAssets` for the common case of a single named blob - a database export, an archive - with progress reported as a fraction instead of a global, unfiltered event feed:
+
+```ts
+import { cloudKitBackup } from 'react-native-cloud-sync'
+
+await cloudKitBackup.save(dbPath, {
+  onProgress: ({ fraction }) => setUploadProgress(fraction),
+})
+
+const restoredPath = await cloudKitBackup.restore({
+  onProgress: ({ fraction }) => setDownloadProgress(fraction),
+})
+// null when nothing has been backed up yet
+```
+
+`save`/`restore` both default to a single well-known record (`recordName: 'backup'`, `fieldName: 'file'`), so most apps never need to pass either - override them to keep more than one backup (e.g. one per exported dataset).
+
+The download side reports real progress from the first callback, not just at completion: `save` stashes the file's byte count alongside the asset, so a subsequent `restore` (even from a different device) knows the total before the transfer starts.
+
+Native only, same as `cloudKitAssets` - on Android and web, use [`googleDriveFiles`](google-drive.md#large-files) instead. [Recipes](../recipes.md#cross-platform-large-file-backup) shows the two paired behind one function.
 
 ## Events
 

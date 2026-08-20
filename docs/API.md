@@ -29,7 +29,9 @@ interface CloudProvider {
 | `cloudKit` | CloudKit private database | [CloudKit](providers/cloudkit.md) |
 | `cloudKitZones` | `create` · `list` · `remove` (native only) | [zones](providers/cloudkit.md#custom-zones) |
 | `cloudKitAssets` | `save` · `fetch` · `onProgress` (native only) | [assets](providers/cloudkit.md#assets) |
+| `cloudKitBackup` | `save` · `restore`, one blob, scoped progress (native only) | [backup/restore helper](providers/cloudkit.md#backuprestore-helper) |
 | `googleDrive` | Drive `appDataFolder` | [Google Drive](providers/google-drive.md) |
+| `googleDriveFiles` | `save` · `fetch`, resumable/chunked, needs a file adapter | [large files](providers/google-drive.md#large-files) |
 | `createMemoryProvider` | in-memory + fault injection | [Testing](testing.md) |
 
 ### `cloudKitZones`
@@ -60,6 +62,54 @@ fetch(options: {
 onProgress(cb: (e: AssetProgressEvent) => void): Unsubscribe
 ```
 
+### `cloudKitBackup`
+
+```ts
+save(fileUri: string, options?: {
+  recordName?: string        // default 'backup'
+  fieldName?: string         // default 'file'
+  zoneName?: string | null
+  onProgress?: (e: BackupProgressEvent) => void
+}): Promise<void>
+
+restore(options?: {
+  recordName?: string
+  fieldName?: string
+  zoneName?: string | null
+  onProgress?: (e: BackupProgressEvent) => void
+}): Promise<string | null>   // local path, or null if nothing was ever saved
+
+interface BackupProgressEvent {
+  bytesTransferred: number
+  bytesTotal: number
+  fraction: number            // bytesTransferred / bytesTotal, 0 until known
+}
+```
+
+### `googleDriveFiles`
+
+```ts
+save(options: {
+  name: string
+  fileUri: string
+  onProgress?: (e: DriveFileProgressEvent) => void
+}): Promise<void>
+
+fetch(options: {
+  name: string
+  destinationUri: string
+  onProgress?: (e: DriveFileProgressEvent) => void
+}): Promise<string | null>   // destinationUri, or null if nothing was ever saved
+
+interface DriveFileProgressEvent {
+  bytesTransferred: number
+  bytesTotal: number
+  fraction: number            // bytesTransferred / bytesTotal, 0 until known
+}
+```
+
+Needs `configureGoogleDriveFiles` - see below. Rejects with `ERR_CONTAINER_MISCONFIGURED` until then.
+
 ## Configuration
 
 ```ts
@@ -68,6 +118,9 @@ isCloudKitConfigured(): boolean
 
 configureGoogleDrive(config: GoogleDriveConfig): void
 isGoogleDriveConfigured(): boolean
+
+configureGoogleDriveFiles(adapter: GoogleDriveFileAdapter): void
+isGoogleDriveFilesConfigured(): boolean
 ```
 
 ```ts
@@ -84,6 +137,14 @@ interface GoogleDriveConfig {
   getAccessToken: () => Promise<string | null> | string | null
   onAuthExpired?: () => Promise<void> | void
   fetchImpl?: typeof fetch
+  chunkBytes?: number                     // googleDriveFiles chunk size, default 8 MiB
+}
+
+interface GoogleDriveFileAdapter {
+  statSize: (uri: string) => Promise<number>
+  readChunk: (uri: string, position: number, length: number) => Promise<string>   // base64
+  writeChunk: (uri: string, base64: string) => Promise<void>                      // creates/overwrites
+  appendChunk: (uri: string, base64: string) => Promise<void>
 }
 ```
 

@@ -7,7 +7,7 @@ import {
   isRetryable,
   requiresUserAction,
   isCloudSyncError,
-} from '@kesha-antonov/react-native-cloud-sync'
+} from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { LogView } from '../components/LogView'

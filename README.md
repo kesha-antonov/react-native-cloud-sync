@@ -1,7 +1,7 @@
 <p align="center">
-  <a href="https://badge.fury.io/js/@kesha-antonov%2Freact-native-cloud-sync"><img src="https://badge.fury.io/js/@kesha-antonov%2Freact-native-cloud-sync.svg" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-sync"><img src="https://img.shields.io/npm/dm/@kesha-antonov/react-native-cloud-sync.svg" alt="npm downloads" /></a>
-  <a href="https://github.com/kesha-antonov/react-native-cloud-sync/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@kesha-antonov/react-native-cloud-sync.svg" alt="license" /></a>
+  <a href="https://www.npmjs.com/package/react-native-cloud-sync"><img src="https://img.shields.io/npm/v/react-native-cloud-sync.svg" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/react-native-cloud-sync"><img src="https://img.shields.io/npm/dm/react-native-cloud-sync.svg" alt="npm downloads" /></a>
+  <a href="https://github.com/kesha-antonov/react-native-cloud-sync/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/react-native-cloud-sync.svg" alt="license" /></a>
   <img src="https://img.shields.io/badge/platforms-iOS%20%7C%20Android%20%7C%20Web-lightgrey.svg" alt="platforms" />
   <img src="https://img.shields.io/badge/TypeScript-ready-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Expo-compatible-000020.svg" alt="Expo compatible" />
@@ -118,7 +118,7 @@ This package is a wrapper. When something behaves unexpectedly, the answer is us
 [^6]: Its field type is `string | number | null`, so binary data cannot be stored at all.
 [^7]: A mock factory exists but is not exported from the package entry and is not mentioned in the README.
 [^8]: No commits since April; four npm releases shipped with Swift that did not compile.
-[^9]: `CKAsset`, streamed from disk, on Apple platforms. Not yet implemented over CloudKit Web Services, so on Android and web asset calls reject with `ERR_UNSUPPORTED_PLATFORM` rather than appearing to work - use Google Drive for binaries there.
+[^9]: `CKAsset`, streamed from disk, on Apple platforms. Not yet implemented over CloudKit Web Services, so on Android and web asset calls reject with `ERR_UNSUPPORTED_PLATFORM` rather than appearing to work - use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for binaries there, which chunks and resumes the same way `CKAsset` does.
 
 [kuatsu]: https://github.com/kuatsu/react-native-cloud-storage
 [ik]: https://github.com/BogdanGeorgian91/react-native-icloud-kit
@@ -164,7 +164,7 @@ Where a provider is unavailable it rejects with `ERR_UNSUPPORTED_PLATFORM` rathe
 ## 📦 Installation
 
 ```sh
-npx expo install @kesha-antonov/react-native-cloud-sync
+npx expo install react-native-cloud-sync
 ```
 
 Add the config plugin, then rebuild:
@@ -173,7 +173,7 @@ Add the config plugin, then rebuild:
 {
   "expo": {
     "plugins": [
-      ["@kesha-antonov/react-native-cloud-sync", {
+      ["react-native-cloud-sync", {
         "containerIdentifier": "iCloud.com.your.app"
       }]
     ]
@@ -190,7 +190,7 @@ Bare React Native, and the raw entitlement keys if you manage `ios/` yourself: s
 No sign-in, no UI - it uses the account already on the device.
 
 ```ts
-import { icloudKV } from '@kesha-antonov/react-native-cloud-sync'
+import { icloudKV } from 'react-native-cloud-sync'
 
 await icloudKV.setItem('settings/theme', 'dark')
 const theme = await icloudKV.getItem('settings/theme')
@@ -206,10 +206,10 @@ icloudKV.onRemoteChange(({ keys }) => reload(keys))
 The same private database from iOS, Android and web.
 
 ```ts
-import { cloudKit, cloudKitAssets } from '@kesha-antonov/react-native-cloud-sync'
+import { cloudKit, cloudKitAssets } from 'react-native-cloud-sync'
 
-await cloudKit.setItem('portfolio', JSON.stringify(holdings))
-const raw = await cloudKit.getItem('portfolio')
+await cloudKit.setItem('playlist', JSON.stringify(tracks))
+const raw = await cloudKit.getItem('playlist')
 
 // Anything above the 1 MB record limit goes in as a streamed CKAsset.
 await cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image', fileUri })
@@ -222,13 +222,13 @@ On Android and web this needs an Apple ID sign-in whose token lasts at most two 
 Identical behaviour on every platform, no periodic re-auth.
 
 ```ts
-import { configureGoogleDrive, googleDrive } from '@kesha-antonov/react-native-cloud-sync'
+import { configureGoogleDrive, googleDrive } from 'react-native-cloud-sync'
 
 configureGoogleDrive({
   getAccessToken: async () => (await GoogleSignin.getTokens()).accessToken,
 })
 
-await googleDrive.setItem('portfolio.json', JSON.stringify(holdings))
+await googleDrive.setItem('playlist.json', JSON.stringify(tracks))
 ```
 
 [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive)
@@ -236,7 +236,7 @@ await googleDrive.setItem('portfolio.json', JSON.stringify(holdings))
 ### All of them at once
 
 ```ts
-import { createCloudStore } from '@kesha-antonov/react-native-cloud-sync'
+import { createCloudStore } from 'react-native-cloud-sync'
 
 const store = createCloudStore({
   providers: ['icloudKV', 'googleDrive'],       // preference order
@@ -246,7 +246,7 @@ const store = createCloudStore({
   outboxStorage: mmkvAdapter,                   // survive restarts
 })
 
-await store.setItem('portfolio', json)
+await store.setItem('playlist', json)
 await store.flushOutbox()                       // on reconnect
 ```
 
@@ -255,7 +255,7 @@ Those two options are what make sync work in **both** directions across a mixed 
 ### Handling failures
 
 ```ts
-import { isRetryable, requiresUserAction } from '@kesha-antonov/react-native-cloud-sync'
+import { isRetryable, requiresUserAction } from 'react-native-cloud-sync'
 
 try {
   await store.setItem('k', 'v')
@@ -270,7 +270,7 @@ try {
 ## 🧪 Testing
 
 ```ts
-import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
+import { createMemoryProvider } from 'react-native-cloud-sync/testing'
 
 const provider = createMemoryProvider({
   faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },

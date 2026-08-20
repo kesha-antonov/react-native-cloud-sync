@@ -5,7 +5,7 @@ Cloud storage is the hardest part of a mobile app to test honestly. iCloud on th
 So this package ships an in-memory provider with fault injection, from a real entry point:
 
 ```ts
-import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
+import { createMemoryProvider } from 'react-native-cloud-sync/testing'
 ```
 
 ## Basics
@@ -30,7 +30,7 @@ store.registerProvider(provider)
 ## Injecting failures
 
 ```ts
-import { ErrorCode } from '@kesha-antonov/react-native-cloud-sync'
+import { ErrorCode } from 'react-native-cloud-sync'
 
 const provider = createMemoryProvider({
   faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },

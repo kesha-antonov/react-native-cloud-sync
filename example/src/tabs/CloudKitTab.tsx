@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Platform, ScrollView, Text, View } from 'react-native'
 
-import { cloudKit, cloudKitZones } from '@kesha-antonov/react-native-cloud-sync'
+import { cloudKit, cloudKitZones } from 'react-native-cloud-sync'
 
 import { Button, ButtonRow } from '../components/Button'
 import { Field } from '../components/Field'

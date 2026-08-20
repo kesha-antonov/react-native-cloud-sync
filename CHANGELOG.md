@@ -43,6 +43,31 @@
   app with a bundle id - including one with no iCloud capability at all.
 - **The Expo config plugin merges `icloud-container-identifiers`** instead of
   overwriting it, so a container the app already declared is no longer dropped.
+- **`cloudKitAssets.fetch`/`cloudKitBackup.restore` report download progress.**
+  The native download used a plain completion-handler fetch with no progress
+  callback at all, so a large asset (a database export, say) gave no signal
+  until the whole transfer had already landed. It now reports real byte
+  progress from the first callback, using a size the upload side stashes
+  alongside the asset.
+
+### ✨ Features
+
+- **`cloudKitBackup`** - a `save`/`restore` helper built on `cloudKitAssets`
+  for the common single-blob case (a database export, an archive), with
+  progress scoped to just that transfer instead of the global, unfiltered
+  `cloudKitAssets.onProgress` feed. See
+  [the CloudKit guide](docs/providers/cloudkit.md#backuprestore-helper).
+- **`googleDriveFiles`** - the Android/web equivalent of `cloudKitAssets`, for
+  a file too large to hold in memory as a JS string the way `googleDrive.setItem`
+  does. Uploads with Drive's resumable protocol and reads/writes in fixed
+  chunks (8 MiB by default, configurable), so a 500 MB transfer never sits in
+  memory whole and a chunk that drops mid-flight is retried against Drive's
+  real offset instead of restarting from byte 0. Reads and writes go through a
+  `GoogleDriveFileAdapter` you supply via the new `configureGoogleDriveFiles` -
+  this package still has no filesystem dependency of its own. See
+  [the Google Drive guide](docs/providers/google-drive.md#large-files) and
+  [the cross-platform recipe](docs/recipes.md#cross-platform-large-file-backup)
+  for pairing it with `cloudKitBackup`.
 
 ## v0.1.0
 

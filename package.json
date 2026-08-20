@@ -1,5 +1,5 @@
 {
-  "name": "@kesha-antonov/react-native-cloud-sync",
+  "name": "react-native-cloud-sync",
   "version": "0.1.0",
   "description": "iCloud key-value store, CloudKit and Google Drive under one API - iOS, Android and Web, old and new architecture",
   "workspaces": [
@@ -163,8 +163,5 @@
   },
   "lint-staged": {
     "*.{ts,tsx}": "eslint --fix"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

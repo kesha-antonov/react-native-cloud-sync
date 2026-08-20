@@ -55,7 +55,7 @@ These are this package's codes. They map onto CloudKit's own ([framework errors]
 ## Classifying without a switch
 
 ```ts
-import { isRetryable, requiresUserAction } from '@kesha-antonov/react-native-cloud-sync'
+import { isRetryable, requiresUserAction } from 'react-native-cloud-sync'
 
 try {
   await store.setItem('k', 'v')
@@ -71,7 +71,7 @@ With the [facade](store.md) and the outbox enabled, retryable failures are alrea
 ## Recognising an error
 
 ```ts
-import { isCloudSyncError } from '@kesha-antonov/react-native-cloud-sync'
+import { isCloudSyncError } from 'react-native-cloud-sync'
 
 if (isCloudSyncError(e)) console.warn(e.code)
 ```
@@ -85,7 +85,7 @@ The one case worth being deliberate about:
 ```ts
 let value: string | null = null
 try {
-  value = await store.getItem('portfolio')
+  value = await store.getItem('playlist')
 } catch (e) {
   // Reached the cloud and something went wrong. Do NOT treat this as
   // "no backup exists" - that is how apps overwrite good remote data

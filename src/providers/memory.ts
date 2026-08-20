@@ -65,7 +65,7 @@ export interface MemoryProvider extends CloudProvider {
  * account switched mid-session) are effectively never exercised.
  *
  * So they are exercised here instead, deterministically, in Jest. This is
- * exported from the package entry (`@kesha-antonov/react-native-cloud-sync/testing`)
+ * exported from the package entry (`react-native-cloud-sync/testing`)
  * rather than buried in source, so it is usable without reaching into internals.
  */
 export function createMemoryProvider(options: MemoryProviderOptions = {}): MemoryProvider {

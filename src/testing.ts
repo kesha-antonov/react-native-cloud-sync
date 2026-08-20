@@ -3,7 +3,7 @@
  *
  * Deliberately a real package entry point:
  *
- *   import { createMemoryProvider } from '@kesha-antonov/react-native-cloud-sync/testing'
+ *   import { createMemoryProvider } from 'react-native-cloud-sync/testing'
  *
  * expo-cloudkit ships a comparable mock factory but never exports it from the
  * package (its own source says "Import them directly from 'expo-cloudkit/src/testing'

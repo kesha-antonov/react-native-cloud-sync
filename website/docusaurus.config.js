@@ -62,7 +62,7 @@ const config = {
           { to: '/comparison', label: 'Comparison', position: 'left' },
           { to: '/api', label: 'API', position: 'left' },
           {
-            href: 'https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-sync',
+            href: 'https://www.npmjs.com/package/react-native-cloud-sync',
             label: 'npm',
             position: 'right',
           },
@@ -88,7 +88,7 @@ const config = {
               { label: 'GitHub', href: REPO },
               {
                 label: 'npm',
-                href: 'https://www.npmjs.com/package/@kesha-antonov/react-native-cloud-sync',
+                href: 'https://www.npmjs.com/package/react-native-cloud-sync',
               },
               { label: 'Issues', href: `${REPO}/issues` },
             ],

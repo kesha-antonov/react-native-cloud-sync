@@ -2597,39 +2597,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@kesha-antonov/react-native-cloud-sync@workspace:*, @kesha-antonov/react-native-cloud-sync@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "@kesha-antonov/react-native-cloud-sync@workspace:."
-  dependencies:
-    "@babel/core": "npm:^7.29.7"
-    "@eslint/js": "npm:^10.0.1"
-    "@expo/config-plugins": "npm:^10.0.2"
-    "@react-native/babel-preset": "npm:^0.86.2"
-    "@react-native/eslint-config": "npm:^0.86.2"
-    "@react-native/jest-preset": "npm:^0.86.2"
-    "@react-native/metro-config": "npm:^0.86.2"
-    "@stylistic/eslint-plugin": "npm:^5.10.0"
-    "@types/jest": "npm:^29.5.14"
-    "@types/node": "npm:^26.2.0"
-    "@types/react": "npm:^19.2.18"
-    babel-jest: "npm:^29.7.0"
-    del-cli: "npm:^7.0.0"
-    eslint: "npm:^10.8.0"
-    eslint-plugin-import: "npm:^2.32.0"
-    husky: "npm:^9.1.7"
-    jest: "npm:^29.7.0"
-    lint-staged: "npm:^17.3.0"
-    react: "npm:19.2.3"
-    react-native: "npm:0.86.2"
-    react-native-builder-bob: "npm:^0.43.0"
-    typescript: "npm:^6.0.3"
-    typescript-eslint: "npm:^8.66.0"
-  peerDependencies:
-    react: "*"
-    react-native: ">=0.71"
-  languageName: unknown
-  linkType: soft
-
 "@nicolo-ribaudo/eslint-scope-5-internals@npm:5.1.1-v1":
   version: 5.1.1-v1
   resolution: "@nicolo-ribaudo/eslint-scope-5-internals@npm:5.1.1-v1"
@@ -5623,7 +5590,6 @@ __metadata:
   dependencies:
     "@babel/core": "npm:^7.29.7"
     "@eslint/js": "npm:^10.0.1"
-    "@kesha-antonov/react-native-cloud-sync": "workspace:*"
     "@react-native-community/cli": "npm:^20.2.0"
     "@react-native/metro-config": "npm:^0.86.2"
     "@stylistic/eslint-plugin": "npm:^5.10.0"
@@ -5637,6 +5603,7 @@ __metadata:
     react: "npm:19.2.3"
     react-dom: "npm:19.2.3"
     react-native: "npm:0.86.2"
+    react-native-cloud-sync: "workspace:*"
     react-native-monorepo-config: "npm:^0.4.0"
     react-native-safe-area-context: "npm:~5.7.0"
     react-native-web: "npm:~0.21.2"
@@ -9351,6 +9318,39 @@ __metadata:
   checksum: 10/81c28299a8af19f4ffd8c3b96ce86a07b51a41bdd82a5000e6bb8d960155660ea62b8ffb958511231b3891c815a71f9d95a46ff9f2e738fa2101889d92f52538
   languageName: node
   linkType: hard
+
+"react-native-cloud-sync@workspace:*, react-native-cloud-sync@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "react-native-cloud-sync@workspace:."
+  dependencies:
+    "@babel/core": "npm:^7.29.7"
+    "@eslint/js": "npm:^10.0.1"
+    "@expo/config-plugins": "npm:^10.0.2"
+    "@react-native/babel-preset": "npm:^0.86.2"
+    "@react-native/eslint-config": "npm:^0.86.2"
+    "@react-native/jest-preset": "npm:^0.86.2"
+    "@react-native/metro-config": "npm:^0.86.2"
+    "@stylistic/eslint-plugin": "npm:^5.10.0"
+    "@types/jest": "npm:^29.5.14"
+    "@types/node": "npm:^26.2.0"
+    "@types/react": "npm:^19.2.18"
+    babel-jest: "npm:^29.7.0"
+    del-cli: "npm:^7.0.0"
+    eslint: "npm:^10.8.0"
+    eslint-plugin-import: "npm:^2.32.0"
+    husky: "npm:^9.1.7"
+    jest: "npm:^29.7.0"
+    lint-staged: "npm:^17.3.0"
+    react: "npm:19.2.3"
+    react-native: "npm:0.86.2"
+    react-native-builder-bob: "npm:^0.43.0"
+    typescript: "npm:^6.0.3"
+    typescript-eslint: "npm:^8.66.0"
+  peerDependencies:
+    react: "*"
+    react-native: ">=0.71"
+  languageName: unknown
+  linkType: soft
 
 "react-native-monorepo-config@npm:^0.4.0":
   version: 0.4.0
