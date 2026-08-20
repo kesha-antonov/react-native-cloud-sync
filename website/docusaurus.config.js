@@ -16,6 +16,10 @@ const config = {
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
+  // A link to a heading that no longer exists lands the reader at the top of
+  // the right page with no hint that anything is wrong. Defaults to 'warn',
+  // which nobody reads in build output.
+  onBrokenAnchors: 'throw',
   markdown: {
     hooks: {
       onBrokenMarkdownLinks: 'warn',

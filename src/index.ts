@@ -7,15 +7,45 @@
 
 // Providers, each usable directly.
 export { icloudKV, sync as icloudKVSync } from './providers/icloudKV'
-export { cloudKit, zones as cloudKitZones, assets as cloudKitAssets } from './providers/cloudKit'
+export {
+  cloudKit,
+  createCloudKitProvider,
+  zones as cloudKitZones,
+  assets as cloudKitAssets
+} from './providers/cloudKit'
 export { cloudKitBackup } from './providers/cloudKitBackup'
-export { googleDrive } from './providers/googleDrive'
+export { cloudKitEncrypted } from './providers/cloudKitEncrypted'
+export { icloudDocuments } from './providers/icloudDocuments'
+export { googleDrive, createGoogleDriveProvider } from './providers/googleDrive'
 export { googleDriveFiles } from './providers/googleDriveFiles'
 export { createMemoryProvider } from './providers/memory'
 
 // The facade over them.
-export { createCloudStore, type CloudStore, type OutboxStorage } from './store'
-export { resolveByTimestamp, resolveByPreferenceOrder } from './resolvers'
+export {
+  createCloudStore,
+  type CloudStore,
+  type FlushResult,
+  type MigrateOptions,
+  type MigrateResult,
+  type OutboxStorage
+} from './store'
+export {
+  resolveByTimestamp,
+  resolveByModifiedAt,
+  resolveByPreferenceOrder,
+  resolveFirstOf
+} from './resolvers'
+
+// Key rules, for callers whose keys come from somewhere they do not control.
+export { checkKey, sanitizeKey } from './internal/keys'
+
+/**
+ * The abort-signal shape the cancellable APIs accept.
+ *
+ * Structural rather than the DOM `AbortSignal`, so any polyfill satisfies it
+ * and consumers do not need `lib.dom` in their tsconfig.
+ */
+export type { AbortLike } from './internal/timeout'
 
 // Configuration for the REST-backed paths.
 export {
@@ -30,10 +60,17 @@ export {
 export type { CloudKitRestConfig } from './internal/cloudKitRest'
 export type { GoogleDriveConfig, GoogleDriveFileAdapter } from './internal/googleDriveRest'
 
+// The `GoogleDriveFileAdapter` contract is base64 in and base64 out, while every
+// modern filesystem API is byte-oriented - so the codec that bridges them ships
+// here rather than making each adapter author find one. Dependency-free and
+// Hermes-safe, which `Buffer`/`atob` are not.
+export { base64ToBytes, bytesToBase64 } from './internal/base64'
+
 // Errors - the part callers branch on.
 export {
   CloudSyncError,
   ErrorCode,
+  isCancelled,
   isCloudSyncError,
   isRetryable,
   requiresUserAction
@@ -41,22 +78,31 @@ export {
 export type { CloudSyncErrorInfo } from './errors'
 
 export type { BackupOptions, BackupProgressEvent } from './providers/cloudKitBackup'
+export type { DocumentEntry, DocumentFetchOptions } from './providers/icloudDocuments'
 export type { DriveFileFetchOptions, DriveFileProgressEvent, DriveFileSaveOptions } from './providers/googleDriveFiles'
 
 export type {
   AccountChangeEvent,
   AccountStatus,
   AssetProgressEvent,
+  AutoFlushConfig,
+  BuiltInProviderName,
   ChangeReason,
   CloudProvider,
   CloudStoreOptions,
+  DropReason,
+  DroppedWrite,
+  ItemWithMeta,
   OutboxEntry,
   ProviderName,
+  QuotaInfo,
   RemoteChangeEvent,
   ResolveCandidate,
   ResolveFn,
   TieringConfig,
-  Unsubscribe
+  Unsubscribe,
+  ValueCodec,
+  WriteMode
 } from './types'
 export { DEFAULT_TIERING } from './types'
 

@@ -33,6 +33,14 @@ The container identifier is read from the app's entitlements at runtime, so it n
 
 CloudKit keeps entirely separate datastores for Development and Production. A debug build and a TestFlight build do not see each other's data, and a schema created in Development must be deployed to Production before a release build can use it.
 
+### iCloud Drive
+
+The `icloudDocuments` provider needs two things the CloudKit entitlement does not give you: the **CloudDocuments** service on the container, and an `NSUbiquitousContainers` Info.plist entry with `NSUbiquitousContainerIsDocumentScopePublic`. Without the first, the container URL resolves to nil at runtime; without the second, files sync but the folder never appears in Files.app.
+
+The config plugin writes both when `iCloudDocuments: true` - off by default, because turning it on puts a folder for your app in the user's iCloud Drive and that should be deliberate. Raw keys are in [iCloud Drive](providers/icloud-drive.md#setup).
+
+iOS caches `NSUbiquitousContainers` and re-reads it only when `CFBundleShortVersionString` changes, so bump the version when you add it.
+
 ### Mac Catalyst
 
 Supported - Catalyst builds from the iOS slice, and both CloudKit and `NSUbiquitousKeyValueStore` are available there.
@@ -67,11 +75,23 @@ Set the Sign In Callback in the CloudKit Console to `cloudkit-<container-id>://c
 
 This package ships no Android native module. CloudKit and Drive are both reached over REST from JavaScript, which is the same code path the web build uses. One implementation, two platforms - and the auth handling and error mapping, where bugs in this area actually live, exist in exactly one place.
 
+### No native Android module, and what that costs
+
+Repeating the summary above because it is the thing people are surprised by: `icloudKV` and `icloudDocuments` are Apple filesystem and OS features with no REST surface, so they do not exist on Android at any price. `cloudKit` reaches the *same private database* over CloudKit Web Services, but needs an interactive Apple ID sign-in whose token lasts 30 minutes - or two weeks if the user ticked "Keep me signed in" - with no documented refresh.
+
+So on Android, `googleDrive` is the provider for continuous background sync, and `cloudKit` is the provider for a deliberate "bring my iPhone data over" import. Building an always-on Android backup on CloudKit means asking the user to re-authenticate every fortnight, forever.
+
 ## Web
 
 Google Drive and CloudKit both work in a browser; both are plain `fetch` against REST APIs.
 
 `icloudKV` has no browser equivalent and rejects with `ERR_UNSUPPORTED_PLATFORM`. Use `isAvailable()` to branch, or route through `createCloudStore` with `googleDrive` in the provider list.
+
+### Bundlers other than Metro
+
+`icloudKV.web.ts` relies on Metro's platform-extension resolution. A react-native-web build served by webpack, Vite or Next.js does not do that, so it loads the native module instead - and react-native-web exports no `TurboModuleRegistry` at all.
+
+Handled: native-module resolution is defensive, and both Apple-only providers read `Platform?.OS` rather than assuming the module shape exists. On any bundler, `icloudKV` reports unavailable and `cloudKit` falls through to its REST path. You do not need a resolver alias, though one still gives you the smaller bundle.
 
 ## Architectures
 

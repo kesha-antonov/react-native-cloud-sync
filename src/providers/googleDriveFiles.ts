@@ -2,6 +2,7 @@ import { getGoogleDriveClient, getGoogleDriveFileAdapter } from '../config'
 import { normalizeError } from '../errors'
 import { base64ToBytes, bytesToBase64 } from '../internal/base64'
 import type { DriveChunkSink, DriveChunkSource } from '../internal/googleDriveRest'
+import type { AbortLike } from '../internal/timeout'
 
 const NAME = 'googleDrive' as const
 
@@ -15,11 +16,25 @@ export interface DriveFileProgressEvent {
 export interface DriveFileSaveOptions {
   /** Called repeatedly while the upload is in flight. */
   onProgress?: (e: DriveFileProgressEvent) => void
+  /**
+   * Cancels the transfer, rejecting with `ERR_CANCELLED`.
+   *
+   * Checked between chunks, so a cancel takes effect during the transfer rather
+   * than only once the whole file has moved - which is the entire point when
+   * the file is several hundred megabytes. Bytes already accepted stay in the
+   * resumable session; a later `save` of the same name starts a fresh one.
+   *
+   * Typed structurally rather than as the DOM `AbortSignal`, so any polyfill
+   * works and consumers do not need `lib.dom` in their tsconfig.
+   */
+  signal?: AbortLike
 }
 
 export interface DriveFileFetchOptions {
   /** Called repeatedly while the download is in flight. */
   onProgress?: (e: DriveFileProgressEvent) => void
+  /** Cancels the transfer, rejecting with `ERR_CANCELLED`. Checked between chunks. */
+  signal?: AbortLike
 }
 
 /**
@@ -50,7 +65,9 @@ export const googleDriveFiles = {
           base64ToBytes(await adapter.readChunk(options.fileUri, start, length)),
       }
 
-      await getGoogleDriveClient().uploadFile(options.name, source, forward(options.onProgress))
+      await getGoogleDriveClient().uploadFile(
+        options.name, source, forward(options.onProgress), options.signal
+      )
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -77,7 +94,7 @@ export const googleDriveFiles = {
 
     try {
       const found = await getGoogleDriveClient().downloadFile(
-        options.name, sink, forward(options.onProgress)
+        options.name, sink, forward(options.onProgress), options.signal
       )
       return found ? options.destinationUri : null
     }

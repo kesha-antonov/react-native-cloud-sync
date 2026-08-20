@@ -16,9 +16,42 @@ Your app's real data, on Apple platforms, with the option of reaching it elsewhe
 
 Per-record limit: **1 MB**, excluding assets ([all limits][cklimits]). Oversized writes reject locally with `ERR_PAYLOAD_TOO_LARGE` rather than failing server-side.
 
+## The schema
+
+CloudKit is schema-bound, and the schema is not optional - it is the single most common reason a CloudKit app works in debug and fails the day it ships. This package uses one record type.
+
+| | |
+|---|---|
+| Record type | `KVBlob` |
+| `value` | **String** - holds what `setItem` writes |
+| `<fieldName>` | **Asset** - one per `cloudKitAssets` field you use |
+| `<fieldName>__size` | **Int(64)** - byte count written alongside each asset |
+
+`cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image' })` therefore needs `image` (Asset) and `image__size` (Int) on `KVBlob`. `cloudKitBackup` defaults to record name `backup` and field name `file`, so it needs `file` and `file__size`. Record *names* are data, not schema - only field names and types have to exist.
+
+The `__size` sidecar is what lets a restore report real progress from the first callback rather than jumping from 0 to 1 at the end.
+
+### Development creates it for you. Production does not.
+
+In the Development environment CloudKit adds fields on first write, so the schema appears by itself while you build. Production never does - it only ever receives what you **Deploy Schema Changes** from the Console. A release build hitting a field that was never deployed fails at runtime on a schema that looked fine all along.
+
+So before your first release: write every field once in Development (or add them by hand), then deploy.
+
+### `getAllKeys()` needs an index
+
+`getItem`, `setItem` and `removeItem` address records by name, which needs no index. `getAllKeys()` is different - it issues a real query (`CKQueryOperation` natively, `/records/query` over REST), and CloudKit refuses to query a record type that has no queryable index.
+
+In the Console, under **Indexes** for `KVBlob`, add:
+
+| Field | Index type |
+|---|---|
+| `recordName` | **Queryable** |
+
+Then deploy that to Production too. Without it `getAllKeys()` rejects - and because [`migrate()`](../store.md#migration) and the [delete-everything flow](../recipes.md#turning-it-off-and-deleting-what-is-stored) are both built on `getAllKeys()`, they fail with it.
+
 ## Setup on Apple platforms
 
-Entitlements only. The container identifier is read from them at runtime, so it never needs repeating in JavaScript and cannot drift out of sync. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
+Entitlements only, plus [the schema](#the-schema) above. The container identifier is read from entitlements at runtime, so it never needs repeating in JavaScript and cannot drift out of sync. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
 
 ## Setup on Android and web
 
@@ -26,7 +59,7 @@ Three things in the [CloudKit Console][console] first:
 
 1. A **Client** API token under API Access ([how tokens work][ckauth]). Not a server-to-server key - see [the constraint](#the-constraint-on-android-and-web) below.
 2. A **Sign In Callback** set to `cloudkit-<container-id>://callback`.
-3. Your schema **deployed to Production**, if you use `environment: 'production'`. Development and Production are separate datastores, so a debug build and a release build do not see each other's data.
+3. [The schema](#the-schema) and its `recordName` index **deployed to Production**, if you use `environment: 'production'`. Development and Production are separate datastores, so a debug build and a release build do not see each other's data.
 
 Then configure the REST path:
 
@@ -68,7 +101,7 @@ await cloudKit.removeItem('playlist')
 const names = await cloudKit.getAllKeys()
 ```
 
-Records are stored with the record name as the key, so both platforms can fetch by name directly with no queryable index in the schema.
+Records are stored with the record name as the key, so both platforms fetch by name directly - no query, and no index needed for the three operations above. `getAllKeys()` is the exception: it queries, and so it needs [the `recordName` index](#getallkeys-needs-an-index).
 
 Concurrent writes resolve last-write-wins, identically on native (`.changedKeys`) and over REST (`forceUpdate`), so two devices cannot deadlock on a change-tag conflict.
 
@@ -173,3 +206,49 @@ The REST path needs no crypto - two query parameters on a `fetch` - so it is una
 [ckauth]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/SettingUpWebServices.html
 [cklimits]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/PropertyMetrics.html
 [console]: https://icloud.developer.apple.com/dashboard/
+
+## Batching
+
+Over REST, `/records/lookup` and `/records/modify` both take arrays, so the store's [batch operations](../store.md#batch-operations) really are one request:
+
+```ts
+await store.multiGet(['a', 'b', 'c'])     // one request
+await store.multiSet(entries)             // one request per 200 records
+```
+
+Batched writes use `atomic: false`. A batch is a convenience the caller asked for, not a transaction - one oversized record should not silently discard the other 199. Per-record failures are raised rather than swallowed.
+
+Natively the same calls loop, because `CKModifyRecordsOperation` already coalesces on the framework's own schedule.
+
+## Concurrent writes
+
+The default is last-write-wins, on both platforms: the native provider uses `savePolicy = .changedKeys` and the REST client uses `forceUpdate`, so two devices writing the same record agree on the outcome rather than one of them failing on a change-tag mismatch.
+
+That is right for the common case and wrong when a genuine concurrent edit should be merged instead of destroyed. The REST client can do a conditional write:
+
+```ts
+import { configureCloudKit, isCloudSyncError } from 'react-native-cloud-sync'
+
+const client = getCloudKitClient()                       // internal, but see below
+const current = await client.getRecordWithMeta('doc')
+
+try {
+  await client.saveRecordIfUnchanged('doc', merged, current.recordChangeTag)
+} catch (e) {
+  if (isCloudSyncError(e) && e.code === 'ERR_CONFLICT')
+    await retryWith(e.serverValue)                       // somebody else got there first
+}
+```
+
+`ERR_CONFLICT` carries `serverValue` precisely so this loop can merge. Before conditional writes existed the error could not fire at all, which made the documented merge path unreachable.
+
+## Cancelling a transfer
+
+```ts
+const cancelled = await cloudKitAssets.cancel({ recordName: 'avatar', fieldName: 'image' })
+await cloudKitBackup.cancel()                            // the default backup record
+```
+
+Identified by record and field rather than by a handle, because that is the pair `onProgress` already reports - a UI showing progress therefore already has what it needs to stop it. The cancelled `save`/`fetch`/`restore` rejects with `ERR_CANCELLED`, which `isCancelled(e)` recognises and which you should not show as an error.
+
+Native only, like the rest of the asset API.

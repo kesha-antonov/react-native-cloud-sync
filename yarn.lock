@@ -5598,6 +5598,7 @@ __metadata:
     eslint-plugin-react: "npm:^7.37.5"
     eslint-plugin-react-hooks: "npm:^7.1.1"
     expo: "npm:^57.0.10"
+    expo-file-system: "npm:~57.0.4"
     expo-status-bar: "npm:~57.0.1"
     expo-system-ui: "npm:~57.0.2"
     react: "npm:19.2.3"

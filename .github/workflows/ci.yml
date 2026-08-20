@@ -36,7 +36,10 @@ jobs:
 
       # Documentation snippets are neither compiled nor linted, so they drift
       # away from the house style and then teach readers the wrong conventions.
-      - name: Check docs style
+      # The link half also proves every internal link, every README link into
+      # the published site, and every public export still resolves - drift that
+      # renders as valid markdown and fails only for the reader.
+      - name: Check docs style and links
         run: yarn check:docs
 
       # Catches podspec bugs on a Linux runner, without waiting for a macOS

@@ -1,6 +1,6 @@
 # Choosing a provider
 
-Three providers, each usable directly or through the [store facade](store.md). This page is the decision, not the reference.
+Five providers, each usable directly - four of them through the [store facade](store.md). This page is the decision, not the reference.
 
 ## Quick answer
 
@@ -11,6 +11,8 @@ Three providers, each usable directly or through the [store facade](store.md). T
 | Want one always-on backend that behaves the same everywhere | `googleDrive` |
 | Want iCloud on Apple and something sensible on Android, automatically | the [facade](store.md) with `['icloudKV', 'googleDrive']` |
 | Want the *same* data on Apple and non-Apple devices, both writing | the facade with `writeMode: 'mirror'` **and** a `resolve` function |
+| Give the user a file they can open in Files.app | `icloudDocuments` (Apple) / `googleDriveFiles` (elsewhere) |
+| Store something genuinely sensitive, Apple-only | `cloudKitEncrypted` - see [Encryption](encryption.md) |
 
 ## Platform support
 
@@ -18,6 +20,8 @@ Three providers, each usable directly or through the [store facade](store.md). T
 |---|:---:|:---:|:---:|
 | `icloudKV` | native | – | – |
 | `cloudKit` | native | REST | REST |
+| `cloudKitEncrypted` | native | – | – |
+| `icloudDocuments` | native | – | – |
 | `googleDrive` | REST | REST | REST |
 
 Where a provider is unavailable it rejects with `ERR_UNSUPPORTED_PLATFORM` rather than silently doing nothing. Call `isAvailable()` to branch without a `try`/`catch`.
@@ -39,6 +43,26 @@ Where a provider is unavailable it rejects with `ERR_UNSUPPORTED_PLATFORM` rathe
 **On Android and web it is not.** Reaching a user's private database requires an interactive Apple ID sign-in in a WebView, and the resulting token expires after **30 minutes**, or **2 weeks** if the user ticks "Keep me signed in". Apple documents no refresh. There is no way around this: a server-to-server key reaches only the *public* database, and Sign in with Apple identifiers are not linked to CloudKit.
 
 So: on Android and web treat CloudKit as a deliberate **import/export** ("bring my iPhone data to this device"), not as a background backup.
+
+### `cloudKitEncrypted`
+
+**Genuine end-to-end encryption, for free.** Values go into `CKRecord.encryptedValues`, encrypted on device with a key from the user's iCloud Keychain. Apple stores ciphertext and cannot read it. No key for you to manage, no passphrase for the user to lose - the hard part of E2E, key distribution across the user's devices, is already solved by the iCloud Keychain.
+
+**Which is exactly why it is Apple-only.** The key never reaches Apple's servers, so CloudKit Web Services cannot decrypt either - a value written here is *unreadable* from Android and web, permanently. That is what end-to-end means, not a gap to be closed.
+
+**Values are not queryable, and keys are not encrypted.** Put nothing sensitive in a key.
+
+Do not mirror it alongside a plaintext provider: the other copy undoes the encryption. If the same data must be readable off Apple, use the store's `codec` with a key you manage instead.
+
+### `icloudDocuments`
+
+**The only one the user can see.** Files land in your app's folder in their iCloud Drive, browsable in Files.app, syncing across their Apple devices and surviving an app uninstall. Every other provider here stores data the user has no way to reach.
+
+**Which also means they can delete it**, rename it, or move it somewhere else, at any time, without telling your app. That is the trade: user-visible storage is user-controlled storage. Treat a missing file as normal rather than as corruption.
+
+**Apple-only, permanently.** Not a gap waiting to be filled - iCloud Drive is a filesystem feature with no REST surface and no browser API. Use `googleDriveFiles` for the same job elsewhere.
+
+**Not part of the facade.** It moves files by path, and the provider contract is keys to string values. Same reason `cloudKitAssets` is its own API.
 
 ### `googleDrive`
 
@@ -115,6 +139,18 @@ const store = createCloudStore({
   outboxStorage: mmkvAdapter,
 })
 ```
+
+**An empty list is not a silent no-op.** A store with no providers rejects every write with `ERR_NOT_SIGNED_IN`, which is the wrong thing to show someone who deliberately turned sync off - and it is not queued either, since that code counts as needing user action. Branch before you call rather than letting the store reject:
+
+```ts
+export async function save (key: string, value: string) {
+  mmkv.set(key, value)                    // local first, always
+  if (chosen === 'off') return            // sync is off: nothing more to do
+  await store.setItem(key, value)
+}
+```
+
+That also keeps the app writing locally when the cloud is switched off, which is what the user asked for - not "stop saving my data".
 
 ### "Also back up to Google Drive"
 

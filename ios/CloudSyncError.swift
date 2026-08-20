@@ -13,6 +13,8 @@ import Foundation
     @objc public static let quotaExceeded = "ERR_QUOTA_EXCEEDED"
     @objc public static let rateLimited = "ERR_RATE_LIMITED"
     @objc public static let payloadTooLarge = "ERR_PAYLOAD_TOO_LARGE"
+    @objc public static let invalidKey = "ERR_INVALID_KEY"
+    @objc public static let timeout = "ERR_TIMEOUT"
     @objc public static let conflict = "ERR_CONFLICT"
     @objc public static let containerMisconfigured = "ERR_CONTAINER_MISCONFIGURED"
     @objc public static let unsupportedPlatform = "ERR_UNSUPPORTED_PLATFORM"

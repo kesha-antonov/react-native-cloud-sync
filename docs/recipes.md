@@ -2,6 +2,24 @@
 
 Task-shaped answers that span providers.
 
+## Assumed setup
+
+Most recipes below pass an `mmkvAdapter` and write locally through `mmkv`. Both are this, defined once:
+
+```ts
+import { MMKV } from 'react-native-mmkv'
+
+export const mmkv = new MMKV()
+
+/** Makes the outbox survive a restart. See the outbox for why it matters. */
+export const mmkvAdapter = {
+  getString: (key: string) => mmkv.getString(key),
+  set: (key: string, value: string) => mmkv.set(key, value),
+}
+```
+
+MMKV because `outboxStorage` is read on the write path and so must be synchronous - see [making the outbox durable](store.md#making-it-durable).
+
 ## Back up and restore user data
 
 ```ts
@@ -77,13 +95,67 @@ let remote: string | null
 try {
   remote = await store.getItem(KEY)
 } catch (e) {
-  // Reached the cloud and it failed. Do NOT seed, do NOT overwrite.
+  // Reached the cloud and it failed, OR could not reach it at all. Either way:
+  // do NOT seed, do NOT overwrite.
   return startWithLocalState({ syncError: e })
 }
 
 if (remote == null) startFresh()   // genuinely nothing stored
 else applyRemote(JSON.parse(remote))
 ```
+
+This is only safe because `null` means one thing. A signed-out user is the dangerous case - there is no error to catch, nothing is reachable, and a store that answered `null` there would send you straight into `startFresh()`. So the facade raises `ERR_NOT_SIGNED_IN` instead when **no** configured provider was reachable, and reserves `null` for "at least one provider answered and none of them had this key". See [absent vs broken](errors.md#distinguishing-absent-from-broken).
+
+## Cancel a large transfer
+
+```ts
+const controller = new AbortController()
+
+showCancelButton(() => controller.abort())
+
+try {
+  await googleDriveFiles.save({
+    name: 'backup.sqlite',
+    fileUri: localPath,
+    signal: controller.signal,
+    onProgress: ({ fraction }) => setProgress(fraction),
+  })
+} catch (e) {
+  if (isCancelled(e)) return   // they asked. Say nothing.
+  throw e
+}
+```
+
+Checked between chunks, so it takes effect during the transfer rather than once the whole file has moved - which is the entire point at a few hundred megabytes.
+
+CloudKit assets are cancelled by name instead, because that is what identifies a transfer everywhere else in that API:
+
+```ts
+await cloudKitBackup.cancel()                                  // the default backup
+await cloudKitAssets.cancel({ recordName: 'avatar', fieldName: 'image' })
+```
+
+Both resolve `true` when there was something to cancel, and the cancelled call rejects with `ERR_CANCELLED`.
+
+## Encrypt what goes to Drive
+
+Drive's `appDataFolder` is hidden from the user's Drive UI, but it is plaintext to anything holding the account's OAuth token.
+
+```ts
+const store = createCloudStore({
+  providers: ['googleDrive'],
+  codec: {
+    encode: value => encryptWithDeviceKey(value),
+    decode: value => decryptWithDeviceKey(value),
+  },
+})
+```
+
+The package ships no cipher of its own - key management is the part that decides whether this is worth anything, and bundling a cipher would make it look solved. Bring one you chose, and think about where its key lives (Keychain/Keystore, not the same cloud).
+
+Values only, never keys - a `getAllKeys()` that returned ciphertext would be useless. Tiering measures the *encrypted* size, so an inflating codec eats into your thresholds.
+
+On Apple platforms, `cloudKitEncrypted` gives you end-to-end encryption with no key to manage at all. [Encryption](encryption.md) covers which to pick.
 
 ## Last-write-wins with a timestamp
 
@@ -153,6 +225,28 @@ resolve: candidates => JSON.stringify(
 
 Deletions still need tombstones under either scheme - see
 [last-write-wins](#last-write-wins-with-a-timestamp).
+
+## Sync many keys at once
+
+```ts
+// One request per provider that batches, instead of one per key.
+const pairs = await store.multiGet(['profile', 'settings', 'library'])
+await store.multiSet(dirtyEntries)
+```
+
+Worth reaching for whenever you would have written a loop. On CloudKit this is the difference between one round trip and N - and between one rate-limit budget and N chances to be throttled, which is how a "sync everything on launch" screen ends up showing `ERR_RATE_LIMITED` to users with a lot of data.
+
+## Drain the queue without wiring it yourself
+
+```ts
+const store = createCloudStore({
+  providers: ['icloudKV', 'googleDrive'],
+  outboxStorage: mmkvAdapter,
+  autoFlush: true,          // on foreground, and every 60s while open
+})
+```
+
+If you already have a NetInfo listener, keep calling `flushOutbox()` from it too - `autoFlush` is deliberately not network-aware, so that the package does not force a NetInfo dependency on everyone.
 
 ## Show a "pending sync" indicator
 
@@ -282,6 +376,18 @@ export function buildStore (choice: Choice) {
   })
 }
 ```
+
+A store with no providers rejects every write with `ERR_NOT_SIGNED_IN` - the wrong thing to show someone who turned sync off deliberately, and not queued either, since that code counts as needing user action. So branch before calling rather than letting the store reject:
+
+```ts
+export async function save (key: string, value: string) {
+  mmkv.set(key, value)             // local first, always
+  if (choice === 'off') return     // sync is off; nothing more to do
+  await store.setItem(key, value)
+}
+```
+
+Turning sync off means "stop copying this to a cloud", not "stop saving my data" - so the local write stays unconditional.
 
 ### Or: one primary, plus an optional second copy
 

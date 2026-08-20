@@ -38,20 +38,37 @@ export function getNativeModule(): Spec | null {
   if (resolved) return cached
   resolved = true
 
-  // TurboModuleRegistry.get is safe on the old architecture too - it simply
-  // returns null there rather than throwing (unlike getEnforcing).
-  const turbo = TurboModuleRegistry.get<Spec>(MODULE_NAME)
-  if (turbo != null) {
-    cached = turbo
-    isNewArch = true
-    return cached
+  // Everything here is wrapped, because "there is no native module" has to be a
+  // `null`, never a throw. react-native-web exports no `TurboModuleRegistry` at
+  // all, so on a web build served by webpack/Vite/Next - which, unlike Metro,
+  // do not resolve the `.web.ts` platform extension - `TurboModuleRegistry` is
+  // `undefined` and calling `.get` on it is a TypeError. That surfaced as a
+  // crash inside `cloudKit.isAvailable()`, a method documented as safe to call
+  // on a render path.
+  try {
+    // TurboModuleRegistry.get is safe on the old architecture too - it simply
+    // returns null there rather than throwing (unlike getEnforcing).
+    const turbo = TurboModuleRegistry?.get<Spec>(MODULE_NAME)
+    if (turbo != null) {
+      cached = turbo
+      isNewArch = true
+      return cached
+    }
+  }
+  catch {
+    // Fall through to the legacy registry.
   }
 
-  const legacy = (NativeModules as Record<string, unknown>)[MODULE_NAME]
-  if (legacy != null) {
-    cached = legacy as Spec
-    isNewArch = false
-    return cached
+  try {
+    const legacy = (NativeModules as Record<string, unknown> | undefined)?.[MODULE_NAME]
+    if (legacy != null) {
+      cached = legacy as Spec
+      isNewArch = false
+      return cached
+    }
+  }
+  catch {
+    // No registry either. Treated as "no native module", same as web.
   }
 
   cached = null

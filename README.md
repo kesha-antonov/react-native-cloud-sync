@@ -26,14 +26,18 @@
 
 ## ✨ Features
 
-- ☁️ **Three providers, one API** - [`NSUbiquitousKeyValueStore`][kvs] (iCloud's key-value store), [CloudKit][ck] records and Google Drive [`appDataFolder`][appdata], each usable directly or through a single facade.
+- ☁️ **Four providers, one API** - [`NSUbiquitousKeyValueStore`][kvs] (iCloud's key-value store), [CloudKit][ck] records, [iCloud Drive][icdrive] documents and Google Drive [`appDataFolder`][appdata], each usable directly or through a single facade.
 - 🍏 **CloudKit from Android and the web** - the same [private database][ckdb] your iOS app writes to, over [CloudKit Web Services][ckws]. No other React Native library offers this.
-- 🚨 **Errors you can act on** - every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...). `null` means one thing only: the key does not exist.
-- 👤 **Real account lifecycle** - all five [`CKAccountStatus`][ckstatus] values, plus `onAccountChange` with an `identityChanged` flag so you can drop user-scoped caches when the Apple ID changes.
-- 🔔 **Remote change events** - `onRemoteChange` with typed reasons, so a write on another device shows up without polling.
-- 📦 **Automatic size tiering** - small values to the key-value store, larger to a [`CKRecord`][ckrecord] field. Binary assets go in as a [`CKAsset`][ckasset] through their own API. Store limits stop leaking into your product code.
-- 🔁 **Durable outbox** - retryable failures are queued and retried with backoff that honours server retry hints; failures the user must act on surface immediately instead.
-- 🧪 **A real testing story** - an in-memory provider with fault injection, exported from the package (`/testing`) and documented, so signed-out, offline, quota-exceeded and account-switch paths are all testable in Jest.
+- 📂 **Files the user can actually see** - `icloudDocuments` writes into their iCloud Drive, visible in Files.app. A `CKAsset` is invisible to the user; this is the one thing no CloudKit API can do.
+- 🚨 **Errors you can act on** - every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...). `null` means one thing only: the key does not exist - never "we could not reach the cloud".
+- 👤 **Real account lifecycle** - all five [`CKAccountStatus`][ckstatus] values, plus `onAccountChange` with an `identityChanged` flag. The store acts on it too: provider caches and queued writes belonging to the previous user are dropped, not leaked into the next account.
+- 🔔 **Remote change events** - `onRemoteChange` on every provider *and* on the facade, including Google Drive via its change cursor.
+- 📦 **Automatic size tiering** - small values to the key-value store, larger to a [`CKRecord`][ckrecord] field. Binary goes in as a [`CKAsset`][ckasset] or a resumable Drive upload. Store limits stop leaking into your product code.
+- 🔁 **Durable outbox** - retryable failures are queued and retried with backoff that honours server retry hints, drained automatically on foreground, bounded so it cannot grow forever, and never allowed to overwrite a newer write.
+- 🧺 **Batch operations** - `multiGet`/`multiSet`/`multiRemove`/`clear`, one request per provider that genuinely batches rather than a loop wearing a batch's clothes.
+- 🪝 **React hooks** - `useCloudItem`, `useAccountStatus`, `usePendingWrites`, from `/hooks`, without the stale-response and unmounted-`setState` bugs every hand-rolled version has.
+- 🔐 **Real end-to-end encryption** - `cloudKitEncrypted` uses CloudKit's own `encryptedValues`, so Apple stores ciphertext and holds no key, with nothing for you to manage. Everywhere else, a `codec` seam for a cipher you chose - because Drive's `appDataFolder` is plaintext to anything holding the OAuth token.
+- 🧪 **A real testing story** - an in-memory provider with fault injection plus the native mock itself, both exported from the package (`/testing`, `/jest-mock`), so signed-out, offline, quota-exceeded and account-switch paths are all testable in Jest.
 - ⚙️ **Old and new architecture** - React Native 0.71 through 0.86+, with the `#ifdef` bridge to prove it.
 
 ## 💡 Why?
@@ -82,6 +86,7 @@ This package is a wrapper. When something behaves unexpectedly, the answer is us
 [ckerrors]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/ErrorCodes.html
 [entitlements]: https://developer.apple.com/documentation/bundleresources/entitlements/com_apple_developer_icloud-services
 [console]: https://icloud.developer.apple.com/dashboard/
+[icdrive]: https://developer.apple.com/documentation/foundation/filemanager/1411653-url
 [appdata]: https://developers.google.com/workspace/drive/api/guides/appdata
 [drivefiles]: https://developers.google.com/workspace/drive/api/reference/rest/v3/files
 [drivescopes]: https://developers.google.com/workspace/drive/api/guides/api-specific-auth
@@ -106,6 +111,11 @@ This package is a wrapper. When something behaves unexpectedly, the answer is us
 | Offline write queue | ✅ | – | – | ✅ | – | – |
 | Size tiering | ✅ | – | – | – | – | – |
 | Binary / assets | ✅ [^9] | ✅ | ❌ [^6] | ✅ | – | – |
+| User-visible iCloud Drive files | ✅ | – | – | – | ✅ | – |
+| Native end-to-end encryption | ✅ | – | – | – | – | – |
+| Batch operations | ✅ | – | – | – | – | – |
+| React hooks | ✅ | ✅ | – | – | – | – |
+| Encryption seam | ✅ | – | – | – | – | – |
 | Exported test harness | ✅ | – | – | ⚠️ [^7] | – | – |
 | Mac Catalyst | ✅ | – | – | ⚠️ | – | – |
 | Actively maintained | ✅ | ✅ | ✅ | ❌ [^8] | ❌ [^5] | ❌ |
@@ -133,13 +143,17 @@ This package is a wrapper. When something behaves unexpectedly, the answer is us
 | [Choosing a provider](https://kesha-antonov.github.io/react-native-cloud-sync/choosing-a-provider) | Which one, what each costs you, and why to let the user pick |
 | [iCloud key-value store](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-kv) | Small settings, zero friction, Apple only |
 | [CloudKit](https://kesha-antonov.github.io/react-native-cloud-sync/providers/cloudkit) | Records, zones, assets - and the Android/web path |
+| [iCloud Drive](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-drive) | Files in the user's own Drive, visible in Files.app |
 | [Google Drive](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive) | The always-on cross-platform backend |
 | [The store facade](https://kesha-antonov.github.io/react-native-cloud-sync/store) | Tiering, outbox, migration, fallthrough |
 | [Error handling](https://kesha-antonov.github.io/react-native-cloud-sync/errors) | The typed contract |
+| [Encryption](https://kesha-antonov.github.io/react-native-cloud-sync/encryption) | What is encrypted for you, and how to add end-to-end yourself |
+| [React hooks](https://kesha-antonov.github.io/react-native-cloud-sync/hooks) | Binding cloud state to components |
 | [Recipes](https://kesha-antonov.github.io/react-native-cloud-sync/recipes) | Backup/restore, migration, offline-first |
 | [Testing](https://kesha-antonov.github.io/react-native-cloud-sync/testing) | Fault injection without a device |
 | [API reference](https://kesha-antonov.github.io/react-native-cloud-sync/api) | Every export |
 | [Platform notes](https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes) | Entitlements, architectures, build config |
+| [Troubleshooting](https://kesha-antonov.github.io/react-native-cloud-sync/troubleshooting) | Common problems and what they usually mean |
 
 ## 📋 Requirements
 
@@ -157,6 +171,8 @@ Both architectures are supported. React Native 0.82 removed the Legacy Architect
 |---|:---:|:---:|:---:|
 | `icloudKV` | native | – | – |
 | `cloudKit` | native | REST | REST |
+| `cloudKitEncrypted` | native | – | – |
+| `icloudDocuments` | native | – | – |
 | `googleDrive` | REST | REST | REST |
 
 Where a provider is unavailable it rejects with `ERR_UNSUPPORTED_PLATFORM` rather than silently doing nothing. [Choosing a provider](https://kesha-antonov.github.io/react-native-cloud-sync/choosing-a-provider) covers the trade-offs.
@@ -217,6 +233,33 @@ await cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image', fileUri })
 
 On Android and web this needs an Apple ID sign-in whose token lasts at most two weeks, so treat it as an explicit import rather than background sync. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/providers/cloudkit)
 
+### Sensitive data
+
+CloudKit's own end-to-end encryption - Apple stores ciphertext and holds no key.
+
+```ts
+import { cloudKitEncrypted } from 'react-native-cloud-sync'
+
+await cloudKitEncrypted.setItem('auth.refreshToken', token)
+```
+
+Apple-only by construction: the key lives in the user's iCloud Keychain, so nothing server-side can decrypt it. For cross-platform encryption, the store takes a `codec`. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/encryption)
+
+### iCloud Drive
+
+Files the user can open in Files.app - not hidden in a private database.
+
+```ts
+import { icloudDocuments } from 'react-native-cloud-sync'
+
+await icloudDocuments.save({ fileUri: localPath, name: 'Export 2024.csv' })
+
+// A listed file may be a placeholder with no local bytes. fetch() downloads it.
+const path = await icloudDocuments.fetch({ name: 'Export 2024.csv' })
+```
+
+[Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-drive)
+
 ### Google Drive
 
 Identical behaviour on every platform, no periodic re-auth.
@@ -252,6 +295,16 @@ await store.flushOutbox()                       // on reconnect
 
 Those two options are what make sync work in **both** directions across a mixed fleet - an Android phone and an iPad, a browser and a Mac. `mirror` puts a copy in Drive so a non-Apple device has something to read; `resolve` stops an Apple device serving its own stale iCloud copy without ever consulting Drive. Either platform can be the one the user started on. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/store)
 
+### In a component
+
+```tsx
+import { useCloudItem } from 'react-native-cloud-sync/hooks'
+
+const { value, setValue, loading, error } = useCloudItem<Settings>(store, 'settings')
+```
+
+Re-reads when another device writes, drops stale responses, and never calls `setState` after unmount. [Full guide →](https://kesha-antonov.github.io/react-native-cloud-sync/hooks)
+
 ### Handling failures
 
 ```ts
@@ -270,6 +323,7 @@ try {
 ## 🧪 Testing
 
 ```ts
+import { ErrorCode } from 'react-native-cloud-sync'
 import { createMemoryProvider } from 'react-native-cloud-sync/testing'
 
 const provider = createMemoryProvider({
@@ -291,7 +345,7 @@ yarn installDevBuild:ios     # or :android
 yarn start:web
 ```
 
-Tabs: **Sync** (shared counter across devices), **iCloud KV**, **CloudKit**, **Drive**, **Store** and **Faults**.
+Tabs: **Sync** (shared counter across devices), **iCloud KV**, **CloudKit**, **Drive**, **Files** (large-file backup/restore, including a working `GoogleDriveFileAdapter`), **Store** and **Faults**.
 
 ## 🤝 Contributing
 

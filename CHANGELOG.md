@@ -4,6 +4,159 @@
 
 ### 🐛 Bug Fixes
 
+- **The `codec` documentation had the ordering backwards.** It said encoding ran
+  after tiering picked a destination; it runs before, so a value is routed by
+  the size it will actually occupy. The behaviour was right, the docs were
+  wrong, and the difference matters for anyone sizing an inflating cipher
+  against `kvMaxBytes`. Now pinned by tests.
+- **`cloudKitEncrypted` was missing from the store's built-in provider map**,
+  so naming it in `providers` raised "Unknown provider" - caught by its own
+  test before release.
+- **`store.getItem()` no longer resolves `null` when nothing was reachable.**
+  `null` is documented as meaning "the key does not exist" and nothing else, and
+  the first-launch recipe branches on it by seeding empty state - so a
+  signed-out user took that branch and overwrote their real backup on the next
+  write. When no configured provider is available the read now raises
+  `ERR_NOT_SIGNED_IN`, matching what `setItem` and `removeItem` already did.
+  `null` still means an absent key whenever at least one provider answered.
+- **A queued write can no longer overwrite a newer successful one.** An offline
+  `setItem(k, v1)` queued v1; a later online `setItem(k, v2)` succeeded
+  directly; the next flush wrote v1 back over v2. A successful write or delete
+  now invalidates anything queued for the same key and provider.
+- **`flushOutbox()` no longer loses writes enqueued while it is running.** It
+  snapshotted the queue, awaited the network, then wrote the snapshot back
+  wholesale - discarding anything that failed and enqueued itself in between.
+  It now merges, and two concurrent flushes join rather than each re-sending
+  every entry.
+- **`mirror` plus tiering no longer strands a stale copy.** A value that grew
+  past `kvMaxBytes` was written to the larger providers and *skipped* on the
+  key-value store, which kept the older, smaller copy - and reads prefer that
+  provider, so `getItem` served the stale value forever. The skipped provider's
+  copy is now removed, once the new value has landed somewhere. Read repair does
+  the same instead of silently leaving a copy it could not overwrite.
+- **An account switch no longer leaks state into the next account.** On
+  `identityChanged` the store drops memoised availability, calls `clearCaches()`
+  on every provider (Drive file ids, CloudKit reachability), and abandons the
+  outbox - a queued entry carries no account identity, so flushing after a
+  switch wrote the previous user's data into the new user's account.
+- **The outbox is bounded.** It had no cap, no maximum attempts and no maximum
+  age, and every enqueue rewrites the whole blob - so a long offline stretch
+  degraded the write path itself. Now `outboxMaxEntries` / `outboxMaxAttempts` /
+  `outboxMaxAgeMs`, with every abandoned entry reported through `onDropped`
+  rather than vanishing.
+- **`cloudKit.isAvailable()` no longer throws on a web build served by a
+  non-Metro bundler.** webpack, Vite and Next.js do not resolve the `.web.ts`
+  platform extension, and react-native-web exports no `TurboModuleRegistry`, so
+  the lookup was a TypeError inside a method documented as safe on a render
+  path.
+- **`byteLength` no longer relies on `unescape`,** which is deprecated and
+  absent in some runtimes.
+
+### ✨ Features
+
+- **`cloudKitEncrypted`** - CloudKit's own end-to-end encryption, via
+  `CKRecord.encryptedValues`. Values are encrypted on device with a key from the
+  user's iCloud Keychain, so Apple stores ciphertext and holds no key, and there
+  is nothing for the app to manage. Apple platforms only, permanently: the key
+  never reaches Apple's servers, so CloudKit Web Services cannot decrypt either.
+  Writes to its own record type (`EncryptedKVBlob`) because CloudKit records
+  encryption in the schema, so it cannot share `cloudKit`'s.
+- **`icloudDocuments`** - files in the user's own iCloud Drive, visible in
+  Files.app. The one thing no `CKRecord` or `CKAsset` API can do: a `CKAsset`
+  lives in a private database the user cannot see, open or share. Apple
+  platforms only, since iCloud Drive has no REST surface. The config plugin
+  gains `iCloudDocuments`, which writes both the `CloudDocuments` entitlement
+  and the `NSUbiquitousContainers` Info.plist entry that makes the folder
+  actually appear.
+- **Batch operations** - `multiGet`, `multiSet`, `multiRemove` and `clear` on
+  the store, and `getRecords`/`saveRecords`/`deleteRecords` on the CloudKit REST
+  client. `/records/lookup` and `/records/modify` have always taken arrays, so
+  reading 200 keys was 200 round trips and 200 chances to be throttled.
+- **React hooks**, from `react-native-cloud-sync/hooks`: `useCloudItem`,
+  `useAccountStatus`, `usePendingWrites`, `useRemoteChange`, `useQuota`. A
+  separate entry point so the main one stays free of a React import.
+- **Automatic outbox draining** - `autoFlush` flushes on app foreground and on a
+  timer. Deliberately not network-aware, so the package does not force a NetInfo
+  dependency on every consumer.
+- **`onRemoteChange` / `onAccountChange` on the facade**, merging every
+  configured provider - previously only raw providers exposed them, so the
+  recommended entry point could not be subscribed to at all.
+- **Google Drive change detection** - `googleDrive.onRemoteChange` polls Drive's
+  change cursor, so a non-Apple platform can learn that another device wrote.
+  Polling starts with the first subscriber and stops with the last.
+- **`resolveByModifiedAt`** - resolves on the *server's* modification time,
+  which CloudKit and Drive both report and which this package now reads. Removes
+  the requirement that values be JSON carrying a timestamp field you remembered
+  to update. `resolveFirstOf` composes it with `resolveByTimestamp` for a fleet
+  that includes `icloudKV`, which has no per-key timestamp at all.
+- **`getQuota()`** - storage usage from Drive's `about.get` and from the iCloud
+  key-value store against its 1 MB ceiling.
+- **Cancellation** - `ERR_CANCELLED` finally has a producer. `cloudKitAssets.cancel`
+  and `cloudKitBackup.cancel` cancel a native `CKOperation`; `googleDriveFiles`
+  takes an abort signal, checked between chunks so it lands during the transfer.
+- **Timeouts** - `timeoutMs` on the store and on both REST clients. React
+  Native's `fetch` has none of its own, so an unanswered socket hung the
+  operation forever - including `isAvailable()`, which runs before everything
+  else. `ERR_TIMEOUT` is retryable, so a hung write is queued rather than lost.
+- **Key validation** - one key has to be an `NSUbiquitousKeyValueStore` key, a
+  CloudKit `recordName` and a Drive filename at once. Illegal keys now raise
+  `ERR_INVALID_KEY` before the request instead of returning as `BAD_REQUEST` ->
+  `ERR_CONTAINER_MISCONFIGURED`, which sent people to look at their
+  entitlements. `sanitizeKey` is exported for keys you do not control.
+- **[Encryption guide](docs/encryption.md)** - what each backend already
+  encrypts and under whose keys, why Drive's `appDataFolder` is obscurity rather
+  than confidentiality, and how to hold your own key.
+- **`codec`** - a two-way value transform, the seam for encrypting at rest.
+  Drive's `appDataFolder` is plaintext to anything holding the OAuth token. No
+  cipher is bundled: key management is the part that decides whether this is
+  worth anything.
+- **Conditional CloudKit writes** - `saveRecordIfUnchanged` sends the record
+  change tag, so a genuine concurrent edit raises `ERR_CONFLICT` with
+  `serverValue` instead of being silently clobbered. That error previously could
+  not fire, which made the documented merge path unreachable.
+- **More than one account** - `createGoogleDriveProvider` and
+  `createCloudKitProvider` return providers that own their credentials, instead
+  of reading a process-wide singleton.
+- **The iCloud key-value store's other two limits are enforced.** Only the 1 MB
+  per-key ceiling was checked; the 1 MB *total* and the 1024-key cap were not,
+  and those are the ones that actually bite - exceeding them is silent.
+- **Availability memoisation** - `isAvailable()` was called for every provider
+  before every operation, which is a bridge hop for `icloudKV` and a
+  `getAccessToken` call for `googleDrive`. Now cached for `availabilityTtlMs`
+  (3s default).
+- **`migrate()` reports what happened** - `copied` / `skipped` / `failed`, plus
+  `filter`, `onProgress` and `continueOnError`. It no longer aborts on the first
+  bad key, which left the user half migrated with no record of how far it got.
+- **`discardPendingWrites()`**, so a "pending sync" UI can let the user give up
+  on a stuck write.
+- **The Jest native mock ships** as `react-native-cloud-sync/jest-mock`. The
+  testing docs pointed at a file that was never in `files`.
+- **The in-memory provider gained** `available`, `name`, `quota`, per-key faults
+  (`only`), `setAvailable()` and `cacheClears` - enough to test the signed-out
+  fleet, multi-provider tiering and account switches.
+
+### 💥 Breaking Changes
+
+- `store.getItem()` **rejects with `ERR_NOT_SIGNED_IN`** when no configured
+  provider is reachable, where it previously resolved `null`. This is the point
+  of the change - see the bug fix above - but a call site that treated `null` as
+  "start fresh" will now see an error instead. That is the correct behaviour;
+  check what yours does before catching it.
+- Keys are validated by default. A key containing anything outside
+  `[A-Za-z0-9._-]`, starting with `_`, or over 64 UTF-8 bytes with `icloudKV`
+  configured, now raises `ERR_INVALID_KEY`. Pass `validateKeys: false` to
+  restore the old behaviour, and `sanitizeKey` to migrate existing keys.
+- `flushOutbox()` resolves `{ drained, remaining, dropped }` - the third field
+  is new. `migrate()` resolves `{ copied, skipped, failed }` rather than
+  `{ copied }`.
+- `ProviderName` is now an open union (`BuiltInProviderName | (string & {})`),
+  so a custom provider can finally be typed. Code that relied on it being closed
+  - an exhaustive `switch` without a `default`, say - will need a default arm.
+- `ErrorCode` gained `ERR_INVALID_KEY` and `ERR_TIMEOUT`. `isRetryable` returns
+  true for `ERR_TIMEOUT`.
+
+### 🐛 Bug Fixes (previously unreleased)
+
 - **A read no longer destroys a newer copy it failed to fetch.** With a
   `resolve` function, read repair wrote the winner back to every provider the
   read had *asked*, including one whose `getItem` threw. If the provider that
@@ -68,6 +221,43 @@
   [the Google Drive guide](docs/providers/google-drive.md#large-files) and
   [the cross-platform recipe](docs/recipes.md#cross-platform-large-file-backup)
   for pairing it with `cloudKitBackup`.
+- **`bytesToBase64`/`base64ToBytes` are exported.** The
+  `GoogleDriveFileAdapter` contract is base64 in and base64 out, while every
+  modern filesystem API is byte-oriented - so the codec that bridges them now
+  ships from the package entry rather than making each adapter author find one.
+  Dependency-free and Hermes-safe, which `Buffer` and `atob`/`btoa` are not.
+- **`WriteMode` is exported.** It is the type of `CloudStoreOptions.writeMode`,
+  so callers threading the value through their own functions had to re-declare
+  the union by hand.
+
+### 📚 Documentation
+
+- **The CloudKit schema is documented.** Record type `KVBlob`, a `value` String
+  field, and an Asset plus `<fieldName>__size` Int per asset field. Nothing said
+  what to create in the CloudKit Console, which is the difference between an app
+  that works in debug and one that fails on release - Development adds fields on
+  first write, Production only ever gets what you deploy.
+- **`getAllKeys()` needs a queryable `recordName` index.** It runs a real query
+  where the other operations address records by name, and the CloudKit guide
+  previously implied no index was needed at all. `migrate()` and any
+  delete-everything flow are built on it, so they fail with it.
+- **The `expo-file-system` adapter example targets the modern API.** It was
+  written against `getInfoAsync`/`readAsStringAsync`, which SDK 54 moved out of
+  the default entry point - so it did not run on the SDK the example app pins.
+  Now uses `File`/`FileHandle` with a seekable offset.
+- **`outboxStorage` must be synchronous.** Three pages suggested an
+  AsyncStorage-backed adapter, which cannot satisfy an interface whose
+  `getString` returns a string rather than a promise. MMKV is the recommendation.
+- **A store with no providers rejects writes** with `ERR_NOT_SIGNED_IN`, which
+  is the wrong thing to show someone who turned sync off deliberately. The
+  provider-picker recipes now branch before calling instead.
+- **The example app has a Files tab** covering large-file backup and restore on
+  both paths, including a working `GoogleDriveFileAdapter` - the one API that
+  needs host-supplied I/O had no runnable reference.
+- **CI checks documentation links and exports.** `yarn check:links` proves every
+  internal link, every README link into the published site, and every public
+  export still resolves; the site build now throws on a broken anchor rather
+  than warning.
 
 ## v0.1.0
 

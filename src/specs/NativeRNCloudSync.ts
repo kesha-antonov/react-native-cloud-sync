@@ -23,6 +23,14 @@ export type AccountChangeNativeEvent = {
   provider: string
 }
 
+export type DocumentEntryNativeEvent = {
+  name: string
+  sizeBytes: number
+  /** False when the file exists in the account but has no local copy yet. */
+  isDownloaded: boolean
+  isDownloading: boolean
+}
+
 export type AssetProgressNativeEvent = {
   recordName: string
   fieldName: string
@@ -58,14 +66,46 @@ export interface Spec extends TurboModule {
    */
   kvSync: () => Promise<boolean>
 
+  /**
+   * How full the key-value store is, against Apple's documented ceilings.
+   *
+   * Measured from `dictionaryRepresentation` (a local plist, not a network
+   * call) because Apple exposes no usage API. Without it an app can only learn
+   * it is near the 1 MB *total* by exceeding it, and exceeding it is silent.
+   */
+  kvGetUsage: () => Promise<{
+    usedBytes: number
+    totalBytes: number
+    keyCount: number
+    maxKeys: number
+  }>
+
   // ------------------------------------------------------------- CloudKit
 
-  ckGetRecord: (recordType: string, recordName: string, zoneName: string | null) => Promise<string | null>
+  /**
+   * `encrypted` reads the value out of `CKRecord.encryptedValues` rather than
+   * the plain field. A field is one or the other, never both - CloudKit records
+   * encryption in the schema - so reading the wrong side returns null, which is
+   * indistinguishable from a missing record.
+   */
+  ckGetRecord: (
+    recordType: string,
+    recordName: string,
+    zoneName: string | null,
+    encrypted: boolean
+  ) => Promise<string | null>
+  /**
+   * `encrypted` writes through `CKRecord.encryptedValues`, so CloudKit
+   * end-to-end encrypts the value with a key from the user's iCloud Keychain.
+   * Nothing server-side can read it back - including CloudKit Web Services, and
+   * therefore this package's Android and web paths.
+   */
   ckSaveRecord: (
     recordType: string,
     recordName: string,
     value: string,
-    zoneName: string | null
+    zoneName: string | null,
+    encrypted: boolean
   ) => Promise<void>
   ckDeleteRecord: (recordName: string, zoneName: string | null) => Promise<boolean>
   ckQueryRecordNames: (recordType: string, zoneName: string | null) => Promise<string[]>
@@ -84,6 +124,33 @@ export interface Spec extends TurboModule {
   ) => Promise<void>
   /** Downloads a CKAsset field. Emits `onAssetProgress` while running. */
   ckFetchAsset: (recordName: string, fieldName: string, zoneName: string | null) => Promise<string | null>
+  /**
+   * Cancels an in-flight asset transfer. Resolves true when there was one.
+   *
+   * The cancelled call's own promise rejects with `ERR_CANCELLED` - CloudKit
+   * reports the cancellation as `CKError.operationCancelled`, which the error
+   * mapper already recognises.
+   */
+  ckCancelAsset: (recordName: string, fieldName: string) => Promise<boolean>
+
+  // ------------------------------------------------- iCloud Drive documents
+
+  /** Whether a usable iCloud Drive container exists on this device right now. */
+  docIsAvailable: () => Promise<boolean>
+  /** Copies a local file into iCloud Drive under `name`. Resolves its iCloud path. */
+  docSave: (fileUri: string, name: string) => Promise<string>
+  /**
+   * Ensures `name` has been downloaded and resolves a local path, or null when
+   * no such file exists. Copies out to `destinationUri` when one is given.
+   */
+  docFetch: (
+    name: string,
+    destinationUri: string | null,
+    timeoutMs: number
+  ) => Promise<string | null>
+  docList: () => Promise<DocumentEntryNativeEvent[]>
+  /** Resolves true when something was deleted, false when it was already gone. */
+  docRemove: (name: string) => Promise<boolean>
 
   // --------------------------------------------------------------- events
 

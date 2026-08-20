@@ -1,4 +1,5 @@
 import type { CloudSyncError } from './errors'
+import type { AutoFlushConfig } from './internal/autoFlush'
 
 /**
  * Full account state.
@@ -54,7 +55,27 @@ export interface AssetProgressEvent {
   bytesTotal: number
 }
 
-export type ProviderName = 'icloudKV' | 'cloudKit' | 'googleDrive' | 'memory'
+/** The providers this package ships. */
+export type { AutoFlushConfig }
+
+export type BuiltInProviderName
+  = | 'icloudKV'
+    | 'cloudKit'
+    | 'cloudKitEncrypted'
+    | 'googleDrive'
+    | 'memory'
+
+/**
+ * A provider's name.
+ *
+ * Open on purpose. `registerProvider` is documented as the way to plug in a
+ * provider you wrote yourself, but while this was a closed union of the four
+ * built-ins that was impossible to express in types - a `'dropbox'` provider
+ * needed a cast at every call site, including in `CloudStoreOptions.providers`.
+ * The `string & {}` arm keeps editor autocomplete for the built-in names while
+ * still accepting any other string.
+ */
+export type ProviderName = BuiltInProviderName | (string & {})
 
 export type Unsubscribe = () => void
 
@@ -80,15 +101,74 @@ export interface CloudProvider {
    */
   getItem: (key: string) => Promise<string | null>
 
+  /**
+   * Like {@link getItem}, but also reports the server's own last-modified time.
+   *
+   * Optional because not every backing store knows one - `NSUbiquitousKeyValueStore`
+   * exposes no per-key timestamp at all. Where a provider *does* know (CloudKit's
+   * `modified.timestamp`, Drive's `modifiedTime`, both one query parameter away),
+   * implementing this lets {@link resolveByModifiedAt} order candidates without
+   * the app having to embed a timestamp inside its own payload.
+   */
+  getItemWithMeta?: (key: string) => Promise<ItemWithMeta | null>
+
   setItem: (key: string, value: string) => Promise<void>
 
   removeItem: (key: string) => Promise<void>
 
   getAllKeys: () => Promise<string[]>
 
+  /**
+   * Reads many keys in one go. Optional: the store falls back to sequential
+   * {@link getItem} calls when a provider does not implement it.
+   *
+   * Worth implementing whenever the backend has a batch endpoint - CloudKit Web
+   * Services' `/records/lookup` and `/records/modify` both take arrays, so the
+   * difference between this and a loop is one request against N.
+   */
+  multiGet?: (keys: string[]) => Promise<(string | null)[]>
+
+  /** Writes many key/value pairs in one go. Optional, same fallback rule. */
+  multiSet?: (entries: [string, string][]) => Promise<void>
+
+  /** Removes many keys in one go. Optional, same fallback rule. */
+  multiRemove?: (keys: string[]) => Promise<void>
+
+  /**
+   * Total and used bytes for this account, when the backend reports them.
+   * Optional - `NSUbiquitousKeyValueStore` has no usage API.
+   */
+  getQuota?: () => Promise<QuotaInfo | null>
+
+  /**
+   * Drops any state cached for the *previous* account.
+   *
+   * Called by the store when an `identityChanged` account event arrives.
+   * Memoised Drive file ids and CloudKit reachability answers belong to whoever
+   * was signed in when they were recorded; serving them to the next user is a
+   * cross-account data leak.
+   */
+  clearCaches?: () => void
+
   onRemoteChange?: (listener: (e: RemoteChangeEvent) => void) => Unsubscribe
 
   onAccountChange?: (listener: (e: AccountChangeEvent) => void) => Unsubscribe
+}
+
+/** A value plus whatever metadata the provider could report alongside it. */
+export interface ItemWithMeta {
+  value: string
+  /** Server-reported last modification, epoch millis, when the provider knows one. */
+  modifiedAt?: number
+}
+
+/** Account storage usage, for providers that report it. */
+export interface QuotaInfo {
+  /** Bytes currently used, or undefined when the backend does not say. */
+  usedBytes?: number
+  /** Total bytes available, or undefined for an unlimited/unreported quota. */
+  totalBytes?: number
+  provider: ProviderName
 }
 
 /** Byte thresholds that decide which backing store a value lands in. */
@@ -123,6 +203,35 @@ export interface OutboxEntry {
   /** Epoch millis of the next attempt. */
   nextAttemptAt: number
   enqueuedAt: number
+  /**
+   * The error code of the most recent failed attempt, so a "pending sync" UI
+   * can say *why* something is still queued rather than only that it is.
+   */
+  lastErrorCode?: string
+}
+
+/** Why the store gave up on a queued write. Reported through {@link CloudStoreOptions.onDropped}. */
+/**
+ * - `notRetryable` - the failure stopped being retryable; the user has to act on it.
+ * - `tooManyAttempts` - {@link CloudStoreOptions.outboxMaxAttempts} was reached.
+ * - `expired` - it sat in the queue longer than {@link CloudStoreOptions.outboxMaxAgeMs}.
+ * - `queueFull` - the queue hit its cap and this was the oldest entry.
+ * - `accountChanged` - a different account signed in, so it belongs to nobody now.
+ * - `discarded` - `discardPendingWrites` removed it.
+ */
+export type DropReason
+  = | 'notRetryable'
+    | 'tooManyAttempts'
+    | 'expired'
+    | 'queueFull'
+    | 'accountChanged'
+    | 'discarded'
+
+export interface DroppedWrite {
+  entry: OutboxEntry
+  reason: DropReason
+  /** The failure that caused it, when there was one. */
+  error?: CloudSyncError
 }
 
 /**
@@ -143,6 +252,14 @@ export type WriteMode = 'failover' | 'mirror'
 export interface ResolveCandidate {
   provider: ProviderName
   value: string
+  /**
+   * The server's own last-modified time in epoch millis, when the provider
+   * reported one (see {@link CloudProvider.getItemWithMeta}).
+   *
+   * This is what {@link resolveByModifiedAt} orders on, and it is why that
+   * resolver works on payloads the app never had to instrument.
+   */
+  modifiedAt?: number
 }
 
 /**
@@ -203,5 +320,107 @@ export interface CloudStoreOptions {
    * connection before handing data to" it).
    */
   outbox?: boolean
+  /**
+   * Hard cap on queued writes. Default 1000.
+   *
+   * An unbounded queue is a slow memory and storage leak: every `enqueue`
+   * rewrites the whole JSON blob, so an app that stays offline long enough
+   * degrades its own write path. When the cap is hit the oldest entry is
+   * dropped and reported through {@link onDropped}, so the loss is visible
+   * rather than silent.
+   */
+  outboxMaxEntries?: number
+  /**
+   * Give up on a queued write after this many failed attempts. Default 12,
+   * which with the capped exponential backoff is roughly an hour of retrying.
+   */
+  outboxMaxAttempts?: number
+  /**
+   * Give up on a queued write older than this. Default 7 days.
+   *
+   * Time matters independently of attempt count: an app opened twice in a month
+   * accrues almost no attempts, and re-sending a fortnight-old value over
+   * whatever the user has done since is rarely what they want.
+   */
+  outboxMaxAgeMs?: number
+  /** Called whenever a queued write is abandoned, with the reason. */
+  onDropped?: (dropped: DroppedWrite) => void
+  /**
+   * Drain the outbox automatically, instead of leaving `flushOutbox()` entirely
+   * to the caller. Off by default; pass `true` for the defaults.
+   *
+   * A durable queue with no trigger is only half a feature - every retryable
+   * failure is captured correctly and then waits for someone to remember. This
+   * flushes on app foreground and on a slow timer, which is where nearly every
+   * app was calling it by hand.
+   *
+   * Not network-aware, on purpose: that needs NetInfo, and adding a dependency
+   * every consumer must install to save one line in the ones that want it is a
+   * bad trade. Call `flushOutbox()` from your own reconnect listener too if you
+   * have one.
+   */
+  autoFlush?: boolean | AutoFlushConfig
+  /**
+   * How long an `isAvailable()` answer is reused across operations. Default 3000.
+   *
+   * The store asks every provider before every operation, and for `icloudKV`
+   * that is a bridge hop while for `googleDrive` it invokes the host's
+   * `getAccessToken`. Unmemoised, a loop over 100 keys cost 100+ probes on top
+   * of the actual work. Set to 0 to probe every time.
+   */
+  availabilityTtlMs?: number
+  /**
+   * Transforms values on the way out and back on the way in - the seam for
+   * encrypting at rest.
+   *
+   * Drive's `appDataFolder` is plaintext to anything holding the account's OAuth
+   * token, and this package deliberately ships no crypto of its own (key
+   * management is the app's problem, and bundling a cipher would make it look
+   * solved). Supplying a codec is how you close that gap with a library you
+   * chose.
+   *
+   * Applied to values only, never to keys - `getAllKeys()`, tiering and read
+   * repair all need cleartext keys to work.
+   *
+   * Encoding runs *before* tiering picks a destination, so a value is routed by
+   * the size it will actually occupy rather than by its plaintext size. That is
+   * the correct behaviour, and it means a codec that inflates its input makes
+   * your effective {@link TieringConfig.kvMaxBytes} smaller than the number
+   * says.
+   */
+  codec?: ValueCodec
+  /**
+   * Reject keys that cannot round-trip through every configured provider.
+   * Default true.
+   *
+   * One key string has to be a `NSUbiquitousKeyValueStore` key, a CloudKit
+   * `recordName` and a Drive filename at once, and those three disagree about
+   * what is legal. Without this check an invalid `recordName` comes back from
+   * CloudKit as `BAD_REQUEST`, which maps to `ERR_CONTAINER_MISCONFIGURED` and
+   * sends you looking at your entitlements instead of at your key.
+   */
+  validateKeys?: boolean
+  /**
+   * Abandon a single provider operation that has not settled in this long,
+   * with {@link ErrorCode.TIMEOUT}. Off by default.
+   *
+   * React Native's `fetch` has no default timeout and neither does CloudKit's
+   * native stack, so a socket that never answers hangs the operation forever -
+   * including `isAvailable()`, which the store calls before everything else.
+   * A timeout is classified as retryable, so with the outbox on, a hung write
+   * is queued rather than lost.
+   */
+  timeoutMs?: number
   onError?: (e: CloudSyncError) => void
+}
+
+/**
+ * A two-way value transform, applied at the boundary between the store and its
+ * providers. See {@link CloudStoreOptions.codec}.
+ */
+export interface ValueCodec {
+  /** Called with the app's value; the result is what the provider stores. */
+  encode: (value: string, key: string) => Promise<string> | string
+  /** Called with what the provider returned; the result is what the app sees. */
+  decode: (value: string, key: string) => Promise<string> | string
 }

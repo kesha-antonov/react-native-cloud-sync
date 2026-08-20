@@ -31,7 +31,7 @@ const key = text => text.toLowerCase().replace(/[^a-z0-9]/g, '')
  * markdown file. Either way the repository root stays the single source of
  * truth, so the site cannot drift from what a reader sees on GitHub or npm.
  */
-const PAGES = [
+export const PAGES = [
   {
     id: 'intro',
     slug: '/',
@@ -93,6 +93,16 @@ const PAGES = [
     file: 'docs/providers/cloudkit.md',
   },
   {
+    id: 'providers/icloud-drive',
+    category: 'Providers',
+    title: 'iCloud Drive',
+    sidebarLabel: 'iCloud Drive',
+    description:
+      'Files in the user\'s own iCloud Drive from React Native - visible in Files.app, synced '
+      + 'across their Apple devices, and surviving an app uninstall.',
+    file: 'docs/providers/icloud-drive.md',
+  },
+  {
     id: 'providers/google-drive',
     category: 'Providers',
     title: 'Google Drive',
@@ -132,6 +142,26 @@ const PAGES = [
       'Backup and restore, safe first-launch restore, pending-sync indicators, Apple ID switches, '
       + 'provider migration and offline-first writes.',
     file: 'docs/recipes.md',
+  },
+  {
+    id: 'encryption',
+    category: 'Core',
+    title: 'Encryption',
+    sidebarLabel: 'Encryption',
+    description:
+      'What iCloud and Google Drive encrypt for you, CloudKit\'s native end-to-end encryption, '
+      + 'and how to add your own with the store\'s codec seam.',
+    file: 'docs/encryption.md',
+  },
+  {
+    id: 'hooks',
+    category: 'Core',
+    title: 'React hooks',
+    sidebarLabel: 'React hooks',
+    description:
+      'useCloudItem, useAccountStatus and usePendingWrites - binding cloud state to components '
+      + 'without the stale-response and unmounted-setState bugs.',
+    file: 'docs/hooks.md',
   },
   {
     id: 'testing',
@@ -314,4 +344,8 @@ function writeSidebar () {
   writeFileSync(join(HERE, '..', 'sidebars.js'), file, 'utf8')
 }
 
-main()
+// Only generate when run directly. `check-docs-links.mjs` imports PAGES to
+// verify the README's absolute site URLs point at pages that exist, and must
+// not rewrite website/docs as a side effect of doing so.
+if (process.argv[1] != null && fileURLToPath(import.meta.url) === process.argv[1])
+  main()

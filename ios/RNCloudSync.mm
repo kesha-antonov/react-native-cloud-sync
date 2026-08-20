@@ -237,27 +237,39 @@ RCT_EXPORT_METHOD(kvSync:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRej
 }
 #endif
 
-- (void)ckGetRecord:(NSString *)recordType recordName:(NSString *)recordName zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+- (void)kvGetUsage:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudSyncImpl.shared ckGetRecord:recordType recordName:recordName zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared kvGetUsageWithResolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
-RCT_EXPORT_METHOD(ckGetRecord:(NSString *)recordType recordName:(NSString *)recordName zoneName:(NSString *)zoneName resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(kvGetUsage:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    [self ckGetRecord:recordType recordName:recordName zoneName:zoneName resolve:resolve reject:reject];
+    [self kvGetUsage:resolve reject:reject];
 }
 #endif
 
-- (void)ckSaveRecord:(NSString *)recordType recordName:(NSString *)recordName value:(NSString *)value zoneName:(NSString *)zoneName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+- (void)ckGetRecord:(NSString *)recordType recordName:(NSString *)recordName zoneName:(NSString *)zoneName encrypted:(BOOL)encrypted resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
-    [CloudSyncImpl.shared ckSaveRecord:recordType recordName:recordName value:value zoneName:zoneName resolve:resolve reject:reject];
+    [CloudSyncImpl.shared ckGetRecord:recordType recordName:recordName zoneName:zoneName encrypted:encrypted resolve:resolve reject:reject];
 }
 
 #ifndef RCT_NEW_ARCH_ENABLED
-RCT_EXPORT_METHOD(ckSaveRecord:(NSString *)recordType recordName:(NSString *)recordName value:(NSString *)value zoneName:(NSString *)zoneName resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(ckGetRecord:(NSString *)recordType recordName:(NSString *)recordName zoneName:(NSString *)zoneName encrypted:(BOOL)encrypted resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    [self ckSaveRecord:recordType recordName:recordName value:value zoneName:zoneName resolve:resolve reject:reject];
+    [self ckGetRecord:recordType recordName:recordName zoneName:zoneName encrypted:encrypted resolve:resolve reject:reject];
+}
+#endif
+
+- (void)ckSaveRecord:(NSString *)recordType recordName:(NSString *)recordName value:(NSString *)value zoneName:(NSString *)zoneName encrypted:(BOOL)encrypted resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared ckSaveRecord:recordType recordName:recordName value:value zoneName:zoneName encrypted:encrypted resolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(ckSaveRecord:(NSString *)recordType recordName:(NSString *)recordName value:(NSString *)value zoneName:(NSString *)zoneName encrypted:(BOOL)encrypted resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self ckSaveRecord:recordType recordName:recordName value:value zoneName:zoneName encrypted:encrypted resolve:resolve reject:reject];
 }
 #endif
 
@@ -342,6 +354,78 @@ RCT_EXPORT_METHOD(ckSaveAsset:(NSString *)recordType recordName:(NSString *)reco
 RCT_EXPORT_METHOD(ckFetchAsset:(NSString *)recordName fieldName:(NSString *)fieldName zoneName:(NSString *)zoneName resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
     [self ckFetchAsset:recordName fieldName:fieldName zoneName:zoneName resolve:resolve reject:reject];
+}
+#endif
+
+- (void)ckCancelAsset:(NSString *)recordName fieldName:(NSString *)fieldName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared ckCancelAsset:recordName fieldName:fieldName resolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(ckCancelAsset:(NSString *)recordName fieldName:(NSString *)fieldName resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self ckCancelAsset:recordName fieldName:fieldName resolve:resolve reject:reject];
+}
+#endif
+
+- (void)docIsAvailable:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared docIsAvailableWithResolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(docIsAvailable:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self docIsAvailable:resolve reject:reject];
+}
+#endif
+
+- (void)docSave:(NSString *)fileUri name:(NSString *)name resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared docSave:fileUri name:name resolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(docSave:(NSString *)fileUri name:(NSString *)name resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self docSave:fileUri name:name resolve:resolve reject:reject];
+}
+#endif
+
+- (void)docFetch:(NSString *)name destinationUri:(NSString *)destinationUri timeoutMs:(double)timeoutMs resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared docFetch:name destinationUri:destinationUri timeoutMs:@(timeoutMs) resolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(docFetch:(NSString *)name destinationUri:(NSString *)destinationUri timeoutMs:(double)timeoutMs resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self docFetch:name destinationUri:destinationUri timeoutMs:timeoutMs resolve:resolve reject:reject];
+}
+#endif
+
+- (void)docList:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared docListWithResolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(docList:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self docList:resolve reject:reject];
+}
+#endif
+
+- (void)docRemove:(NSString *)name resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared docRemove:name resolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(docRemove:(NSString *)name resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self docRemove:name resolve:resolve reject:reject];
 }
 #endif
 

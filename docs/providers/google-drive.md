@@ -69,21 +69,59 @@ Keys are file names inside `appDataFolder`.
 This package has no filesystem dependency, so both directions read/write through a `GoogleDriveFileAdapter` you supply - a few lines wrapping whichever fs library you already use:
 
 ```ts
-import { configureGoogleDriveFiles } from 'react-native-cloud-sync'
-import * as FileSystem from 'expo-file-system'
+import {
+  base64ToBytes,
+  bytesToBase64,
+  configureGoogleDriveFiles,
+} from 'react-native-cloud-sync'
+import { File } from 'expo-file-system'
 
 configureGoogleDriveFiles({
-  statSize: async uri => (await FileSystem.getInfoAsync(uri)).size ?? 0,
-  readChunk: (uri, position, length) =>
-    FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64, position, length }),
-  writeChunk: (uri, base64) =>
-    FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 }),
-  appendChunk: (uri, base64) =>
-    FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64, append: true }),
+  statSize: async uri => new File(uri).size,
+
+  readChunk: async (uri, position, length) => {
+    const handle = new File(uri).open()
+    try {
+      handle.offset = position
+      return bytesToBase64(handle.readBytes(length))
+    }
+    finally {
+      handle.close()
+    }
+  },
+
+  writeChunk: async (uri, base64) => {
+    const file = new File(uri)
+    file.create({ intermediates: true, overwrite: true })
+    const handle = file.open()
+    try {
+      handle.writeBytes(base64ToBytes(base64))
+    }
+    finally {
+      handle.close()
+    }
+  },
+
+  appendChunk: async (uri, base64) => {
+    const handle = new File(uri).open()
+    try {
+      handle.offset = handle.size ?? 0
+      handle.writeBytes(base64ToBytes(base64))
+    }
+    finally {
+      handle.close()
+    }
+  },
 })
 ```
 
+`File`, `FileHandle` and the seekable `offset` are the modern `expo-file-system` API, introduced in SDK 54. A `FileHandle` is the part that matters here: it reads and writes at an arbitrary offset, so a chunk never costs more than its own bytes. Close it in a `finally` - an open handle blocks the file from being moved or deleted.
+
+`readBytes`/`writeBytes` work in `Uint8Array` while the adapter contract is base64, so this package exports [`bytesToBase64`/`base64ToBytes`](../API.md#base64) to bridge them. They are dependency-free and Hermes-safe, unlike `Buffer` or `atob`/`btoa`.
+
 (`react-native-fs` also fits this shape, but it has had no commits in over two years and 600+ open issues - not a bet worth making for something a 500 MB restore depends on. `expo-file-system` works in a bare React Native project too, without the rest of Expo.)
+
+A working end-to-end version of this - adapter, upload, download, progress - is the **Files** tab of the [example app](https://github.com/kesha-antonov/react-native-cloud-sync/blob/main/example).
 
 Then:
 
@@ -153,3 +191,44 @@ Drive has no push channel here, so `onRemoteChange` is not implemented. If you n
 [appdata]: https://developers.google.com/workspace/drive/api/guides/appdata
 [drivescopes]: https://developers.google.com/workspace/drive/api/guides/api-specific-auth
 [drivefiles]: https://developers.google.com/workspace/drive/api/reference/rest/v3/files
+
+## Knowing when another device wrote
+
+Drive has no push channel a mobile client can subscribe to - its webhooks need a public HTTPS endpoint to deliver to - so `onRemoteChange` polls Drive's change cursor instead:
+
+```ts
+const off = googleDrive.onRemoteChange(({ keys }) => reload(keys))
+```
+
+Polling starts with the first subscriber and stops with the last, so an app that never subscribes never makes the request. The interval is 30s by default (`changePollIntervalMs` on `createGoogleDriveProvider`), and a poll with nothing to report is one request returning an empty list.
+
+Deletions are included, because "another device deleted this key" matters as much as "another device changed it". The client also drops its memoised file id for anything the feed reports as removed, so a stale id cannot keep answering reads.
+
+The first tick only establishes the starting cursor - otherwise every subscriber would be told, on launch, that everything that ever happened had just changed.
+
+## Storage usage
+
+```ts
+const [drive] = await store.getQuota()
+// { provider: 'googleDrive', usedBytes: 4_100_000_000, totalBytes: 15_000_000_000 }
+```
+
+This is the whole Google account's usage, not the `appDataFolder`'s share - Drive reports no per-folder figure. It is the number that matters anyway, since the account limit is what a write actually hits.
+
+`totalBytes` is absent for a pooled or unlimited Workspace account. That is not zero, and a "you are out of space" prompt that treats it as zero is worse than no prompt.
+
+## Cancelling a transfer
+
+```ts
+const controller = new AbortController()
+
+await googleDriveFiles.save({
+  name: 'backup.sqlite',
+  fileUri: localPath,
+  signal: controller.signal,
+})
+```
+
+Checked between chunks, so a cancel lands during the transfer rather than after it. Bytes Drive already accepted stay in the resumable session; a later `save` of the same name starts a fresh one.
+
+`signal` is typed structurally, so a polyfilled `AbortController` works and you do not need `lib.dom` in your tsconfig.

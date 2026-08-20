@@ -1,4 +1,9 @@
 import { CloudSyncError, ErrorCode } from '../errors'
+import { byteLength } from './bytes'
+import { withTimeout } from './timeout'
+
+/** Default request timeout. Generous, because a large record on a slow link is normal. */
+const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
  * CloudKit Web Services REST client.
@@ -45,7 +50,24 @@ export interface CloudKitRestConfig {
   onAuthExpired?: () => Promise<void> | void
   /** Overridable for tests. Defaults to global `fetch`. */
   fetchImpl?: typeof fetch
+  /**
+   * Abandon a request that has not answered in this long. Default 30000.
+   *
+   * React Native's `fetch` has no timeout of its own, so without this a socket
+   * that never answers hangs the operation forever - and `isReachable()` is on
+   * the path of every read, so one hung probe stalls the whole store.
+   */
+  timeoutMs?: number
 }
+
+/**
+ * How many operations one `/records/modify` or `/records/lookup` call carries.
+ *
+ * Apple does not publish a hard maximum, but very large batches are rejected
+ * outright and a batch is atomic, so an oversized one fails as a unit. 200
+ * matches the page size CloudKit itself uses for query results.
+ */
+const MAX_BATCH = 200
 
 export const RECORD_TYPE_DEFAULT = 'KVBlob'
 export const VALUE_FIELD = 'value'
@@ -59,7 +81,14 @@ interface CloudKitRecordResult {
   serverErrorCode?: string
   reason?: string
   retryAfter?: number
-  serverRecord?: { fields?: Record<string, { value?: unknown }> }
+  serverRecord?: { fields?: Record<string, { value?: unknown }>; recordChangeTag?: string }
+  /** Epoch millis. CloudKit returns this on every lookup without being asked. */
+  modified?: { timestamp?: number }
+  /**
+   * The record's version. Passing it back on a save turns a blind overwrite
+   * into a conditional one - see {@link CloudKitRestClient.saveRecord}.
+   */
+  recordChangeTag?: string
 }
 
 interface CloudKitResponse {
@@ -192,13 +221,20 @@ export class CloudKitRestClient {
 
     let res: Response
     try {
-      res = await this.fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+      res = await withTimeout(
+        this.fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        'cloudKit'
+      )
     }
     catch (e) {
+      // A timeout is already a classified, retryable CloudSyncError; re-wrapping
+      // it as a network failure would throw away the distinction.
+      if (e instanceof CloudSyncError) throw e
       throw new CloudSyncError(
         ErrorCode.NETWORK_UNAVAILABLE,
         '[RNCloudSync] CloudKit request failed to reach the server.',
@@ -242,6 +278,21 @@ export class CloudKitRestClient {
   }
 
   async getRecord(recordName: string, recordType = RECORD_TYPE_DEFAULT): Promise<string | null> {
+    return (await this.getRecordWithMeta(recordName, recordType))?.value ?? null
+  }
+
+  /**
+   * A read that also returns the server's own modification time and the
+   * record's change tag.
+   *
+   * Both come back on a plain lookup whether or not anyone asks, so surfacing
+   * them costs nothing - and they are what make {@link resolveByModifiedAt} and
+   * conditional writes possible without the app instrumenting its payloads.
+   */
+  async getRecordWithMeta(
+    recordName: string,
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<{ value: string; modifiedAt?: number; recordChangeTag?: string } | null> {
     void recordType
     const json = await this.post('/records/lookup', {
       records: [{ recordName }],
@@ -260,7 +311,121 @@ export class CloudKitRestClient {
     }
 
     const value = record.fields?.[VALUE_FIELD]?.value
-    return typeof value === 'string' ? value : null
+    if (typeof value !== 'string') return null
+
+    return {
+      value,
+      modifiedAt: typeof record.modified?.timestamp === 'number'
+        ? record.modified.timestamp
+        : undefined,
+      recordChangeTag: record.recordChangeTag,
+    }
+  }
+
+  /**
+   * Reads many records in one request.
+   *
+   * `/records/lookup` has taken an array of record ids since the API shipped,
+   * so reading 200 keys one at a time was 200 round trips for no reason - and
+   * 200 chances to be throttled. Results are matched back by `recordName`
+   * rather than by position, because CloudKit does not promise the response
+   * preserves request order.
+   */
+  async getRecords(
+    recordNames: string[],
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<(string | null)[]> {
+    void recordType
+    if (recordNames.length === 0) return []
+
+    const found = new Map<string, string>()
+
+    for (const batch of chunk(recordNames, MAX_BATCH)) {
+      const json = await this.post('/records/lookup', {
+        records: batch.map(recordName => ({ recordName })),
+      })
+
+      for (const record of json.records ?? []) {
+        if (record.recordName == null) continue
+        if (record.serverErrorCode != null) {
+          // Absent is absent, per record - one missing key must not fail the
+          // whole batch the way an atomic *write* legitimately does.
+          if (record.serverErrorCode === 'NOT_FOUND') continue
+          throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
+        }
+        const value = record.fields?.[VALUE_FIELD]?.value
+        if (typeof value === 'string') found.set(record.recordName, value)
+      }
+    }
+
+    return recordNames.map(name => found.get(name) ?? null)
+  }
+
+  /**
+   * Writes many records in one request.
+   *
+   * Uses `forceUpdate`, which creates or replaces in a single operation, so
+   * unlike the single-record path there is no create-then-fall-back-to-update
+   * dance to repeat per key.
+   *
+   * `atomic: false`, deliberately: a batch is a convenience for the caller, not
+   * a transaction they asked for, and one oversized record should not silently
+   * discard the other 199. Per-record failures are collected and raised
+   * together.
+   */
+  async saveRecords(
+    entries: [string, string][],
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<void> {
+    if (entries.length === 0) return
+
+    for (const [recordName, value] of entries) {
+      const bytes = byteLength(value)
+      if (bytes > MAX_RECORD_BYTES)
+        throw new CloudSyncError(
+          ErrorCode.PAYLOAD_TOO_LARGE,
+          `[RNCloudSync] '${recordName}' is ${bytes} bytes; CloudKit records are limited to `
+          + `${MAX_RECORD_BYTES}.`,
+          { provider: 'cloudKit', limitBytes: MAX_RECORD_BYTES, actualBytes: bytes }
+        )
+    }
+
+    for (const batch of chunk(entries, MAX_BATCH)) {
+      const json = await this.post('/records/modify', {
+        atomic: false,
+        operations: batch.map(([recordName, value]) => ({
+          operationType: 'forceUpdate',
+          record: { recordType, recordName, fields: { [VALUE_FIELD]: { value } } },
+        })),
+      })
+
+      for (const record of json.records ?? [])
+        if (record.serverErrorCode != null)
+          throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
+    }
+  }
+
+  /** Deletes many records in one request, with the same per-record rules. */
+  async deleteRecords(recordNames: string[], recordType = RECORD_TYPE_DEFAULT): Promise<void> {
+    if (recordNames.length === 0) return
+
+    for (const batch of chunk(recordNames, MAX_BATCH)) {
+      const json = await this.post('/records/modify', {
+        atomic: false,
+        operations: batch.map(recordName => ({
+          operationType: 'forceDelete',
+          record: { recordType, recordName },
+        })),
+      })
+
+      for (const record of json.records ?? []) {
+        if (record.serverErrorCode == null) continue
+        // Deleting something that was never there is the end state the caller
+        // asked for.
+        if (record.serverErrorCode === 'NOT_FOUND') continue
+        throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
+      }
+    }
   }
 
   async saveRecord(
@@ -331,6 +496,63 @@ export class CloudKitRestClient {
         typeof serverValue === 'string' ? serverValue : null
       )
     }
+  }
+
+  /**
+   * A write that fails instead of clobbering, when the server's copy has moved
+   * on since `recordChangeTag` was read.
+   *
+   * The normal `saveRecord` is last-write-wins - the right default for the
+   * common case, and what the native provider's `.changedKeys` save policy
+   * does, so both platforms agree. But last-write-wins means a genuine
+   * concurrent edit is destroyed silently, and `ERR_CONFLICT` carries
+   * `serverValue` precisely so an app can merge instead. Without a conditional
+   * write, that error could never actually fire and the merge path was
+   * unreachable.
+   *
+   * Read the tag with {@link getRecordWithMeta}, pass it here, and handle
+   * `ERR_CONFLICT` by merging `serverValue` and retrying.
+   */
+  async saveRecordIfUnchanged(
+    recordName: string,
+    value: string,
+    recordChangeTag: string,
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<void> {
+    const bytes = byteLength(value)
+    if (bytes > MAX_RECORD_BYTES)
+      throw new CloudSyncError(
+        ErrorCode.PAYLOAD_TOO_LARGE,
+        `[RNCloudSync] Value is ${bytes} bytes; CloudKit records are limited to ${MAX_RECORD_BYTES}.`,
+        { provider: 'cloudKit', limitBytes: MAX_RECORD_BYTES, actualBytes: bytes }
+      )
+
+    // `update` (rather than `forceUpdate`) is the conditional form: with a
+    // change tag present, CloudKit rejects the write if the server's tag has
+    // moved on.
+    const json = await this.post('/records/modify', {
+      atomic: true,
+      operations: [{
+        operationType: 'update',
+        record: {
+          recordType,
+          recordName,
+          recordChangeTag,
+          fields: { [VALUE_FIELD]: { value } },
+        },
+      }],
+    })
+
+    const result = json.records?.[0]
+    if (result?.serverErrorCode == null) return
+
+    const serverValue = result.serverRecord?.fields?.[VALUE_FIELD]?.value
+    throw await this.toError(
+      result.serverErrorCode,
+      result.reason,
+      result.retryAfter,
+      typeof serverValue === 'string' ? serverValue : null
+    )
   }
 
   async deleteRecord(recordName: string, recordType = RECORD_TYPE_DEFAULT): Promise<void> {
@@ -406,17 +628,27 @@ export class CloudKitRestClient {
     this.reachability = { at: now, ok }
     return ok
   }
+
+  /**
+   * Drops the memoised reachability answer.
+   *
+   * Called on an account switch: that answer was recorded for the previous
+   * user's web auth token and says nothing about the new one.
+   */
+  clearCache(): void {
+    this.reachability = null
+  }
 }
 
-/**
- * UTF-8 byte length.
- *
- * `String.length` counts UTF-16 code units, which under-reports for any
- * non-ASCII payload - the exact way a "just under the limit" value turns into a
- * server-side rejection.
- */
-export function byteLength(s: string): number {
-  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length
-
-  return unescape(encodeURIComponent(s)).length
+/** Splits `items` into runs of at most `size`. */
+function chunk<T>(items: T[], size: number): T[][] {
+  if (items.length <= size) return [items]
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
 }
+
+// Re-exported from its own module so the tiering and key-validation paths can
+// use it without importing a REST client. Kept exported here because it has
+// been part of this module's surface since the first release.
+export { byteLength } from './bytes'

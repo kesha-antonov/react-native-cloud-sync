@@ -23,9 +23,10 @@
 /**
  * Stable, cross-platform failure codes.
  *
- * These strings are duplicated in `ios/CloudSyncError.swift` and
- * `android/.../CloudSyncErrors.kt`. They are part of the public API: apps
- * branch on them, so treat a change here as a breaking change.
+ * These strings are duplicated in `ios/CloudSyncError.swift` - the only other
+ * place that raises them, since Android and web reach CloudKit and Drive over
+ * REST from this same TypeScript. They are part of the public API: apps branch
+ * on them, so treat a change here as a breaking change.
  */
 export const ErrorCode = {
   /** No iCloud/Drive account is signed in on the device. */
@@ -48,6 +49,14 @@ export const ErrorCode = {
   RATE_LIMITED: 'ERR_RATE_LIMITED',
   /** Value exceeds the backing store's limit. Carries `limitBytes`/`actualBytes`. */
   PAYLOAD_TOO_LARGE: 'ERR_PAYLOAD_TOO_LARGE',
+  /**
+   * The key cannot round-trip through the configured providers - illegal
+   * characters, too long, or a reserved prefix. Raised before the request, so
+   * it never reaches the server as a confusing `BAD_REQUEST`.
+   */
+  INVALID_KEY: 'ERR_INVALID_KEY',
+  /** The operation ran longer than the configured timeout. */
+  TIMEOUT: 'ERR_TIMEOUT',
   /** A concurrent write won. Carries `serverValue` so the app can merge. */
   CONFLICT: 'ERR_CONFLICT',
   /** Entitlements, container identifier or API token are missing or wrong. */
@@ -127,7 +136,12 @@ export function isCloudSyncError(e: unknown): e is CloudSyncError {
   return typeof code === 'string' && ALL_CODES.includes(code)
 }
 
-/** True when retrying the same call later could plausibly succeed. */
+/**
+ * True when retrying the same call later could plausibly succeed.
+ *
+ * TIMEOUT is in this set because running out of time says nothing about whether
+ * the operation is possible - only that this attempt took too long.
+ */
 export function isRetryable(e: unknown): boolean {
   if (!isCloudSyncError(e)) return false
   switch (e.code) {
@@ -135,6 +149,7 @@ export function isRetryable(e: unknown): boolean {
     case ErrorCode.RATE_LIMITED:
     case ErrorCode.ACCOUNT_UNAVAILABLE:
     case ErrorCode.ACCOUNT_UNDETERMINED:
+    case ErrorCode.TIMEOUT:
       return true
     default:
       return false
@@ -214,6 +229,28 @@ function numeric(v: unknown): number | undefined {
     if (Number.isFinite(n)) return n
   }
   return undefined
+}
+
+/**
+ * True when the caller asked for this - a cancelled operation is not a fault to
+ * report, and a UI that shows an error toast for one is wrong.
+ */
+export function isCancelled(e: unknown): boolean {
+  return isCloudSyncError(e) && e.code === ErrorCode.CANCELLED
+}
+
+/** The rejection an aborted operation produces. */
+export function cancelled(provider?: string, detail = 'The operation was cancelled.'): CloudSyncError {
+  return new CloudSyncError(ErrorCode.CANCELLED, `[RNCloudSync] ${detail}`, { provider })
+}
+
+/** The rejection a timed-out operation produces. */
+export function timedOut(ms: number, provider?: string): CloudSyncError {
+  return new CloudSyncError(
+    ErrorCode.TIMEOUT,
+    `[RNCloudSync] The request did not complete within ${ms}ms.`,
+    { provider }
+  )
 }
 
 /** Convenience constructor for the platform-capability guards. */

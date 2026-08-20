@@ -73,6 +73,23 @@ export const cloudKitBackup = {
       unsubscribe()
     }
   },
+
+  /**
+   * Cancels a `save` or `restore` in progress, rejecting that call with
+   * `ERR_CANCELLED`. Resolves true when there was one to cancel.
+   *
+   * A backup is the transfer users are most likely to want to stop - it is the
+   * biggest, and it is the one they start by accident. Takes the same
+   * `recordName`/`fieldName` defaults as the call it cancels, so cancelling the
+   * default backup is `cloudKitBackup.cancel()`.
+   */
+  cancel: async (
+    options: Pick<BackupOptions, 'recordName' | 'fieldName'> = {}
+  ): Promise<boolean> =>
+    await assets.cancel({
+      recordName: options.recordName ?? DEFAULT_RECORD_NAME,
+      fieldName: options.fieldName ?? DEFAULT_FIELD_NAME,
+    }),
 }
 
 function subscribeScoped(

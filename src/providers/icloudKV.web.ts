@@ -26,6 +26,10 @@ export const icloudKV: CloudProvider = {
   setItem: reject,
   removeItem: reject,
   getAllKeys: reject,
+  // Not `reject`: a quota question has a truthful answer on web - there is no
+  // key-value store here to be full - and `getQuota` is documented as reporting
+  // `null` for a provider that does not know.
+  getQuota: () => Promise.resolve(null),
 }
 
 export function sync(): Promise<boolean> {

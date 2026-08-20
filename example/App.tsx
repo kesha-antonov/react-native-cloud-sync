@@ -7,6 +7,7 @@ import { DeviceBanner } from './src/components/DeviceBanner'
 import { CloudKitTab } from './src/tabs/CloudKitTab'
 import { DriveTab } from './src/tabs/DriveTab'
 import { FaultsTab } from './src/tabs/FaultsTab'
+import { FilesTab } from './src/tabs/FilesTab'
 import { ICloudKVTab } from './src/tabs/ICloudKVTab'
 import { StoreTab } from './src/tabs/StoreTab'
 import { SyncDemoTab } from './src/tabs/SyncDemoTab'
@@ -17,6 +18,7 @@ const TABS = [
   { key: 'kv', label: 'iCloud KV', render: () => <ICloudKVTab /> },
   { key: 'cloudkit', label: 'CloudKit', render: () => <CloudKitTab /> },
   { key: 'drive', label: 'Drive', render: () => <DriveTab /> },
+  { key: 'files', label: 'Files', render: () => <FilesTab /> },
   { key: 'store', label: 'Store', render: () => <StoreTab /> },
   { key: 'faults', label: 'Faults', render: () => <FaultsTab /> },
 ] as const

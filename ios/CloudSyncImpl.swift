@@ -223,6 +223,37 @@ import Foundation
         resolve(kvStore.string(forKey: key))
     }
 
+    /// Apple's three documented ceilings for `NSUbiquitousKeyValueStore`.
+    ///
+    /// All three are enforced before the write, not discovered after it. The
+    /// per-key one is the obvious one; the other two are the ones that actually
+    /// bite in practice, and neither produces an error at the call site - the
+    /// store simply stops accepting data and reports a
+    /// `NSUbiquitousKeyValueStoreQuotaViolationChange` notification later, by
+    /// which point the caller has long since been told the write succeeded.
+    static let kvMaxBytesPerKey = 1024 * 1024
+    static let kvMaxTotalBytes = 1024 * 1024
+    static let kvMaxKeys = 1024
+
+    /// UTF-8 size of everything currently in the store, and how many keys.
+    ///
+    /// Only string and data values are measured; the store also accepts numbers
+    /// and booleans, whose contribution is negligible next to a payload and
+    /// which have no meaningful byte length to ask for.
+    private func kvUsage(excluding key: String?) -> (bytes: Int, keys: Int) {
+        var bytes = 0
+        let all = kvStore.dictionaryRepresentation
+        for (existingKey, existingValue) in all {
+            if existingKey == key { continue }
+            if let text = existingValue as? String {
+                bytes += text.lengthOfBytes(using: .utf8)
+            } else if let data = existingValue as? Data {
+                bytes += data.count
+            }
+        }
+        return (bytes, all.count)
+    }
+
     @objc public func kvSetItem(
         _ key: String,
         value: String,
@@ -232,11 +263,43 @@ import Foundation
         let bytes = value.lengthOfBytes(using: .utf8)
         // Apple's per-key ceiling is 1 MB. Enforce it here with a typed error
         // rather than letting the write vanish server-side with no signal.
-        if bytes > 1024 * 1024 {
+        if bytes > Self.kvMaxBytesPerKey {
             let error = CloudSyncError.coded(
                 code: CloudSyncErrorCode.payloadTooLarge,
-                message: "Value is \(bytes) bytes; the iCloud key-value store allows 1048576 per key.",
-                info: ["limitBytes": 1024 * 1024, "actualBytes": bytes]
+                message: "Value is \(bytes) bytes; the iCloud key-value store allows "
+                    + "\(Self.kvMaxBytesPerKey) per key.",
+                info: ["limitBytes": Self.kvMaxBytesPerKey, "actualBytes": bytes]
+            )
+            reject(error.code, error.message, error.asNSError)
+            return
+        }
+
+        let isNewKey = kvStore.object(forKey: key) == nil
+        let usage = kvUsage(excluding: key)
+
+        // The 1 MB *total* is the limit that actually bites: a handful of large
+        // values silently starves every other key, and the only signal is a
+        // quota-violation notification that arrives long after the write was
+        // reported as successful.
+        let projected = usage.bytes + bytes
+        if projected > Self.kvMaxTotalBytes {
+            let error = CloudSyncError.coded(
+                code: CloudSyncErrorCode.quotaExceeded,
+                message: "This write would put the iCloud key-value store at \(projected) bytes, "
+                    + "over its \(Self.kvMaxTotalBytes)-byte total. Route larger values to "
+                    + "CloudKit or Drive - the store facade's tiering does this for you.",
+                info: ["limitBytes": Self.kvMaxTotalBytes, "actualBytes": projected]
+            )
+            reject(error.code, error.message, error.asNSError)
+            return
+        }
+
+        if isNewKey && usage.keys >= Self.kvMaxKeys {
+            let error = CloudSyncError.coded(
+                code: CloudSyncErrorCode.quotaExceeded,
+                message: "The iCloud key-value store already holds \(usage.keys) keys, its "
+                    + "documented maximum of \(Self.kvMaxKeys).",
+                info: ["limitBytes": Self.kvMaxKeys, "actualBytes": usage.keys + 1]
             )
             reject(error.code, error.message, error.asNSError)
             return
@@ -273,6 +336,25 @@ import Foundation
         resolve(kvStore.synchronize())
     }
 
+    /// How full the key-value store is, against its documented ceilings.
+    ///
+    /// Apple exposes no usage API, so this is measured from
+    /// `dictionaryRepresentation` - which is a local plist, not a network call,
+    /// so it is cheap enough to read on demand. Without it an app can only find
+    /// out it is near the 1 MB total by hitting it, and hitting it is silent.
+    @objc public func kvGetUsage(
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        let usage = kvUsage(excluding: nil)
+        resolve([
+            "usedBytes": usage.bytes,
+            "totalBytes": Self.kvMaxTotalBytes,
+            "keyCount": usage.keys,
+            "maxKeys": Self.kvMaxKeys,
+        ])
+    }
+
     // MARK: - CloudKit records
 
     private func requireDatabase() throws -> CKDatabase {
@@ -293,10 +375,25 @@ import Foundation
         return CKRecord.ID(recordName: recordName, zoneID: zoneID)
     }
 
+    /// Reads the value field, from the encrypted or the plain side of the record.
+    ///
+    /// A field is one or the other, never both: CloudKit records encryption in
+    /// the schema, so a field written through `encryptedValues` is invisible to
+    /// the plain subscript and vice versa. Reading the wrong side returns nil,
+    /// which would look exactly like a missing record - hence the flag rather
+    /// than trying both and hoping.
+    private static func readValue(_ record: CKRecord?, encrypted: Bool) -> String? {
+        guard let record = record else { return nil }
+        return encrypted
+            ? record.encryptedValues[Self.valueField] as? String
+            : record[Self.valueField] as? String
+    }
+
     @objc public func ckGetRecord(
         _ recordType: String,
         recordName: String,
         zoneName: String?,
+        encrypted: Bool,
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
@@ -315,7 +412,7 @@ import Foundation
                     reject(mapped.code, mapped.message, mapped.asNSError)
                     return
                 }
-                resolve(record?[Self.valueField] as? String)
+                resolve(Self.readValue(record, encrypted: encrypted))
             }
         } catch {
             let mapped = CloudSyncError.from(error)
@@ -323,11 +420,17 @@ import Foundation
         }
     }
 
+    /// - Parameter encrypted: write through `CKRecord.encryptedValues`, so the
+    ///   value is end-to-end encrypted by CloudKit itself. The key lives in the
+    ///   user's iCloud Keychain and never reaches Apple's servers, which also
+    ///   means no server-side path - including CloudKit Web Services, and so
+    ///   this package's Android and web support - can ever read it back.
     @objc public func ckSaveRecord(
         _ recordType: String,
         recordName: String,
         value: String,
         zoneName: String?,
+        encrypted: Bool,
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
@@ -347,7 +450,11 @@ import Foundation
             let database = try requireDatabase()
             let id = recordID(recordName, zoneName)
             let record = CKRecord(recordType: recordType, recordID: id)
-            record[Self.valueField] = value as CKRecordValue
+            if encrypted {
+                record.encryptedValues[Self.valueField] = value as CKRecordValue
+            } else {
+                record[Self.valueField] = value as CKRecordValue
+            }
 
             let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
             // Last-write-wins, matching the REST client so both platforms
@@ -504,6 +611,56 @@ import Foundation
 
     // MARK: - Assets
 
+    /// In-flight asset transfers, keyed by record+field, so one can be
+    /// cancelled by name.
+    ///
+    /// A `CKOperation` is cancellable, but only if someone kept a reference to
+    /// it. Without this the `ERR_CANCELLED` code in the shared error vocabulary
+    /// had no way of ever being produced, and a user who started a 500 MB
+    /// backup by mistake had to wait it out or kill the app.
+    private var activeAssetOperations: [String: CKOperation] = [:]
+    private let assetOperationLock = NSLock()
+
+    private static func transferKey(_ recordName: String, _ fieldName: String) -> String {
+        return "\(recordName)\u{0}\(fieldName)"
+    }
+
+    private func trackOperation(_ operation: CKOperation, recordName: String, fieldName: String) {
+        assetOperationLock.lock()
+        activeAssetOperations[Self.transferKey(recordName, fieldName)] = operation
+        assetOperationLock.unlock()
+    }
+
+    private func untrackOperation(recordName: String, fieldName: String) {
+        assetOperationLock.lock()
+        activeAssetOperations.removeValue(forKey: Self.transferKey(recordName, fieldName))
+        assetOperationLock.unlock()
+    }
+
+    /// Cancels an in-flight `ckSaveAsset`/`ckFetchAsset`.
+    ///
+    /// Resolves true when there was something to cancel. The cancelled
+    /// operation's own promise rejects with `ERR_CANCELLED`, since CloudKit
+    /// surfaces the cancellation as `CKError.operationCancelled`, which the
+    /// error mapper already recognises.
+    @objc public func ckCancelAsset(
+        _ recordName: String,
+        fieldName: String,
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        assetOperationLock.lock()
+        let operation = activeAssetOperations.removeValue(forKey: Self.transferKey(recordName, fieldName))
+        assetOperationLock.unlock()
+
+        guard let operation = operation else {
+            resolve(false)
+            return
+        }
+        operation.cancel()
+        resolve(true)
+    }
+
     /// Uploads a local file as a CKAsset field.
     ///
     /// This is what makes values above the 1 MB record ceiling storable at all.
@@ -565,15 +722,20 @@ import Foundation
                 ])
             }
 
-            operation.modifyRecordsResultBlock = { result in
+            operation.modifyRecordsResultBlock = { [weak self] result in
+                self?.untrackOperation(recordName: recordName, fieldName: fieldName)
                 switch result {
                 case .success:
                     resolve(nil)
                 case let .failure(error):
+                    // A cancelled operation arrives here as
+                    // CKError.operationCancelled, which the mapper turns into
+                    // ERR_CANCELLED - so `ckCancelAsset` needs no special case.
                     let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
                 }
             }
+            trackOperation(operation, recordName: recordName, fieldName: fieldName)
             database.add(operation)
         } catch {
             let mapped = CloudSyncError.from(error)
@@ -705,7 +867,8 @@ import Foundation
             }
         }
 
-        operation.fetchRecordsResultBlock = { result in
+        operation.fetchRecordsResultBlock = { [weak self] result in
+            self?.untrackOperation(recordName: recordName, fieldName: fieldName)
             if case let .failure(error) = result {
                 // A per-record failure already resolved/rejected above; this
                 // only fires for operation-level failures (e.g. the record
@@ -720,6 +883,7 @@ import Foundation
             }
         }
 
+        trackOperation(operation, recordName: recordName, fieldName: fieldName)
         database.add(operation)
     }
 
@@ -728,6 +892,313 @@ import Foundation
     static func fileURL(from uri: String) -> URL {
         if uri.hasPrefix("file://"), let url = URL(string: uri) { return url }
         return URL(fileURLWithPath: uri)
+    }
+
+    // MARK: - iCloud Drive documents
+    //
+    // The ubiquity container's `Documents` directory: real files, in the user's
+    // own iCloud Drive, visible in Files.app when the app declares
+    // `NSUbiquitousContainers` with `NSUbiquitousContainerIsDocumentScopePublic`.
+    //
+    // Distinct from everything else in this file, and worth being clear about
+    // why both exist. A `CKAsset` lives in the app's private CloudKit database:
+    // the user cannot see it, open it, or hand it to another app. That is right
+    // for an internal backup blob and wrong for an export the user asked for.
+    // "Save my file where I can find it" is the single most common iCloud
+    // request in mobile apps and no `CKRecord` API can answer it.
+
+    /// The container root. Blocking - Apple documents this as slow enough that
+    /// it must not be called on the main thread, so every caller here hops to a
+    /// background queue first.
+    private func ubiquityContainerURL() -> URL? {
+        return FileManager.default.url(
+            forUbiquityContainerIdentifier: Self.resolveContainerIdentifier()
+        )
+    }
+
+    /// The user-visible subdirectory. Only `Documents` is ever exposed in
+    /// Files.app; anything written beside it stays hidden from the user, which
+    /// would defeat the point of this API.
+    private func documentsURL() throws -> URL {
+        guard let container = ubiquityContainerURL() else {
+            throw CloudSyncError.coded(
+                code: CloudSyncErrorCode.containerMisconfigured,
+                message: "No iCloud Drive container is available. Check the iCloud capability, "
+                    + "the iCloud Documents service, and that the user is signed in.",
+                info: [:]
+            )
+        }
+        let documents = container.appendingPathComponent("Documents", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: documents.path) {
+            try FileManager.default.createDirectory(
+                at: documents, withIntermediateDirectories: true
+            )
+        }
+        return documents
+    }
+
+    /// True when the device has a usable iCloud Drive container right now.
+    @objc public func docIsAvailable(
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            resolve(self?.ubiquityContainerURL() != nil)
+        }
+    }
+
+    /// Copies a local file into iCloud Drive under `name`, replacing whatever
+    /// was there, and resolves the resulting iCloud path.
+    ///
+    /// Upload happens in the background, managed by the system: once the file is
+    /// in the container, iOS syncs it whether or not the app is running. So a
+    /// resolved promise means "handed to iCloud", not "in the cloud" - the same
+    /// distinction `kvSync` carries, and callers are told so in the JS docs.
+    @objc public func docSave(
+        _ fileUri: String,
+        name: String,
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let source = Self.fileURL(from: fileUri)
+                guard FileManager.default.fileExists(atPath: source.path) else {
+                    throw CloudSyncError.coded(
+                        code: CloudSyncErrorCode.unknown,
+                        message: "No file at \(source.path)",
+                        info: [:]
+                    )
+                }
+
+                let destination = try self.documentsURL().appendingPathComponent(name)
+
+                // Coordinated, because iCloud Drive files are shared with the
+                // system daemon and with other processes. An uncoordinated write
+                // can be interleaved with a sync and produce a corrupt file.
+                var coordinationError: NSError?
+                var writeError: Error?
+                NSFileCoordinator().coordinate(
+                    writingItemAt: destination,
+                    options: .forReplacing,
+                    error: &coordinationError
+                ) { url in
+                    do {
+                        if FileManager.default.fileExists(atPath: url.path) {
+                            try FileManager.default.removeItem(at: url)
+                        }
+                        try FileManager.default.copyItem(at: source, to: url)
+                    } catch {
+                        writeError = error
+                    }
+                }
+
+                if let error = coordinationError ?? writeError { throw error }
+                resolve(destination.absoluteString)
+            } catch {
+                let mapped = CloudSyncError.from(error)
+                reject(mapped.code, mapped.message, mapped.asNSError)
+            }
+        }
+    }
+
+    /// Ensures `name` is downloaded locally and resolves its path, or nil when
+    /// there is no such file.
+    ///
+    /// A file in iCloud Drive may exist as a placeholder with no local bytes -
+    /// the user has it, this device does not. Reading it without downloading
+    /// first yields an empty or missing file, which is the trap this method
+    /// exists to close: it asks for the download, then waits for the status to
+    /// become `.current` before answering.
+    @objc public func docFetch(
+        _ name: String,
+        destinationUri: String?,
+        timeoutMs: NSNumber,
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let source = try self.documentsURL().appendingPathComponent(name)
+
+                guard FileManager.default.fileExists(atPath: source.path)
+                    || self.placeholderExists(for: source) else {
+                    resolve(nil)
+                    return
+                }
+
+                try FileManager.default.startDownloadingUbiquitousItem(at: source)
+
+                let deadline = Date().addingTimeInterval(timeoutMs.doubleValue / 1000)
+                while !self.isDownloaded(source) {
+                    if Date() >= deadline {
+                        throw CloudSyncError.coded(
+                            code: CloudSyncErrorCode.timeout,
+                            message: "'\(name)' did not finish downloading from iCloud Drive in "
+                                + "\(timeoutMs.intValue)ms. It is still downloading in the "
+                                + "background; try again shortly.",
+                            info: [:]
+                        )
+                    }
+                    // Polled rather than driven by NSMetadataQuery: a query needs
+                    // a live run loop, and this method is deliberately callable
+                    // from a background queue. The cost is that progress is not
+                    // reported byte by byte - see the JS docs, which say so
+                    // rather than inventing a number.
+                    Thread.sleep(forTimeInterval: 0.25)
+                }
+
+                guard let destinationUri = destinationUri else {
+                    resolve(source.absoluteString)
+                    return
+                }
+
+                // Copy out of the container when the caller named a destination,
+                // so they get a file the system will not later evict.
+                let destination = Self.fileURL(from: destinationUri)
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+
+                var coordinationError: NSError?
+                var copyError: Error?
+                NSFileCoordinator().coordinate(
+                    readingItemAt: source, options: [], error: &coordinationError
+                ) { url in
+                    do {
+                        try FileManager.default.copyItem(at: url, to: destination)
+                    } catch {
+                        copyError = error
+                    }
+                }
+                if let error = coordinationError ?? copyError { throw error }
+
+                resolve(destination.absoluteString)
+            } catch {
+                let mapped = CloudSyncError.from(error)
+                reject(mapped.code, mapped.message, mapped.asNSError)
+            }
+        }
+    }
+
+    /// Whether the local copy is current, i.e. safe to read.
+    private func isDownloaded(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+        guard let status = values?.ubiquitousItemDownloadingStatus else {
+            // Not a ubiquitous item at all - a plain local file, already usable.
+            return FileManager.default.fileExists(atPath: url.path)
+        }
+        return status == .current
+    }
+
+    /// A not-yet-downloaded item is on disk as a hidden `.name.icloud` stub, so
+    /// "the file does not exist" and "the file exists but is not here yet" have
+    /// to be told apart before reporting an absence.
+    private func placeholderExists(for url: URL) -> Bool {
+        let placeholder = url
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).icloud")
+        return FileManager.default.fileExists(atPath: placeholder.path)
+    }
+
+    /// Everything in the app's iCloud Drive folder, including items that exist
+    /// in the account but have no local copy on this device yet.
+    @objc public func docList(
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let documents = try self.documentsURL()
+                let entries = try FileManager.default.contentsOfDirectory(
+                    at: documents,
+                    includingPropertiesForKeys: [
+                        .fileSizeKey,
+                        .ubiquitousItemDownloadingStatusKey,
+                        .ubiquitousItemIsDownloadingKey,
+                    ],
+                    options: []
+                )
+
+                var seen = Set<String>()
+                var result: [[String: Any]] = []
+
+                for url in entries {
+                    // Fold the hidden placeholder back onto the name it stands
+                    // for, so a caller sees one entry per file rather than two
+                    // and never sees a `.icloud` name it cannot ask for.
+                    let name = Self.displayName(for: url)
+                    if seen.contains(name) { continue }
+                    seen.insert(name)
+
+                    let values = try? url.resourceValues(forKeys: [
+                        .fileSizeKey,
+                        .ubiquitousItemDownloadingStatusKey,
+                        .ubiquitousItemIsDownloadingKey,
+                    ])
+                    let status = values?.ubiquitousItemDownloadingStatus
+                    result.append([
+                        "name": name,
+                        "sizeBytes": values?.fileSize ?? 0,
+                        "isDownloaded": status == nil || status == .current,
+                        "isDownloading": values?.ubiquitousItemIsDownloading ?? false,
+                    ])
+                }
+
+                resolve(result)
+            } catch {
+                let mapped = CloudSyncError.from(error)
+                reject(mapped.code, mapped.message, mapped.asNSError)
+            }
+        }
+    }
+
+    /// `.Report.pdf.icloud` -> `Report.pdf`; anything else unchanged.
+    static func displayName(for url: URL) -> String {
+        let last = url.lastPathComponent
+        guard last.hasPrefix("."), last.hasSuffix(".icloud") else { return last }
+        return String(last.dropFirst().dropLast(".icloud".count))
+    }
+
+    /// Deletes a file from iCloud Drive, on every device.
+    @objc public func docRemove(
+        _ name: String,
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let target = try self.documentsURL().appendingPathComponent(name)
+                guard FileManager.default.fileExists(atPath: target.path)
+                    || self.placeholderExists(for: target) else {
+                    // Already gone is the end state the caller asked for.
+                    resolve(false)
+                    return
+                }
+
+                var coordinationError: NSError?
+                var removeError: Error?
+                NSFileCoordinator().coordinate(
+                    writingItemAt: target, options: .forDeleting, error: &coordinationError
+                ) { url in
+                    do {
+                        try FileManager.default.removeItem(at: url)
+                    } catch {
+                        removeError = error
+                    }
+                }
+                if let error = coordinationError ?? removeError { throw error }
+
+                resolve(true)
+            } catch {
+                let mapped = CloudSyncError.from(error)
+                reject(mapped.code, mapped.message, mapped.asNSError)
+            }
+        }
     }
 
     @objc public func ckListZones(

@@ -101,8 +101,90 @@ Useful for proving a retry did *not* happen - for instance that a quota failure 
 | `reset()` | Clear data, faults and listeners |
 | `calls` | Per-operation call counts |
 
+## Simulating a signed-out fleet
+
+The case that matters most, and the hardest to reach on a device:
+
+```ts
+const provider = createMemoryProvider({ available: false, initial: { backup: 'real data' } })
+
+// Not null - null would read as "no backup exists", and the documented
+// first-launch recipe seeds empty state on null.
+await expect(store.getItem('backup')).rejects.toMatchObject({
+  code: ErrorCode.NOT_SIGNED_IN,
+})
+```
+
+`setAvailable(false)` flips it mid-test, for a session where the user signs out partway through.
+
+## Faults scoped to one key
+
+Real backends fail per record, not per operation - one oversized or conflicting key while the rest of a batch goes through:
+
+```ts
+const provider = createMemoryProvider({
+  faults: {
+    setItem: { code: ErrorCode.QUOTA_EXCEEDED, only: key => key === 'huge' },
+  },
+})
+```
+
+It also makes interleaving tests deterministic, since two operations in flight no longer compete for the same `times` budget.
+
+## Several providers at once
+
+```ts
+const apple = createMemoryProvider({ name: 'icloudKV' })
+const drive = createMemoryProvider({ name: 'googleDrive' })
+
+const store = createCloudStore({ providers: ['icloudKV', 'googleDrive'], writeMode: 'mirror' })
+store.registerProvider(apple)
+store.registerProvider(drive)
+```
+
+`name` makes each double stand in for a specific provider, so tiering, mirroring and read repair - all of which key off provider names - behave as they will in production.
+
+## Asserting that batching happened
+
+The double records one call per batch, not one per key, so a test can prove the store batched rather than looped:
+
+```ts
+const before = provider.calls.getItem
+await store.multiGet(['a', 'b', 'c'])
+expect(provider.calls.getItem).toBe(before + 1)
+```
+
+## Account switches
+
+```ts
+provider.emitAccountChange({ status: 'available', identityChanged: true })
+
+expect(store.pendingWrites()).toHaveLength(0)   // the previous user's writes are gone
+expect(provider.cacheClears).toBe(1)            // and the provider was told to forget
+```
+
+`cacheClears` counts the times the store asked this provider to drop cached state, which is how you check the store reacted rather than merely forwarded the event.
+
 ## Mocking the native module
 
-For tests that touch a real provider rather than the in-memory one, mock the native module directly. This repository's own `__mocks__/RNCloudSync.js` is a working example: a `jest.fn()` surface plus an event registry, so tests can fire native events without a device.
+For tests that touch a real provider rather than the in-memory one, mock the native module directly. The package ships the mock this repository uses for its own suite:
+
+```js
+// jest.config.js
+module.exports = {
+  setupFiles: ['react-native-cloud-sync/jest-mock'],
+}
+```
+
+A `jest.fn()` surface plus an event registry, so tests can fire native events without a device:
+
+```ts
+const harness = (global as any).__RNCloudSync
+
+harness.setPlatform('android')                       // exercise the REST branches
+harness.emit('accountChange', { status: 'available', identityChanged: true })
+harness.setAppState('active')                        // trigger the store's auto-flush
+harness.reset()
+```
 
 It deliberately avoids `jest.requireActual('react-native')` - loading the real index pulls in DevMenu, whose module-level `TurboModuleRegistry.getEnforcing` call throws under Jest.

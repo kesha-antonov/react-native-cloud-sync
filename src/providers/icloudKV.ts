@@ -33,11 +33,24 @@ const NAME = 'icloudKV' as const
  */
 const APPLE_PLATFORMS = ['ios', 'macos'] as const
 
+/**
+ * True on a platform where `NSUbiquitousKeyValueStore` can exist at all.
+ *
+ * `Platform.OS` is read defensively because a non-Metro web bundler
+ * (webpack/Vite/Next) does not resolve the `.web.ts` platform extension, so
+ * this file - not `icloudKV.web.ts` - is what a react-native-web build loads.
+ * It must reach the same conclusion there by itself.
+ */
+function isApplePlatform(): boolean {
+  const os: string | undefined = Platform?.OS
+  return os != null && (APPLE_PLATFORMS as readonly string[]).includes(os)
+}
+
 function assertPlatform(): void {
-  if (!(APPLE_PLATFORMS as readonly string[]).includes(Platform.OS))
+  if (!isApplePlatform())
     throw unsupportedPlatform(
       NAME,
-      `NSUbiquitousKeyValueStore exists only on Apple platforms (got '${Platform.OS}'). `
+      `NSUbiquitousKeyValueStore exists only on Apple platforms (got '${String(Platform?.OS)}'). `
       + `Use the cloudKit provider for cross-platform access to the same account.`
     )
 }
@@ -46,7 +59,7 @@ export const icloudKV: CloudProvider = {
   name: NAME,
 
   isAvailable: async () => {
-    if (!(APPLE_PLATFORMS as readonly string[]).includes(Platform.OS)) return false
+    if (!isApplePlatform()) return false
     const m = getNativeModule()
     if (m == null) return false
     try {
@@ -101,6 +114,26 @@ export const icloudKV: CloudProvider = {
     assertPlatform()
     try {
       return await requireNativeModule().kvGetAllKeys()
+    }
+    catch (e) {
+      throw normalizeError(e, NAME)
+    }
+  },
+
+  /**
+   * How full the key-value store is.
+   *
+   * `totalBytes` is Apple's 1 MB ceiling rather than a per-account quota - the
+   * key-value store has a fixed size, not a share of the user's iCloud storage.
+   * The number worth watching, since exceeding it is silent.
+   */
+  getQuota: async () => {
+    if (!isApplePlatform()) return null
+    const m = getNativeModule()
+    if (m == null) return null
+    try {
+      const usage = await m.kvGetUsage()
+      return { usedBytes: usage.usedBytes, totalBytes: usage.totalBytes, provider: NAME }
     }
     catch (e) {
       throw normalizeError(e, NAME)

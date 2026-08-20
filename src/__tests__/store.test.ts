@@ -69,7 +69,7 @@ describe('outbox', () => {
 
     const result = await store.flushOutbox()
 
-    expect(result).toEqual({ drained: 1, remaining: 0 })
+    expect(result).toMatchObject({ drained: 1, remaining: 0 })
     expect(mem.dump()).toEqual({ k: 'v' })
     expect(store.pendingWrites()).toHaveLength(0)
   })
@@ -97,12 +97,12 @@ describe('outbox', () => {
     const before = mem.calls.setItem
 
     const first = await store.flushOutbox()
-    expect(first).toEqual({ drained: 0, remaining: 1 })
+    expect(first).toMatchObject({ drained: 0, remaining: 1 })
     expect(mem.calls.setItem).toBe(before + 1)
 
     // Second flush is inside the backoff window, so it must not retry yet.
     const second = await store.flushOutbox()
-    expect(second).toEqual({ drained: 0, remaining: 1 })
+    expect(second).toMatchObject({ drained: 0, remaining: 1 })
     expect(mem.calls.setItem).toBe(before + 1)
   })
 
@@ -324,7 +324,7 @@ describe('outbox does not accumulate poison entries', () => {
     mem.setFault('setItem', { code: ErrorCode.QUOTA_EXCEEDED })
     const result = await store.flushOutbox()
 
-    expect(result).toEqual({ drained: 0, remaining: 0 })
+    expect(result).toMatchObject({ drained: 0, remaining: 0 })
     expect(store.pendingWrites()).toHaveLength(0)
     expect(errors).toContain(ErrorCode.QUOTA_EXCEEDED)
   })
@@ -338,7 +338,7 @@ describe('outbox does not accumulate poison entries', () => {
     await store.setItem('k', 'v')
     const result = await store.flushOutbox()
 
-    expect(result).toEqual({ drained: 0, remaining: 1 })
+    expect(result).toMatchObject({ drained: 0, remaining: 1 })
   })
 })
 

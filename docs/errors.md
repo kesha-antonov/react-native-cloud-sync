@@ -46,25 +46,36 @@ These are this package's codes. They map onto CloudKit's own ([framework errors]
 | `ERR_QUOTA_EXCEEDED` | Storage full | Tell the user |
 | `ERR_RATE_LIMITED` | Backing off | Retry after `retryAfterMs` |
 | `ERR_PAYLOAD_TOO_LARGE` | Above the store's limit | Use a bigger provider |
+| `ERR_INVALID_KEY` | Key cannot round-trip through the configured providers | Fix the key, or `sanitizeKey` it |
+| `ERR_TIMEOUT` | Ran longer than the configured timeout | Retry; it may still be in flight |
 | `ERR_CONFLICT` | A concurrent write won | Merge using `serverValue` |
 | `ERR_CONTAINER_MISCONFIGURED` | Entitlement, container or token problem | Fix the build |
 | `ERR_UNSUPPORTED_PLATFORM` | Provider unavailable here | Branch on `isAvailable()` |
-| `ERR_CANCELLED` | Cancelled by the caller | – |
+| `ERR_CANCELLED` | Cancelled by the caller | Nothing - they asked for it |
 | `ERR_UNKNOWN` | Unclassified; `cause` holds the original | Report it |
+
+`ERR_INVALID_KEY` is raised **before** the request, deliberately. An illegal CloudKit record name otherwise comes back as `BAD_REQUEST`, which maps to `ERR_CONTAINER_MISCONFIGURED` and sends you looking at your entitlements instead of at your key. See [keys](store.md#keys).
+
+`ERR_TIMEOUT` is not a failed operation, only an abandoned wait - the request may well still be in flight, and for an iCloud Drive download it definitely is. That is why it counts as retryable.
+
+`ERR_CANCELLED` is what a cancelled transfer rejects with: [`cloudKitAssets.cancel`](providers/cloudkit.md#assets), `cloudKitBackup.cancel`, or an `AbortLike` signal passed to [`googleDriveFiles`](providers/google-drive.md#large-files).
 
 ## Classifying without a switch
 
 ```ts
-import { isRetryable, requiresUserAction } from 'react-native-cloud-sync'
+import { isCancelled, isRetryable, requiresUserAction } from 'react-native-cloud-sync'
 
 try {
   await store.setItem('k', 'v')
 } catch (e) {
-  if (requiresUserAction(e)) promptUser(e.code)      // signed out, out of storage
+  if (isCancelled(e)) return                          // they asked; say nothing
+  if (requiresUserAction(e)) promptUser(e.code)       // signed out, out of storage
   else if (isRetryable(e)) scheduleRetry(e.retryAfterMs)
   else report(e)
 }
 ```
+
+`isCancelled` comes first because a cancelled operation is not a fault. A UI that shows an error toast for something the user asked to stop is wrong.
 
 With the [facade](store.md) and the outbox enabled, retryable failures are already queued for you - so most call sites only need the `requiresUserAction` branch.
 
@@ -96,6 +107,15 @@ try {
 // Genuinely nothing stored yet, so seeding is safe.
 if (value == null)
   seedInitialState()
+```
+
+For this to be safe, `null` has to mean *only* "no such key" - so the facade raises `ERR_NOT_SIGNED_IN` rather than resolving `null` when **no configured provider was reachable at all**. A signed-out user on first launch would otherwise take the `value == null` branch, seed empty state, and overwrite their real backup on the next write.
+
+The rule holds on both sides of that: if at least one provider answered and none of them had the key, you get `null`, because that genuinely is an absent key.
+
+```ts
+// One provider down, another up and holding the value -> the value.
+// Every provider down -> ERR_NOT_SIGNED_IN, never null.
 ```
 
 [ck]: https://developer.apple.com/documentation/cloudkit

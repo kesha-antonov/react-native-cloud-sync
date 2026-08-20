@@ -68,6 +68,21 @@
         "default": "./lib/commonjs/testing.js"
       }
     },
+    "./hooks": {
+      "source": "./src/hooks.ts",
+      "import": {
+        "types": "./lib/typescript/module/hooks.d.ts",
+        "default": "./lib/module/hooks.js"
+      },
+      "require": {
+        "types": "./lib/typescript/commonjs/hooks.d.ts",
+        "default": "./lib/commonjs/hooks.js"
+      }
+    },
+    "./jest-mock": {
+      "source": "./jest-mock.js",
+      "default": "./jest-mock.js"
+    },
     "./package.json": "./package.json"
   },
   "sideEffects": false,
@@ -76,6 +91,7 @@
     "LICENSE",
     "package.json",
     "app.plugin.js",
+    "jest-mock.js",
     "src/",
     "lib/",
     "ios/",
@@ -83,7 +99,6 @@
     "react-native-cloud-sync.podspec",
     "!**/__tests__",
     "!**/__fixtures__",
-    "!**/__mocks__",
     "!**/.*"
   ],
   "scripts": {
@@ -96,7 +111,8 @@
     "validate:podspec": "ruby scripts/validate-podspec.rb",
     "check:objc": "bash scripts/check-objc-surface.sh",
     "check:catalyst": "bash scripts/check-catalyst.sh",
-    "check:docs": "node scripts/check-docs-style.mjs",
+    "check:docs": "node scripts/check-docs-style.mjs && node scripts/check-docs-links.mjs",
+    "check:links": "node scripts/check-docs-links.mjs",
     "lint": "eslint .",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -129,6 +145,9 @@
     "react-native-builder-bob": "^0.43.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.66.0"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "peerDependencies": {
     "react": "*",

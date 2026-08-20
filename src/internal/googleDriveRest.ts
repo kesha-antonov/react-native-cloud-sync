@@ -1,4 +1,5 @@
 import { CloudSyncError, ErrorCode } from '../errors'
+import { throwIfAborted, withTimeout, type AbortLike } from './timeout'
 
 /**
  * Google Drive `appDataFolder` REST client.
@@ -31,11 +32,22 @@ export interface GoogleDriveConfig {
    * exercise the multi-chunk path without a multi-MB fixture.
    */
   chunkBytes?: number
+  /**
+   * Abandon a request that has not answered in this long. Default 60000.
+   *
+   * Longer than the CloudKit client's because one "request" here can be a whole
+   * 8 MiB chunk on a slow connection. `fetch` in React Native has no timeout of
+   * its own, so without this a dead socket hangs the transfer forever.
+   */
+  timeoutMs?: number
 }
 
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files'
 const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files'
+const ABOUT_URL = 'https://www.googleapis.com/drive/v3/about'
+const CHANGES_URL = 'https://www.googleapis.com/drive/v3/changes'
 const DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024
+const DEFAULT_TIMEOUT_MS = 60_000
 
 /** A local file `uploadFile` reads from, in fixed-size pieces. */
 export interface DriveChunkSource {
@@ -75,7 +87,14 @@ export interface GoogleDriveFileAdapter {
 interface DriveFile {
   id: string
   name: string
+  /** RFC 3339. Requested explicitly - Drive omits it unless `fields` asks. */
+  modifiedTime?: string
+  /** Drive's version counter. Increments on every content change. */
+  version?: string
 }
+
+/** The `fields` mask every listing uses, so a read also learns modification time. */
+const FILE_FIELDS = 'id,name,modifiedTime,version'
 
 /** True for the 404 the client tags when a file id no longer resolves. */
 function isNotFound(e: unknown): boolean {
@@ -100,6 +119,13 @@ export class GoogleDriveClient {
    * A scoped `q=` query plus this cache keeps a read to one request, usually zero.
    */
   private readonly idCache = new Map<string, string>()
+  /**
+   * name -> the metadata the last listing reported.
+   *
+   * Kept beside the id cache so `getItemWithMeta` does not need a second round
+   * trip to learn a modification time the `q=` query already returned.
+   */
+  private readonly metaCache = new Map<string, { modifiedAt?: number; version?: string }>()
   private readonly chunkBytes: number
 
   constructor(config: GoogleDriveConfig) {
@@ -135,9 +161,16 @@ export class GoogleDriveClient {
 
     let res: Response
     try {
-      res = await this.fetch(url, { ...init, headers })
+      res = await withTimeout(
+        this.fetch(url, { ...init, headers }),
+        this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        'googleDrive'
+      )
     }
     catch (e) {
+      // A timeout is already classified and retryable; re-wrapping it as a
+      // network failure would throw the distinction away.
+      if (e instanceof CloudSyncError) throw e
       throw new CloudSyncError(
         ErrorCode.NETWORK_UNAVAILABLE,
         '[RNCloudSync] Google Drive request failed to reach the server.',
@@ -204,15 +237,28 @@ export class GoogleDriveClient {
     // Scope the query server-side. Escaping matters: an apostrophe in a key
     // would otherwise terminate the quoted literal and produce a malformed query.
     const q = encodeURIComponent(`name='${name.replace(/'/g, '\\\'')}' and trashed=false`)
-    const url = `${FILES_URL}?spaces=appDataFolder&q=${q}&fields=files(id,name)&pageSize=10`
+    const url = `${FILES_URL}?spaces=appDataFolder&q=${q}&fields=files(${FILE_FIELDS})&pageSize=10`
 
     const res = await this.request(url, { method: 'GET' })
     const json = (await res.json()) as { files?: DriveFile[] }
     const file = json.files?.find(f => f.name === name)
-    if (file == null) return null
+    if (file == null) {
+      this.metaCache.delete(name)
+      return null
+    }
 
-    this.idCache.set(name, file.id)
+    this.remember(file)
     return file.id
+  }
+
+  /** Records what a listing told us about a file, ids and metadata together. */
+  private remember(file: DriveFile): void {
+    this.idCache.set(file.name, file.id)
+    const parsed = file.modifiedTime == null ? Number.NaN : Date.parse(file.modifiedTime)
+    this.metaCache.set(file.name, {
+      modifiedAt: Number.isNaN(parsed) ? undefined : parsed,
+      version: file.version,
+    })
   }
 
   async getItem(name: string): Promise<string | null> {
@@ -237,6 +283,44 @@ export class GoogleDriveClient {
     return await res.text()
   }
 
+  /**
+   * A read that also reports Drive's own `modifiedTime`.
+   *
+   * Free: resolving a name to an id is already a listing, and asking that
+   * listing for `modifiedTime` costs nothing extra. Surfacing it is what lets
+   * {@link resolveByModifiedAt} order copies without the app embedding a
+   * timestamp in its payload.
+   */
+  async getItemWithMeta(
+    name: string
+  ): Promise<{ value: string; modifiedAt?: number; version?: string } | null> {
+    const value = await this.getItem(name)
+    if (value == null) return null
+    const meta = this.metaCache.get(name)
+    return { value, modifiedAt: meta?.modifiedAt, version: meta?.version }
+  }
+
+  /**
+   * Storage usage for the whole Google account.
+   *
+   * Note this is the account's total, not the `appDataFolder`'s share of it -
+   * Drive reports no per-folder usage. Still the number a "you are running out
+   * of space" prompt needs, because that is the limit a write will actually hit.
+   * `limit` is absent for unlimited (Workspace pooled) accounts.
+   */
+  async getQuota(): Promise<{ usedBytes?: number; totalBytes?: number }> {
+    const res = await this.request(`${ABOUT_URL}?fields=storageQuota`, { method: 'GET' })
+    const json = (await res.json()) as {
+      storageQuota?: { usage?: string; limit?: string }
+    }
+    const usage = Number(json.storageQuota?.usage)
+    const limit = Number(json.storageQuota?.limit)
+    return {
+      usedBytes: Number.isFinite(usage) ? usage : undefined,
+      totalBytes: Number.isFinite(limit) ? limit : undefined,
+    }
+  }
+
   async setItem(name: string, value: string): Promise<void> {
     const id = await this.findFileId(name)
 
@@ -254,6 +338,7 @@ export class GoogleDriveClient {
         // of failing every future write to this key.
         if (!isNotFound(e)) throw e
         this.idCache.delete(name)
+        this.metaCache.delete(name)
       }
 
     // Multipart create: metadata part pins the file into appDataFolder, second
@@ -267,13 +352,14 @@ export class GoogleDriveClient {
         + `Content-Type: application/json\r\n\r\n${value}\r\n`
         + `--${boundary}--`
 
-    const res = await this.request(`${UPLOAD_URL}?uploadType=multipart&fields=id`, {
+    const res = await this.request(`${UPLOAD_URL}?uploadType=multipart&fields=${FILE_FIELDS}`, {
       method: 'POST',
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
       body,
     })
-    const json = (await res.json()) as { id?: string }
-    if (json.id != null) this.idCache.set(name, json.id)
+    const json = (await res.json()) as Partial<DriveFile>
+    // Remember what the create returned so the next read does not have to list.
+    if (json.id != null) this.remember({ ...json, id: json.id, name })
   }
 
   /**
@@ -297,8 +383,10 @@ export class GoogleDriveClient {
   async uploadFile(
     name: string,
     source: DriveChunkSource,
-    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void,
+    signal?: AbortLike
   ): Promise<void> {
+    throwIfAborted(signal, 'googleDrive')
     const existingId = await this.findFileId(name)
     const sessionUrl = await this.startResumableSession(name, existingId)
 
@@ -308,6 +396,10 @@ export class GoogleDriveClient {
 
     // A zero-byte file still needs one request to actually create it.
     do {
+      // Checked between chunks rather than only up front: a cancel during a
+      // multi-hundred-megabyte transfer has to take effect while it is running,
+      // which is the entire point of being able to cancel one.
+      throwIfAborted(signal, 'googleDrive')
       const length = Math.min(this.chunkBytes, total - offset)
       const step = await this.putChunkWithRetry(sessionUrl, source, offset, length, total, onProgress)
       offset = step.nextOffset
@@ -420,8 +512,10 @@ export class GoogleDriveClient {
   async downloadFile(
     name: string,
     sink: DriveChunkSink,
-    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void,
+    signal?: AbortLike
   ): Promise<boolean> {
+    throwIfAborted(signal, 'googleDrive')
     const id = await this.findFileId(name)
     if (id == null) return false
 
@@ -436,6 +530,7 @@ export class GoogleDriveClient {
     let offset = 0
     let isFirstChunk = true
     while (offset < total) {
+      throwIfAborted(signal, 'googleDrive')
       const end = Math.min(offset + this.chunkBytes, total) - 1
       const res = await this.request(`${FILES_URL}/${id}?alt=media`, {
         method: 'GET',
@@ -471,6 +566,7 @@ export class GoogleDriveClient {
     }
     finally {
       this.idCache.delete(name)
+      this.metaCache.delete(name)
     }
   }
 
@@ -483,7 +579,7 @@ export class GoogleDriveClient {
       const params = new URLSearchParams({
         spaces: 'appDataFolder',
         q: 'trashed=false',
-        fields: 'nextPageToken,files(id,name)',
+        fields: `nextPageToken,files(${FILE_FIELDS})`,
         pageSize: '100',
       })
       if (pageToken != null) params.set('pageToken', pageToken)
@@ -493,12 +589,113 @@ export class GoogleDriveClient {
 
       for (const f of json.files ?? []) {
         names.push(f.name)
-        this.idCache.set(f.name, f.id)
+        this.remember(f)
       }
       pageToken = json.nextPageToken
     } while (pageToken != null)
 
     return names
+  }
+
+  /**
+   * A cursor marking "everything up to now", for {@link pollChanges}.
+   *
+   * Drive's change feed is cursor-based rather than time-based, so a watcher
+   * has to take a starting cursor before it can ask what changed since.
+   */
+  async getStartPageToken(): Promise<string> {
+    const res = await this.request(
+      `${CHANGES_URL}/startPageToken?spaces=appDataFolder`,
+      { method: 'GET' }
+    )
+    const json = (await res.json()) as { startPageToken?: string }
+    if (json.startPageToken == null)
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] Google Drive did not return a change cursor.',
+        { provider: 'googleDrive' }
+      )
+
+    return json.startPageToken
+  }
+
+  /**
+   * What changed in `appDataFolder` since `pageToken`, and the cursor to use
+   * next time.
+   *
+   * This is how a non-Apple platform learns that another device wrote something
+   * - CloudKit gets `NSUbiquitousKeyValueStore` notifications and `CKAccountChanged`
+   * for free, but Drive has no push channel without a server to receive its
+   * webhooks, so the honest equivalent is a cursor the app polls. Cheap: a poll
+   * with nothing to report is one request returning an empty list.
+   *
+   * Deletions are included - `removed` entries and trashed files both surface,
+   * because "another device deleted this key" is exactly as important as
+   * "another device changed it".
+   */
+  async pollChanges(pageToken: string): Promise<{ names: string[]; nextToken: string }> {
+    const names = new Set<string>()
+    let token = pageToken
+    let nextToken: string
+
+    for (;;) {
+      const params = new URLSearchParams({
+        pageToken: token,
+        spaces: 'appDataFolder',
+        includeRemoved: 'true',
+        fields: 'newStartPageToken,nextPageToken,changes(fileId,removed,file(id,name,trashed))',
+      })
+      const res = await this.request(`${CHANGES_URL}?${params.toString()}`, { method: 'GET' })
+      const json = (await res.json()) as {
+        newStartPageToken?: string
+        nextPageToken?: string
+        changes?: {
+          fileId?: string
+          removed?: boolean
+          file?: { id?: string; name?: string; trashed?: boolean }
+        }[]
+      }
+
+      for (const change of json.changes ?? []) {
+        const name = change.file?.name
+        if (name != null) {
+          names.add(name)
+          // A file that went away must not keep answering reads from the id
+          // cache, and one that changed must be re-read rather than served
+          // from a stale memo.
+          if (change.removed === true || change.file?.trashed === true) {
+            this.idCache.delete(name)
+            this.metaCache.delete(name)
+          }
+          continue
+        }
+
+        // Drive omits `file` for a change the caller can no longer see. All we
+        // have is the id, so drop whichever cached name points at it.
+        if (change.fileId != null) this.forgetById(change.fileId)
+      }
+
+      // `nextPageToken` means more pages of the same batch; `newStartPageToken`
+      // means this was the last page and is the cursor for next time.
+      if (json.nextPageToken != null) {
+        token = json.nextPageToken
+        continue
+      }
+      nextToken = json.newStartPageToken ?? token
+      break
+    }
+
+    return { names: [...names], nextToken }
+  }
+
+  /** Drops whatever name currently memoises this file id. */
+  private forgetById(fileId: string): void {
+    for (const [name, id] of this.idCache)
+      if (id === fileId) {
+        this.idCache.delete(name)
+        this.metaCache.delete(name)
+        return
+      }
   }
 
   /**
@@ -517,5 +714,6 @@ export class GoogleDriveClient {
   /** Drops memoised file ids. Call after an account switch. */
   clearCache(): void {
     this.idCache.clear()
+    this.metaCache.clear()
   }
 }

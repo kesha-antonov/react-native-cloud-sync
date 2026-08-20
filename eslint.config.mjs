@@ -14,6 +14,8 @@ export default [
       'website/**',
       'plugin/build/**',
       '__mocks__/**',
+      // Shipped Jest setup file: plain CommonJS with jest globals, not library source.
+      'jest-mock.js',
       'eslint.config.mjs',
       'jest.config.cjs',
       'babel.config.cjs',
