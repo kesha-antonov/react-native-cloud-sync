@@ -78,28 +78,12 @@ configureGoogleDriveFiles({
     FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64, position, length }),
   writeChunk: (uri, base64) =>
     FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 }),
-  // expo-file-system has no append mode; write-then-read-back-and-concatenate
-  // works but is O(n²) over a large file - react-native-fs's appendFile below
-  // is the better choice once files get into the hundreds of MB.
-  appendChunk: async (uri, base64) => {
-    const existing = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
-    await FileSystem.writeAsStringAsync(uri, existing + base64, { encoding: FileSystem.EncodingType.Base64 })
-  },
+  appendChunk: (uri, base64) =>
+    FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64, append: true }),
 })
 ```
 
-Or with `react-native-fs`, which has a real append and reads the same way:
-
-```ts
-import RNFS from 'react-native-fs'
-
-configureGoogleDriveFiles({
-  statSize: async uri => (await RNFS.stat(uri)).size,
-  readChunk: (uri, position, length) => RNFS.read(uri, length, position, 'base64'),
-  writeChunk: (uri, base64) => RNFS.writeFile(uri, base64, 'base64'),
-  appendChunk: (uri, base64) => RNFS.appendFile(uri, base64, 'base64'),
-})
-```
+(`react-native-fs` also fits this shape, but it has had no commits in over two years and 600+ open issues - not a bet worth making for something a 500 MB restore depends on. `expo-file-system` works in a bare React Native project too, without the rest of Expo.)
 
 Then:
 
@@ -125,7 +109,11 @@ Calling `save`/`fetch` before `configureGoogleDriveFiles` rejects with `ERR_CONT
 
 Resumability here is scoped to one call: the upload session lives only in memory, so a chunk that fails mid-flight is retried against Drive's real offset, but a process that dies mid-upload has to restart `save` from byte 0 on the next call. Persisting the session across restarts is not implemented.
 
+If losing a transfer to the app being backgrounded or killed mid-way is the failure you actually care about, that is a different problem than the one `googleDriveFiles` solves, and [`@kesha-antonov/react-native-background-downloader`][rnbd] is built for exactly it - `createUploadTask`/`createDownloadTask` hand the whole transfer to `NSURLSession`/a foreground service, so it keeps running (and can be re-attached to via `getExistingUploadTasks`/`getExistingDownloadTasks`) even after the OS terminates the app. It does not implement `GoogleDriveFileAdapter` - it works in whole-file HTTP tasks, not the byte-range chunk reads/writes the adapter contract needs - so using it means going around `googleDriveFiles` and driving Drive's plain (non-resumable) `uploadType=media`/`alt=media` endpoints directly with it, trading Drive's own resumable protocol for the OS's background-session resilience instead.
+
 For the CloudKit-native equivalent on iOS/macOS, see [assets](cloudkit.md#assets) and [the backup/restore helper](cloudkit.md#backuprestore-helper); [Recipes](../recipes.md#cross-platform-large-file-backup) shows the two paired behind one function.
+
+[rnbd]: https://www.npmjs.com/package/@kesha-antonov/react-native-background-downloader
 
 ## Availability
 

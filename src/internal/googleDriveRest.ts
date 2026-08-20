@@ -53,10 +53,10 @@ export interface DriveChunkSink {
  * this package depending on a filesystem library.
  *
  * base64 in and out - not a stream or a byte array - because that is the
- * primitive every RN filesystem library actually exposes for a chunked
- * read/write (`react-native-fs`'s `read`/`RNFS.write`, `expo-file-system`'s
- * `readAsStringAsync`/`writeAsStringAsync` with `EncodingType.Base64`), so the
- * adapter mirrors that rather than inventing an abstraction nothing implements
+ * primitive RN filesystem libraries actually expose for a chunked read/write
+ * (`expo-file-system`'s `readAsStringAsync`/`writeAsStringAsync` with
+ * `EncodingType.Base64` and `position`/`length`/`append`), so the adapter
+ * mirrors that rather than inventing an abstraction nothing implements
  * natively. `googleDriveFiles` does the base64 <-> bytes conversion at the
  * boundary; a chunk is capped at `chunkBytes` (8 MiB default), so the base64
  * string is never larger than that either.
