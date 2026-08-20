@@ -1,82 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-08-20
 
-### 🐛 Bug Fixes
-
-- **Google Drive picked arbitrarily between files sharing a name.** Drive names
-  are not unique - it is a file store with ids - so two devices creating the
-  same key while both are offline genuinely produce two files, and the list
-  order Drive returns is unspecified. Taking the first match let two devices
-  settle on different files and diverge permanently with nothing reported
-  anywhere. Now ordered by modification time with the id as a tiebreak, so
-  every device agrees; `onDuplicateName: 'error'` raises `ERR_CONFLICT`
-  instead.
-- **`cloudKit.onRemoteChange` accepted listeners it could never call.** The only
-  `remoteChange` the native layer emits is tagged `icloudKV`, and the filter
-  looked for `cloudKit` - so it was a subscription that silently never fired,
-  which a caller cannot tell apart from "nothing has changed". Removed rather
-  than faked: `cloudKit.onRemoteChange` is now `undefined` and checkable.
-  Implementing it needs a custom zone (the default zone has no change tokens)
-  or an APNs `CKDatabaseSubscription`.
-- **An account change was delivered twice.** `icloudKV` and `cloudKit` both
-  observe the same two system notifications and relabel them, so a store
-  configured with both handed one system event to app listeners twice.
-- **Key validation applied CloudKit's rules to every provider.** The record-name
-  alphabet and the reserved `_` prefix are CloudKit restrictions;
-  `NSUbiquitousKeyValueStore` keys are plain strings with no character rules,
-  and Drive file names are nearly as permissive. Checking them unconditionally
-  rejected keys that had been in production for years - a real app syncing only
-  through the key-value store uses `auth/anonymousUserId/v1`, which would have
-  started throwing `ERR_INVALID_KEY`. Every rule is now scoped to the provider
-  that imposes it.
-- **The `codec` documentation had the ordering backwards.** It said encoding ran
-  after tiering picked a destination; it runs before, so a value is routed by
-  the size it will actually occupy. The behaviour was right, the docs were
-  wrong, and the difference matters for anyone sizing an inflating cipher
-  against `kvMaxBytes`. Now pinned by tests.
-- **`cloudKitEncrypted` was missing from the store's built-in provider map**,
-  so naming it in `providers` raised "Unknown provider" - caught by its own
-  test before release.
-- **`store.getItem()` no longer resolves `null` when nothing was reachable.**
-  `null` is documented as meaning "the key does not exist" and nothing else, and
-  the first-launch recipe branches on it by seeding empty state - so a
-  signed-out user took that branch and overwrote their real backup on the next
-  write. When no configured provider is available the read now raises
-  `ERR_NOT_SIGNED_IN`, matching what `setItem` and `removeItem` already did.
-  `null` still means an absent key whenever at least one provider answered.
-- **A queued write can no longer overwrite a newer successful one.** An offline
-  `setItem(k, v1)` queued v1; a later online `setItem(k, v2)` succeeded
-  directly; the next flush wrote v1 back over v2. A successful write or delete
-  now invalidates anything queued for the same key and provider.
-- **`flushOutbox()` no longer loses writes enqueued while it is running.** It
-  snapshotted the queue, awaited the network, then wrote the snapshot back
-  wholesale - discarding anything that failed and enqueued itself in between.
-  It now merges, and two concurrent flushes join rather than each re-sending
-  every entry.
-- **`mirror` plus tiering no longer strands a stale copy.** A value that grew
-  past `kvMaxBytes` was written to the larger providers and *skipped* on the
-  key-value store, which kept the older, smaller copy - and reads prefer that
-  provider, so `getItem` served the stale value forever. The skipped provider's
-  copy is now removed, once the new value has landed somewhere. Read repair does
-  the same instead of silently leaving a copy it could not overwrite.
-- **An account switch no longer leaks state into the next account.** On
-  `identityChanged` the store drops memoised availability, calls `clearCaches()`
-  on every provider (Drive file ids, CloudKit reachability), and abandons the
-  outbox - a queued entry carries no account identity, so flushing after a
-  switch wrote the previous user's data into the new user's account.
-- **The outbox is bounded.** It had no cap, no maximum attempts and no maximum
-  age, and every enqueue rewrites the whole blob - so a long offline stretch
-  degraded the write path itself. Now `outboxMaxEntries` / `outboxMaxAttempts` /
-  `outboxMaxAgeMs`, with every abandoned entry reported through `onDropped`
-  rather than vanishing.
-- **`cloudKit.isAvailable()` no longer throws on a web build served by a
-  non-Metro bundler.** webpack, Vite and Next.js do not resolve the `.web.ts`
-  platform extension, and react-native-web exports no `TurboModuleRegistry`, so
-  the lookup was a TypeError inside a method documented as safe on a render
-  path.
-- **`byteLength` no longer relies on `unescape`,** which is deprecated and
-  absent in some runtimes.
+First release.
 
 ### ✨ Features
 
@@ -246,6 +172,87 @@
   so callers threading the value through their own functions had to re-declare
   the union by hand.
 
+### 🛡️ Correctness
+
+Failure modes found and closed while building this, listed because they are the
+exact paths this package exists to keep shut - and because most of them are
+still live in the libraries it replaces. "Previously" here means earlier in this
+repository's own history, not in any published version.
+
+- **Google Drive picked arbitrarily between files sharing a name.** Drive names
+  are not unique - it is a file store with ids - so two devices creating the
+  same key while both are offline genuinely produce two files, and the list
+  order Drive returns is unspecified. Taking the first match let two devices
+  settle on different files and diverge permanently with nothing reported
+  anywhere. Now ordered by modification time with the id as a tiebreak, so
+  every device agrees; `onDuplicateName: 'error'` raises `ERR_CONFLICT`
+  instead.
+- **`cloudKit.onRemoteChange` accepted listeners it could never call.** The only
+  `remoteChange` the native layer emits is tagged `icloudKV`, and the filter
+  looked for `cloudKit` - so it was a subscription that silently never fired,
+  which a caller cannot tell apart from "nothing has changed". Removed rather
+  than faked: `cloudKit.onRemoteChange` is now `undefined` and checkable.
+  Implementing it needs a custom zone (the default zone has no change tokens)
+  or an APNs `CKDatabaseSubscription`.
+- **An account change was delivered twice.** `icloudKV` and `cloudKit` both
+  observe the same two system notifications and relabel them, so a store
+  configured with both handed one system event to app listeners twice.
+- **Key validation applied CloudKit's rules to every provider.** The record-name
+  alphabet and the reserved `_` prefix are CloudKit restrictions;
+  `NSUbiquitousKeyValueStore` keys are plain strings with no character rules,
+  and Drive file names are nearly as permissive. Checking them unconditionally
+  rejected keys that had been in production for years - a real app syncing only
+  through the key-value store uses `auth/anonymousUserId/v1`, which would have
+  started throwing `ERR_INVALID_KEY`. Every rule is now scoped to the provider
+  that imposes it.
+- **The `codec` documentation had the ordering backwards.** It said encoding ran
+  after tiering picked a destination; it runs before, so a value is routed by
+  the size it will actually occupy. The behaviour was right, the docs were
+  wrong, and the difference matters for anyone sizing an inflating cipher
+  against `kvMaxBytes`. Now pinned by tests.
+- **`cloudKitEncrypted` was missing from the store's built-in provider map**,
+  so naming it in `providers` raised "Unknown provider" - caught by its own
+  test before release.
+- **`store.getItem()` no longer resolves `null` when nothing was reachable.**
+  `null` is documented as meaning "the key does not exist" and nothing else, and
+  the first-launch recipe branches on it by seeding empty state - so a
+  signed-out user took that branch and overwrote their real backup on the next
+  write. When no configured provider is available the read now raises
+  `ERR_NOT_SIGNED_IN`, matching what `setItem` and `removeItem` already did.
+  `null` still means an absent key whenever at least one provider answered.
+- **A queued write can no longer overwrite a newer successful one.** An offline
+  `setItem(k, v1)` queued v1; a later online `setItem(k, v2)` succeeded
+  directly; the next flush wrote v1 back over v2. A successful write or delete
+  now invalidates anything queued for the same key and provider.
+- **`flushOutbox()` no longer loses writes enqueued while it is running.** It
+  snapshotted the queue, awaited the network, then wrote the snapshot back
+  wholesale - discarding anything that failed and enqueued itself in between.
+  It now merges, and two concurrent flushes join rather than each re-sending
+  every entry.
+- **`mirror` plus tiering no longer strands a stale copy.** A value that grew
+  past `kvMaxBytes` was written to the larger providers and *skipped* on the
+  key-value store, which kept the older, smaller copy - and reads prefer that
+  provider, so `getItem` served the stale value forever. The skipped provider's
+  copy is now removed, once the new value has landed somewhere. Read repair does
+  the same instead of silently leaving a copy it could not overwrite.
+- **An account switch no longer leaks state into the next account.** On
+  `identityChanged` the store drops memoised availability, calls `clearCaches()`
+  on every provider (Drive file ids, CloudKit reachability), and abandons the
+  outbox - a queued entry carries no account identity, so flushing after a
+  switch wrote the previous user's data into the new user's account.
+- **The outbox is bounded.** It had no cap, no maximum attempts and no maximum
+  age, and every enqueue rewrites the whole blob - so a long offline stretch
+  degraded the write path itself. Now `outboxMaxEntries` / `outboxMaxAttempts` /
+  `outboxMaxAgeMs`, with every abandoned entry reported through `onDropped`
+  rather than vanishing.
+- **`cloudKit.isAvailable()` no longer throws on a web build served by a
+  non-Metro bundler.** webpack, Vite and Next.js do not resolve the `.web.ts`
+  platform extension, and react-native-web exports no `TurboModuleRegistry`, so
+  the lookup was a TypeError inside a method documented as safe on a render
+  path.
+- **`byteLength` no longer relies on `unescape`,** which is deprecated and
+  absent in some runtimes.
+
 ### 📚 Documentation
 
 - **The CloudKit schema is documented.** Record type `KVBlob`, a `value` String
@@ -275,11 +282,6 @@
   export still resolves; the site build now throws on a broken anchor rather
   than warning.
 
-## v0.1.0
-
-Initial release.
-
-### ✨ Features
 
 - **Three providers behind one API.** `icloudKV` wraps `NSUbiquitousKeyValueStore`,
   `cloudKit` wraps the CloudKit private database, and `googleDrive` wraps Drive's
