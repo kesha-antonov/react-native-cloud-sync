@@ -48,7 +48,7 @@ On an iPhone with iCloud signed in, writes go to **iCloud only**. Drive is a rea
 
 Use this when the providers are alternatives - iCloud where it exists, Drive otherwise - and each device only needs to reach its own copy.
 
-**It does not give you cross-platform sync.** If that iPhone only ever wrote to iCloud, an Android device has nothing to read: iCloud is unreachable there, and Drive was never written to. For that you need `mirror`, or you need the user on Drive.
+It does not give you cross-platform sync. If that iPhone only ever wrote to iCloud, an Android device has nothing to read: iCloud is unreachable there, and Drive was never written to. For that you need `mirror`, or you need the user on Drive.
 
 ### `mirror` - the same data in more than one place
 
@@ -63,17 +63,17 @@ Every write goes to every available provider. Now the iPhone writes to iCloud *a
 
 Costs one request per provider per write, and requires the user to have connected each one.
 
-**Partial failure is a success.** If one destination stores the value and another is offline, the write resolves and the failed one goes to the [outbox](#the-outbox) to be retried on its own. One good copy plus a queued retry is a better outcome than rejecting a write the user has already been told about. It rejects only when *nothing* stored it.
+Partial failure counts as a success: if one destination stores the value and another is offline, the write resolves and the failed one goes to the [outbox](#the-outbox) to be retried on its own. One good copy plus a queued retry is a better outcome than rejecting a write the user has already been told about. It rejects only when *nothing* stored it.
 
-**Deletes mirror too.** Removing from only the preferred provider would leave a copy that reads then fall through to, resurrecting deleted data.
+Deletes mirror too - removing from only the preferred provider would leave a copy that reads then fall through to, resurrecting deleted data.
 
-**Values too large for a provider are skipped, not fatal.** A 200 KB value goes to Drive and skips the iCloud key-value store rather than failing the whole write. If it fits nowhere, that rejects with `ERR_PAYLOAD_TOO_LARGE`.
+Values too large for a provider are skipped, not fatal: a 200 KB value goes to Drive and skips the iCloud key-value store rather than failing the whole write. If it fits nowhere, that rejects with `ERR_PAYLOAD_TOO_LARGE`.
 
 ### Read fallthrough
 
 In both modes `getItem` tries each available provider in order and returns the first value found. `getAllKeys()` unions across providers, and a provider that cannot list does not hide the ones that can.
 
-**First found is not newest.** That distinction does not matter while only one population of devices writes, and matters enormously as soon as both do - see below.
+First found is not newest - that distinction does not matter while only one population of devices writes, and matters enormously as soon as both do. See below.
 
 ## Two-way sync across a mixed fleet
 

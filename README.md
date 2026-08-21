@@ -27,23 +27,23 @@
 
 ## ✨ Features
 
-- ☁️ **Four providers, one API** - [`NSUbiquitousKeyValueStore`][kvs] (iCloud's key-value store), [CloudKit][ck] records, [iCloud Drive][icdrive] documents and Google Drive [`appDataFolder`][appdata], each usable directly or through a single facade.
-- 🍏 **CloudKit from Android and the web** - the same [private database][ckdb] your iOS app writes to, over [CloudKit Web Services][ckws]. No other React Native library offers this.
-- 📂 **Files the user can actually see** - `icloudDocuments` writes into their iCloud Drive, visible in Files.app. A `CKAsset` is invisible to the user; this is the one thing no CloudKit API can do.
-- 🚨 **Errors you can act on** - every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...). `null` means one thing only: the key does not exist - never "we could not reach the cloud".
-- 👤 **Real account lifecycle** - all five [`CKAccountStatus`][ckstatus] values, plus `onAccountChange` with an `identityChanged` flag. The store acts on it too: provider caches and queued writes belonging to the previous user are dropped, not leaked into the next account.
-- 🔔 **Remote change events** - `onRemoteChange` on every provider *and* on the facade, including Google Drive via its change cursor.
-- 📦 **Automatic size tiering** - small values to the key-value store, larger to a [`CKRecord`][ckrecord] field. Binary goes in as a [`CKAsset`][ckasset] or a resumable Drive upload. Store limits stop leaking into your product code.
-- 🔁 **Durable outbox** - retryable failures are queued and retried with backoff that honours server retry hints, drained automatically on foreground, bounded so it cannot grow forever, and never allowed to overwrite a newer write.
-- 🧺 **Batch operations** - `multiGet`/`multiSet`/`multiRemove`/`clear`, one request per provider that genuinely batches rather than a loop wearing a batch's clothes.
-- 🪝 **React hooks** - `useCloudItem`, `useAccountStatus`, `usePendingWrites`, from `/hooks`, without the stale-response and unmounted-`setState` bugs every hand-rolled version has.
-- 🔐 **Real end-to-end encryption** - `cloudKitEncrypted` uses CloudKit's own `encryptedValues`, so Apple stores ciphertext and holds no key, with nothing for you to manage. Everywhere else, a `codec` seam for a cipher you chose - because Drive's `appDataFolder` is plaintext to anything holding the OAuth token.
-- 🧪 **A real testing story** - an in-memory provider with fault injection plus the native mock itself, both exported from the package (`/testing`, `/jest-mock`), so signed-out, offline, quota-exceeded and account-switch paths are all testable in Jest.
-- ⚙️ **Old and new architecture** - React Native 0.71 through 0.86+, with the `#ifdef` bridge to prove it.
+- ☁️ Four providers behind one API - [`NSUbiquitousKeyValueStore`][kvs] (iCloud's key-value store), [CloudKit][ck] records, [iCloud Drive][icdrive] documents and Google Drive [`appDataFolder`][appdata]. Use any of them directly, or through a single facade.
+- 🍏 CloudKit works from Android and the web too, over [CloudKit Web Services][ckws] - the same [private database][ckdb] your iOS app writes to. No other React Native library does this.
+- 📂 `icloudDocuments` writes into the user's actual iCloud Drive, visible in Files.app. A `CKAsset` is invisible to the user - this is the one thing no CloudKit API can do.
+- 🚨 Every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...). `null` means one thing: the key does not exist, never "we could not reach the cloud".
+- 👤 All five [`CKAccountStatus`][ckstatus] values are surfaced as-is, plus `onAccountChange` with an `identityChanged` flag. The store acts on it: provider caches and queued writes belonging to the previous user are dropped, not leaked into the next account.
+- 🔔 `onRemoteChange` fires on every provider *and* on the facade, including Google Drive via its change cursor.
+- 📦 Small values go to the key-value store, larger ones to a [`CKRecord`][ckrecord] field, binary as a [`CKAsset`][ckasset] or a resumable Drive upload - sized automatically so store limits don't leak into your product code.
+- 🔁 Retryable failures queue into a durable outbox, retried with backoff that honours server retry hints, drained automatically on foreground, bounded so it cannot grow forever, and never allowed to overwrite a newer write.
+- 🧺 `multiGet`/`multiSet`/`multiRemove`/`clear` batch for real, one request per provider - not a loop dressed up as a batch.
+- 🪝 React hooks - `useCloudItem`, `useAccountStatus`, `usePendingWrites` from `/hooks` - without the stale-response and unmounted-`setState` bugs every hand-rolled version has.
+- 🔐 `cloudKitEncrypted` uses CloudKit's own `encryptedValues`: Apple stores ciphertext, holds no key, and there's nothing for you to manage. Everywhere else there's a `codec` seam for a cipher you choose, since Drive's `appDataFolder` is plaintext to anything holding the OAuth token.
+- 🧪 An in-memory provider with fault injection, plus the native mock itself, both exported from the package (`/testing`, `/jest-mock`) - signed-out, offline, quota-exceeded and account-switch paths are all testable in Jest.
+- ⚙️ Supports React Native 0.71 through 0.86+, old and new architecture, with the `#ifdef` bridge to prove it.
 
 ## 💡 Why?
 
-Cloud storage in React Native is fragmented into single-provider wrappers, and almost all of them repeat the same handful of defects. Two independent libraries in this space ship a `setItem` that **reports a failed write as a success** - one checks the wrong error variable in its completion block, the other discards the operation result entirely. A third flattens five distinct iCloud account states into one boolean. A fourth has an open issue titled *"Idea: Listening for changes"* whose author replied *"Good idea, let's do it!"*, opened the PR himself, and left it unmerged for six months.
+Cloud storage in React Native is fragmented into single-provider wrappers, and almost all of them repeat the same handful of defects. Two independent libraries in this space ship a `setItem` that **reports a failed write as a success** - one checks the wrong error variable in its completion block, the other discards the operation result entirely. A third flattens five distinct iCloud account states into one boolean. A fourth has an open feature request for change-listener support that's sat unresolved for years.
 
 The common thread is that failure paths are treated as an afterthought. A `catch { return null }` makes "not signed in", "offline", "out of storage" and "no such key" indistinguishable - so apps cannot tell the user anything useful, and cannot decide whether to retry.
 
@@ -121,15 +121,15 @@ This package is a wrapper. When something behaves unexpectedly, the answer is us
 | Mac Catalyst | ✅ | – | – | ⚠️ | – | – |
 | Actively maintained | ✅ | ✅ | ✅ | ❌ [^8] | ❌ [^5] | ❌ |
 
-[^1]: expo-cloudkit's README states Android returns `CloudKitNotSupportedError` on every call.
-[^2]: Text-based Google Drive operations only.
-[^3]: Expo Modules API supports both architectures, but these packages require `expo-modules-core`.
-[^4]: The event exists and has crashed with `std::bad_function_call` (SIGABRT) when it fires before JS binds the emitter - reported independently three times.
-[^5]: One version ever published; the change-listener PR has been open since February.
-[^6]: Its field type is `string | number | null`, so binary data cannot be stored at all.
-[^7]: A mock factory exists but is not exported from the package entry and is not mentioned in the README.
-[^8]: No commits since April; four npm releases shipped with Swift that did not compile.
-[^9]: `CKAsset`, streamed from disk, on Apple platforms. Not yet implemented over CloudKit Web Services, so on Android and web asset calls reject with `ERR_UNSUPPORTED_PLATFORM` rather than appearing to work - use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for binaries there, which chunks and resumes the same way `CKAsset` does.
+[^1]: expo-cloudkit's own README says Android throws `CloudKitNotSupportedError` on every call.
+[^2]: Google Drive support is text-based only.
+[^3]: Works on both architectures through the Expo Modules API, but that means pulling in `expo-modules-core`.
+[^4]: The event exists, but if it fires before JS binds the emitter it crashes with `std::bad_function_call` (SIGABRT) - we've hit this three separate times.
+[^5]: Only one version has ever shipped, and the PR adding a change-listener has been sitting open since February.
+[^6]: Its field type is `string | number | null`, so it can't hold binary data at all.
+[^7]: There's a mock factory in there, but it's not exported from the package entry and isn't documented in the README.
+[^8]: No commits since April, and the last four npm releases shipped with Swift that didn't even compile.
+[^9]: `CKAsset`, streamed from disk, on Apple platforms only - not implemented over CloudKit Web Services yet, so Android and web asset calls reject with `ERR_UNSUPPORTED_PLATFORM` instead of quietly working. Use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for binaries there instead - it chunks and resumes the same way `CKAsset` does.
 
 [kuatsu]: https://github.com/kuatsu/react-native-cloud-storage
 [ik]: https://github.com/BogdanGeorgian91/react-native-icloud-kit

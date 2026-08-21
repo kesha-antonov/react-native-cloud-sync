@@ -71,13 +71,11 @@ So plan CloudKit-on-Android as a deliberate, user-initiated **import/export**, n
 
 Set the Sign In Callback in the CloudKit Console to `cloudkit-<container-id>://callback`. A custom scheme is intercepted far more reliably than an `https` URL - `onShouldStartLoadWithRequest` is not dependable for Android's server-side 302s.
 
-### No native Android code
+### No native Android module
 
-This package ships no Android native module. CloudKit and Drive are both reached over REST from JavaScript, which is the same code path the web build uses. One implementation, two platforms - and the auth handling and error mapping, where bugs in this area actually live, exist in exactly one place.
+This package ships no Android native module. CloudKit and Drive are both reached over REST from JavaScript, which is the same code path the web build uses - one implementation, two platforms, and the auth handling and error mapping, where bugs in this area actually live, exist in exactly one place.
 
-### No native Android module, and what that costs
-
-Repeating the summary above because it is the thing people are surprised by: `icloudKV` and `icloudDocuments` are Apple filesystem and OS features with no REST surface, so they do not exist on Android at any price. `cloudKit` reaches the *same private database* over CloudKit Web Services, but needs an interactive Apple ID sign-in whose token lasts 30 minutes - or two weeks if the user ticked "Keep me signed in" - with no documented refresh.
+That has a real consequence: `icloudKV` and `icloudDocuments` are Apple filesystem and OS features with no REST surface, so they do not exist on Android at any price. `cloudKit` reaches the *same private database* over CloudKit Web Services, but needs an interactive Apple ID sign-in whose token lasts 30 minutes - or two weeks if the user ticked "Keep me signed in" - with no documented refresh.
 
 So on Android, `googleDrive` is the provider for continuous background sync, and `cloudKit` is the provider for a deliberate "bring my iPhone data over" import. Building an always-on Android backup on CloudKit means asking the user to re-authenticate every fortnight, forever.
 

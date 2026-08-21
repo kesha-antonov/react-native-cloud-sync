@@ -14,10 +14,10 @@ Whether your data is end-to-end encrypted depends on the backend, and the answer
 
 "End-to-end" means the provider stores ciphertext it cannot decrypt. Everything else means the data is encrypted on the wire and on their disks, but the provider holds a key - so it is readable by them, by a legal request, and by anyone who compromises the account.
 
-The two things worth internalising:
+Two things worth internalising:
 
-- **CloudKit has real, native end-to-end encryption**, and this package exposes it. No key management, no passphrase, nothing to lose.
-- **Google Drive does not, at all.** `appDataFolder` is hidden from the user's Drive UI, which is not the same as private - anything holding the OAuth token can read it, including your own app's backend if you ever put one in the path. If you want E2E on Drive, you build it.
+- CloudKit has real, native end-to-end encryption, and this package exposes it - no key management, no passphrase, nothing to lose
+- Google Drive doesn't, at all: `appDataFolder` is hidden from the user's Drive UI, which isn't the same as private - anything holding the OAuth token can read it, including your own app's backend if you ever put one in the path. If you want E2E on Drive, you build it
 
 ## CloudKit's native encryption
 
@@ -42,9 +42,9 @@ This is the best option when it fits, because the hardest part of end-to-end enc
 
 None of these are limitations this package could lift.
 
-**Apple platforms only, permanently.** The key is in the iCloud Keychain, which CloudKit Web Services cannot reach. A value written here is not "hard to read" from Android and web - it is *unreadable*, which is what end-to-end means. `cloudKitEncrypted.isAvailable()` returns false there, and every operation rejects with `ERR_UNSUPPORTED_PLATFORM`.
+It's Apple platforms only, permanently. The key is in the iCloud Keychain, which CloudKit Web Services cannot reach. A value written here isn't "hard to read" from Android and web - it's *unreadable*, which is what end-to-end means. `cloudKitEncrypted.isAvailable()` returns false there, and every operation rejects with `ERR_UNSUPPORTED_PLATFORM`.
 
-**Do not mix it into a store with a plaintext provider:**
+Don't mix it into a store with a plaintext provider:
 
 ```ts
 // Wrong. The Drive copy is plaintext, so the encryption bought you nothing.
@@ -53,11 +53,9 @@ createCloudStore({ providers: ['cloudKitEncrypted', 'googleDrive'], writeMode: '
 
 If the same data has to be readable off Apple platforms, use the [codec](#doing-it-yourself) instead - a key you manage works everywhere, at the cost of you managing it.
 
-**Values are not queryable.** CloudKit cannot index an encrypted field, so there is no server-side filtering or sorting on the value. `getAllKeys()` still works, because it queries record *names*.
+Values aren't queryable either: CloudKit can't index an encrypted field, so there's no server-side filtering or sorting on the value (`getAllKeys()` still works, since it queries record *names*). Keys themselves aren't encrypted - record names are visible to Apple, only values are protected. `settings.theme` is fine as a key; `patient.7f3a-diagnosis-hiv` is not. Put nothing sensitive in a key - this is true of the codec approach too, for the same reason: `getAllKeys()`, tiering and read repair all need to work on cleartext keys.
 
-**Keys are not encrypted.** Record names are visible to Apple; only values are protected. `settings.theme` is fine as a key; `patient.7f3a-diagnosis-hiv` is not. Put nothing sensitive in a key - this is true of the codec approach too, for the same reason: `getAllKeys()`, tiering and read repair all need to work on cleartext keys.
-
-**Separate record type.** It writes to `EncryptedKVBlob`, not the `KVBlob` that `cloudKit` uses. CloudKit records encryption in the schema, so a field cannot be encrypted for one write and plain for another - the two providers would collide on a field-type conflict if they shared a type. Practically: `cloudKit` and `cloudKitEncrypted` are separate stores, and moving data between them is a `migrate()`.
+And it's a separate record type: it writes to `EncryptedKVBlob`, not the `KVBlob` that `cloudKit` uses. CloudKit records encryption in the schema, so a field cannot be encrypted for one write and plain for another - the two providers would collide on a field-type conflict if they shared a type. Practically, `cloudKit` and `cloudKitEncrypted` are separate stores, and moving data between them is a `migrate()`.
 
 ### Advanced Data Protection
 
@@ -113,7 +111,9 @@ Those last three rows are the ones that catch people. A codec that inflates a va
 
 This is the whole problem. Encryption is easy; getting the same key onto the user's second device without putting it somewhere the provider can read is not.
 
-**Option 1: a passphrase the user remembers.** Works on every platform, and the provider never has anything usable.
+#### A passphrase the user remembers
+
+Works on every platform, and the provider never has anything usable.
 
 ```ts
 import { pbkdf2 } from 'your-crypto-lib'
@@ -123,9 +123,13 @@ const key = await pbkdf2(passphrase, salt, { iterations: 600_000, length: 32 })
 
 The cost is real and you must design for it: forget the passphrase, lose the data. There is no reset, by construction. Say so plainly in the UI at the moment they set it, not in a settings screen they will never open.
 
-**Option 2: the iCloud Keychain**, for Apple-only apps. A Keychain item marked synchronizable propagates to the user's other Apple devices, end-to-end encrypted, with no passphrase. That is exactly what `cloudKitEncrypted` does internally - so if this is your situation, use that instead of rebuilding it.
+#### The iCloud Keychain, for Apple-only apps
 
-**Option 3: a random data key, wrapped by a passphrase-derived key.** The one to reach for if you expect to support a passphrase change, or more than one unlock method later.
+A Keychain item marked synchronizable propagates to the user's other Apple devices, end-to-end encrypted, with no passphrase. That is exactly what `cloudKitEncrypted` does internally - so if this is your situation, use that instead of rebuilding it.
+
+#### A random data key, wrapped by a passphrase-derived key
+
+The one to reach for if you expect to support a passphrase change, or more than one unlock method later.
 
 ```ts
 // Once, at setup:
