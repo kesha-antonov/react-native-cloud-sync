@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.0 - 2026-08-22
+
+- **`cloudKitAssets` on Android and web** - `save`/`fetch` no longer reject
+  with `ERR_UNSUPPORTED_PLATFORM` there. They go through CloudKit Web
+  Services' own asset-upload protocol instead: request a single-use upload
+  URL, POST the bytes, attach the descriptor it returns to the record.
+  Capped at 15 MB per asset - CloudKit Web Services' own ceiling, not one
+  this package chose - so oversized files reject locally with
+  `ERR_PAYLOAD_TOO_LARGE` before any request goes out; use `googleDriveFiles`
+  for anything bigger there. Reads/writes the local file through the same
+  adapter `configureGoogleDriveFiles` already sets up, so nothing new to
+  configure if you're already using Drive. Progress is real, via
+  `XMLHttpRequest` rather than `fetch`, which exposes no upload-progress
+  events in React Native. `cloudKitBackup` gets this for free, since it's
+  built on `cloudKitAssets`. Custom zones, `fetch`'s temporary-directory
+  fallback, and `cancel()` remain native-only.
+- **`configureGoogleDrive({ sessionStore })`** - a resumable Drive upload
+  now survives the process dying mid-transfer. Without it, a killed app has
+  to restart `googleDriveFiles.save()` from byte 0, exactly as before;
+  with it, the session is persisted before the first chunk goes out, and
+  the next call for the same name resumes from the real server-side offset
+  instead.
+- **Fix:** Google Drive quota-exceeded and per-user rate-limiting are both
+  signaled as HTTP 403 with an error reason string
+  (`storageQuotaExceeded` / `userRateLimitExceeded` / `rateLimitExceeded`),
+  not the HTTP 507 this package used to check for quota. A user out of
+  Drive storage was being misclassified as `ERR_AUTH_EXPIRED` and wrongly
+  prompted to reconnect their account rather than told to free up space.
+
 ## 0.2.0 - 2026-08-20
 
 - **`resolveByUnion`** - a resolver for JSON arrays where two devices adding
