@@ -1,8 +1,6 @@
 # Testing
 
-Cloud storage is the hardest part of a mobile app to test honestly. iCloud on the simulator is unreliable enough that the most-used library in this space [stopped testing on it entirely](https://github.com/kuatsu/react-native-cloud-storage/issues/41) and recommends real devices only - which means the failure paths that matter most are the ones never exercised.
-
-So this package ships an in-memory provider with fault injection, from a real entry point:
+Cloud storage is the hardest part of a mobile app to test honestly - the most-used library here [gave up testing iCloud on the simulator entirely](https://github.com/kuatsu/react-native-cloud-storage/issues/41). This package ships an in-memory provider with fault injection instead, from a real entry point:
 
 ```ts
 import { createMemoryProvider } from 'react-native-cloud-sync/testing'
@@ -19,8 +17,6 @@ const provider = createMemoryProvider({
 
 await provider.getItem('user/id')   // '42'
 ```
-
-Register it with the facade to test app code end to end:
 
 ```ts
 const store = createCloudStore({ providers: ['memory'] })
@@ -69,7 +65,7 @@ provider.setFault('setItem', {
 })
 ```
 
-Asserts that your backoff honours the server's hint rather than its own schedule.
+Asserts your backoff honours the server's hint, not its own schedule.
 
 ## Simulating other devices
 
@@ -77,7 +73,7 @@ Asserts that your backoff honours the server's hint rather than its own schedule
 provider.emitRemoteChange({ keys: ['user/id'], reason: 'serverChange' })
 ```
 
-And the case that leaks data between users:
+The cross-user leak case:
 
 ```ts
 provider.emitAccountChange({ status: 'available', identityChanged: true })
@@ -90,7 +86,7 @@ provider.emitAccountChange({ status: 'available', identityChanged: true })
 expect(provider.calls.setItem).toBe(1)   // no blind second write
 ```
 
-Useful for proving a retry did *not* happen - for instance that a quota failure surfaced instead of being queued forever.
+Proves a retry did *not* happen - e.g. a quota failure surfacing instead of queuing forever.
 
 ## Inspecting state
 
@@ -115,11 +111,11 @@ await expect(store.getItem('backup')).rejects.toMatchObject({
 })
 ```
 
-`setAvailable(false)` flips it mid-test, for a session where the user signs out partway through.
+`setAvailable(false)` flips it mid-test - for a mid-session sign-out.
 
 ## Faults scoped to one key
 
-Real backends fail per record, not per operation - one oversized or conflicting key while the rest of a batch goes through:
+Real backends fail per record, not per operation - one bad key, the rest of the batch through:
 
 ```ts
 const provider = createMemoryProvider({
@@ -129,7 +125,7 @@ const provider = createMemoryProvider({
 })
 ```
 
-It also makes interleaving tests deterministic, since two operations in flight no longer compete for the same `times` budget.
+Also keeps interleaving tests deterministic - in-flight operations no longer share a `times` budget.
 
 ## Several providers at once
 
@@ -142,11 +138,11 @@ store.registerProvider(apple)
 store.registerProvider(drive)
 ```
 
-`name` makes each double stand in for a specific provider, so tiering, mirroring and read repair - all of which key off provider names - behave as they will in production.
+`name` makes each double stand in for a real provider - tiering, mirroring and read repair, which key off names, behave as in production.
 
 ## Asserting that batching happened
 
-The double records one call per batch, not one per key, so a test can prove the store batched rather than looped:
+The double counts one call per batch, not per key, proving the store batched rather than looped:
 
 ```ts
 const before = provider.calls.getItem
@@ -163,11 +159,11 @@ expect(store.pendingWrites()).toHaveLength(0)   // the previous user's writes ar
 expect(provider.cacheClears).toBe(1)            // and the provider was told to forget
 ```
 
-`cacheClears` counts the times the store asked this provider to drop cached state, which is how you check the store reacted rather than merely forwarded the event.
+`cacheClears` counts how often the store told this provider to drop cached state - proof it reacted, not just forwarded the event.
 
 ## Mocking the native module
 
-For tests that touch a real provider rather than the in-memory one, mock the native module directly. The package ships the mock this repository uses for its own suite:
+To test a real provider, mock the native module directly - this package ships the mock its own suite uses:
 
 ```js
 // jest.config.js

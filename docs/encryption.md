@@ -1,6 +1,6 @@
 # Encryption
 
-Whether your data is end-to-end encrypted depends on the backend, and the answer is genuinely different for each one. This page is the short version first, then how to add it yourself where it is missing.
+Whether your data is end-to-end encrypted depends on the backend. Short version first, then how to add it yourself where it's missing.
 
 ## What you get without doing anything
 
@@ -12,16 +12,16 @@ Whether your data is end-to-end encrypted depends on the backend, and the answer
 | iCloud Drive (`icloudDocuments`) | ✅ | ✅ (Apple's keys) | only under [ADP](#advanced-data-protection) |
 | Google Drive `appDataFolder` | ✅ | ✅ (Google's keys) | – |
 
-"End-to-end" means the provider stores ciphertext it cannot decrypt. Everything else means the data is encrypted on the wire and on their disks, but the provider holds a key - so it is readable by them, by a legal request, and by anyone who compromises the account.
+"End-to-end" means the provider stores ciphertext it cannot decrypt. Everything else is encrypted in transit and at rest, but the provider holds a key - readable by them, by a legal request, or by anyone who compromises the account.
 
 Two things worth internalising:
 
 - CloudKit has real, native end-to-end encryption, and this package exposes it - no key management, no passphrase, nothing to lose
-- Google Drive doesn't, at all: `appDataFolder` is hidden from the user's Drive UI, which isn't the same as private - anything holding the OAuth token can read it, including your own app's backend if you ever put one in the path. If you want E2E on Drive, you build it
+- Google Drive has none: `appDataFolder` is hidden from the user's Drive UI, not private - anything holding the OAuth token can read it, including your own backend. Want E2E on Drive? You build it
 
 ## CloudKit's native encryption
 
-Apple encrypts `CKRecord` fields written through `encryptedValues` on device, with a key from the user's iCloud Keychain. Apple's servers store ciphertext and never see the key.
+Apple encrypts `CKRecord` fields written through `encryptedValues` on device, with a key from the user's iCloud Keychain - Apple's servers store ciphertext and never see the key.
 
 ```ts
 import { cloudKitEncrypted } from 'react-native-cloud-sync'
@@ -36,13 +36,11 @@ Or through the facade:
 const secrets = createCloudStore({ providers: ['cloudKitEncrypted'] })
 ```
 
-This is the best option when it fits, because the hardest part of end-to-end encryption - getting the key onto the user's other devices without ever putting it on a server - is already solved by the iCloud Keychain.
+Best option when it fits: the hardest part of end-to-end encryption - getting the key onto other devices without ever putting it on a server - is already solved by the iCloud Keychain.
 
 ### What it costs
 
-None of these are limitations this package could lift.
-
-It's Apple platforms only, permanently. The key is in the iCloud Keychain, which CloudKit Web Services cannot reach. A value written here isn't "hard to read" from Android and web - it's *unreadable*, which is what end-to-end means. `cloudKitEncrypted.isAvailable()` returns false there, and every operation rejects with `ERR_UNSUPPORTED_PLATFORM`.
+Apple platforms only, permanently - the key is in the iCloud Keychain, which CloudKit Web Services cannot reach. A value written here isn't "hard to read" from Android and web, it's *unreadable*. `cloudKitEncrypted.isAvailable()` returns false there, and every operation rejects with `ERR_UNSUPPORTED_PLATFORM`.
 
 Don't mix it into a store with a plaintext provider:
 
@@ -53,13 +51,13 @@ createCloudStore({ providers: ['cloudKitEncrypted', 'googleDrive'], writeMode: '
 
 If the same data has to be readable off Apple platforms, use the [codec](#doing-it-yourself) instead - a key you manage works everywhere, at the cost of you managing it.
 
-Values aren't queryable either: CloudKit can't index an encrypted field, so there's no server-side filtering or sorting on the value (`getAllKeys()` still works, since it queries record *names*). Keys themselves aren't encrypted - record names are visible to Apple, only values are protected. `settings.theme` is fine as a key; `patient.7f3a-diagnosis-hiv` is not. Put nothing sensitive in a key - this is true of the codec approach too, for the same reason: `getAllKeys()`, tiering and read repair all need to work on cleartext keys.
+Values aren't queryable either - CloudKit can't index an encrypted field, so there's no server-side filtering or sorting (`getAllKeys()` still works, since it queries record *names*). Keys aren't encrypted - record names are visible to Apple, only values are protected, so `settings.theme` is fine as a key but `patient.7f3a-diagnosis-hiv` is not. Put nothing sensitive in a key; the codec approach needs the same discipline, since `getAllKeys()`, tiering and read repair all need cleartext keys.
 
-And it's a separate record type: it writes to `EncryptedKVBlob`, not the `KVBlob` that `cloudKit` uses. CloudKit records encryption in the schema, so a field cannot be encrypted for one write and plain for another - the two providers would collide on a field-type conflict if they shared a type. Practically, `cloudKit` and `cloudKitEncrypted` are separate stores, and moving data between them is a `migrate()`.
+It's also a separate record type (`EncryptedKVBlob`, not `cloudKit`'s `KVBlob`): CloudKit records encryption in the schema, so a field cannot be encrypted for one write and plain for another - the two providers would collide on a field-type conflict if they shared one. `cloudKit` and `cloudKitEncrypted` are separate stores; moving data between them is a `migrate()`.
 
 ### Advanced Data Protection
 
-Separate from the above, and not something your app controls. [ADP][adp] is a user-facing iCloud setting that extends end-to-end encryption to most iCloud categories - including iCloud Drive and iCloud backups. When a user turns it on, `icloudDocuments` files and iCloud device backups become E2E encrypted; when they leave it off (the default), Apple holds those keys.
+Separate from the above, and outside your app's control. [ADP][adp] is a user-facing iCloud setting extending end-to-end encryption to most iCloud categories, including iCloud Drive and iCloud backups - on, `icloudDocuments` files and device backups become E2E encrypted; off (the default), Apple holds those keys.
 
 There is no public API to detect or request it, so treat it as a bonus rather than a guarantee. `cloudKitEncrypted` is E2E either way, which is the point of using it.
 
@@ -71,7 +69,7 @@ There is no public API to detect or request it, so treat it as a bonus rather th
 - scoped to your app's OAuth client, so another app cannot request it;
 - but stored under Google's keys, readable by Google, and readable by anything holding a valid access token.
 
-Google Workspace has a client-side encryption feature, but it is an admin-configured enterprise product tied to an external key service. It is not available to consumer accounts and not reachable from the `drive.appdata` scope, so it is not an option for a mobile app.
+Google Workspace has a client-side encryption feature, but it's admin-configured, enterprise-only, and unreachable from the `drive.appdata` scope - not an option for a mobile app.
 
 So on Drive, end-to-end encryption is something you add.
 
@@ -89,9 +87,7 @@ const store = createCloudStore({
 })
 ```
 
-The provider only ever sees ciphertext; your app only ever sees plaintext. Both halves may be async, which every real crypto library is.
-
-This package deliberately ships **no cipher**. Key management is the part that decides whether encryption is worth anything, and bundling AES would make the problem look solved when the hard half is untouched. Bring a library you chose - `react-native-quick-crypto`, `expo-crypto` plus a Keychain-backed key, `libsodium`.
+The provider only ever sees ciphertext; your app only ever sees plaintext, and both halves may be async. This package deliberately ships **no cipher** - bring a library you chose: `react-native-quick-crypto`, `expo-crypto` plus a Keychain-backed key, `libsodium`.
 
 ### What it applies to, and what it does not
 
@@ -105,11 +101,11 @@ This package deliberately ships **no cipher**. Key management is the part that d
 | Tiering | Routes on the **encrypted** size, because that is what actually gets stored |
 | `cloudKitAssets` / `googleDriveFiles` / `icloudDocuments` | Not covered - they move files by path, not values through the store. Encrypt the file yourself before handing it over |
 
-Those last three rows are the ones that catch people. A codec that inflates a value by 40% can push it over a tiering threshold, which is handled - the store measures the ciphertext and routes accordingly - but it means your effective `kvMaxBytes` is smaller than it looks.
+The last three rows are what catch people: a codec that inflates a value by 40% can push it over a tiering threshold, so your effective `kvMaxBytes` is smaller than it looks - see [Encrypting at rest](store.md#encrypting-at-rest) for the full mechanism.
 
 ### Where the key lives
 
-This is the whole problem. Encryption is easy; getting the same key onto the user's second device without putting it somewhere the provider can read is not.
+The whole problem: encryption is easy, getting the same key onto a second device without the provider reading it is not.
 
 #### A passphrase the user remembers
 
@@ -121,11 +117,11 @@ import { pbkdf2 } from 'your-crypto-lib'
 const key = await pbkdf2(passphrase, salt, { iterations: 600_000, length: 32 })
 ```
 
-The cost is real and you must design for it: forget the passphrase, lose the data. There is no reset, by construction. Say so plainly in the UI at the moment they set it, not in a settings screen they will never open.
+The cost is real: forget the passphrase, lose the data - no reset, by construction. Say so plainly in the UI at the moment they set it, not in a settings screen they will never open.
 
 #### The iCloud Keychain, for Apple-only apps
 
-A Keychain item marked synchronizable propagates to the user's other Apple devices, end-to-end encrypted, with no passphrase. That is exactly what `cloudKitEncrypted` does internally - so if this is your situation, use that instead of rebuilding it.
+A Keychain item marked synchronizable propagates to the user's other Apple devices, end-to-end encrypted, with no passphrase - exactly what `cloudKitEncrypted` does internally, so use that instead of rebuilding it.
 
 #### A random data key, wrapped by a passphrase-derived key
 
@@ -138,18 +134,18 @@ const wrapped = await wrap(dataKey, await derive(passphrase))
 await store.setItem('crypto.wrappedKey', toBase64(wrapped))   // safe to sync
 ```
 
-Changing the passphrase then re-wraps 32 bytes instead of re-encrypting every value. Store the wrapped key with `validateKeys` in mind and treat it as the one value you never encrypt with the codec - write it through a second store, or a provider directly, so you are not trying to decrypt the key with itself.
+Changing the passphrase then re-wraps 32 bytes instead of re-encrypting every value. Treat the wrapped key as the one value you never encrypt with the codec - write it through a second store, or a provider directly, so you are not trying to decrypt the key with itself.
 
 ### Tell a wrong key from corrupt data
 
-Store a canary alongside the wrapped key: a known plaintext, encrypted. If it does not decrypt, the passphrase is wrong. Without one, a wrong passphrase and a genuinely damaged payload look identical, and you will show the user the wrong error.
+Store a canary alongside the wrapped key - a known plaintext, encrypted; if it doesn't decrypt, the passphrase is wrong. Without one, a wrong passphrase and genuinely damaged data look identical, and you show the wrong error.
 
 ```ts
 const canary = await store.getItem('crypto.canary')
 if (canary !== 'rncs-ok') return promptPassphraseAgain()
 ```
 
-Use an authenticated cipher (AES-GCM, XChaCha20-Poly1305) so a wrong key *fails* rather than producing garbage. The store surfaces a `decode` that throws as an error rather than as a value - the test suite pins that - so an authentication-tag mismatch reaches your `catch` instead of becoming corrupt state.
+Use an authenticated cipher (AES-GCM, XChaCha20-Poly1305) so a wrong key *fails* rather than producing garbage. The store surfaces a throwing `decode` as an error, not a value - pinned by the test suite - so an authentication-tag mismatch reaches your `catch` instead of becoming corrupt state.
 
 ### A worked example
 
@@ -180,7 +176,7 @@ function encryptedStore (dataKey: Uint8Array) {
 }
 ```
 
-One consequence of the fresh nonce: identical plaintext produces different ciphertext each time, so [read repair](store.md#two-way-sync-across-a-mixed-fleet) rewrites bytes even when the value has not changed. Harmless, but it costs a request - turn off `repairOnRead` if it matters and you are not running a mixed fleet.
+One consequence of the fresh nonce: identical plaintext produces different ciphertext each time, so [read repair](store.md#two-way-sync-across-a-mixed-fleet) rewrites bytes even when nothing changed. Harmless, but it costs a request - turn off `repairOnRead` if that matters and you are not running a mixed fleet.
 
 ## Choosing
 

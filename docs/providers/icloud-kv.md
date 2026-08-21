@@ -4,9 +4,9 @@
 
 ## When to use it
 
-Small, non-critical values that should follow the user between their own devices: theme, units, onboarding flags, a device-independent user id. It is the only provider that works from a cold start without asking the user for anything.
+Small, non-critical values that follow the user across devices - theme, units, onboarding flags, a device-independent user id - and the only provider working from a cold start with no user prompt.
 
-Do not use it for the app's primary data. It is capped at 1 MB *in total*, and exceeding that starves every other key.
+Not for the app's primary data: capped at 1 MB *in total*, and exceeding that starves every other key.
 
 | | |
 |---|---|
@@ -51,7 +51,7 @@ const status = await icloudKV.getAccountStatus()
 // 'temporarilyUnavailable' | 'couldNotDetermine'
 ```
 
-Five states ([`CKAccountStatus`][ckstatus]), not a boolean, because they call for different behaviour: `temporarilyUnavailable` means retry silently; `noAccount` means prompt the user; `couldNotDetermine` means do nothing yet.
+Five states ([`CKAccountStatus`][ckstatus]), not a boolean: `temporarilyUnavailable` means retry silently, `noAccount` means prompt the user, `couldNotDetermine` means do nothing yet.
 
 ## Reacting to other devices
 
@@ -75,7 +75,7 @@ icloudKV.onAccountChange(({ status, identityChanged }) => {
 })
 ```
 
-This is the event most apps miss. Without it, a device that switches Apple ID silently keeps serving the previous user's data.
+The event most apps miss - without it, a device that switches Apple ID keeps silently serving the previous user's data.
 
 ## `sync()` does not mean "stored"
 
@@ -85,19 +85,17 @@ import { icloudKVSync } from 'react-native-cloud-sync'
 await icloudKVSync()
 ```
 
-This maps to `NSUbiquitousKeyValueStore.synchronize()`, which flushes pending changes to disk and schedules an upload. It does **not** wait for or confirm a server round trip. A resolved promise means *queued*, never *stored in iCloud*.
-
-You rarely need to call it - writes schedule themselves.
+Maps to `NSUbiquitousKeyValueStore.synchronize()`: flushes pending changes to disk and schedules an upload, but does **not** wait for or confirm a server round trip - a resolved promise means *queued*, never *stored in iCloud*. Writes schedule themselves, so you rarely need to call it.
 
 ## Limits are enforced, not discovered
 
 A value above 1 MB rejects locally with `ERR_PAYLOAD_TOO_LARGE`, carrying `limitBytes` and `actualBytes`, rather than being handed to the OS and silently dropped.
 
-If you are hitting the limit, that is the signal to move that key to `cloudKit` or `googleDrive` - or to let the [facade](../store.md) route it for you.
+Hitting the limit is the signal to move that key to `cloudKit`/`googleDrive` - or let the [facade](../store.md) route it for you.
 
 ## On Android and web
 
-Every operation rejects with `ERR_UNSUPPORTED_PLATFORM`. There is no polyfill and no fallback, because `NSUbiquitousKeyValueStore` has no network API to reach. Use `cloudKit` for the same account's data elsewhere, or `googleDrive`.
+Every operation rejects with `ERR_UNSUPPORTED_PLATFORM` - no polyfill, no fallback, since `NSUbiquitousKeyValueStore` has no network API to reach. Use `cloudKit` for the same account's data elsewhere, or `googleDrive`.
 
 [kvs]: https://developer.apple.com/documentation/foundation/nsubiquitouskeyvaluestore
 [ckstatus]: https://developer.apple.com/documentation/cloudkit/ckaccountstatus

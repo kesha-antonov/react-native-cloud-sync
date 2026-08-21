@@ -4,7 +4,7 @@ Task-shaped answers that span providers.
 
 ## Assumed setup
 
-Most recipes below pass an `mmkvAdapter` and write locally through `mmkv`. Both are this, defined once:
+Most recipes below pass an `mmkvAdapter` and write locally through `mmkv`. Both are defined once:
 
 ```ts
 import { MMKV } from 'react-native-mmkv'
@@ -41,11 +41,11 @@ export async function restore (): Promise<AppState | null> {
 }
 ```
 
-Version the key (`backup/v1`) rather than the payload. When the shape changes, write `backup/v2` and keep reading v1 as a fallback - older devices keep working, and a rollback does not corrupt anything.
+Version the key (`backup/v1`), not the payload. When the shape changes, write `backup/v2` and keep reading v1 as fallback - older devices keep working, and a rollback cannot corrupt anything.
 
 ## Let the user download their backup
 
-"Give me a local copy of my data" - an export the user saves to Files, AirDrops to a laptop, or attaches to a support email. Common for anything holding records they consider theirs: a finance app's database, a journal, a workout history.
+An export saved to Files, AirDropped, or emailed to support - for anything holding records the user considers theirs: a finance app's database, a journal, a workout history.
 
 Three steps, and this package owns the first two:
 
@@ -77,15 +77,15 @@ async function exportBackup () {
 
 ### Always pass `destinationUri`
 
-Without it, `cloudKitBackup.restore()` lands the file in the app's **temporary** directory under a name derived from the record. iOS may reclaim that at any point, and the name is not one you would show anyone. That default is right for restoring straight back into the app and wrong for an export - which is why the option exists.
+Without it, `cloudKitBackup.restore()` lands the file in the app's **temporary** directory under a name derived from the record - fine for restoring straight back into the app, wrong for an export, since iOS may reclaim it at any point and the name is not one to show anyone.
 
 `documentDirectory` is the usual choice: it survives, it is backed up, and the share sheet can read it. Parent directories are created for you.
 
 ### The sharing step is not ours
 
-`expo-sharing`, `react-native-share` and `expo-document-picker` already solve presenting the system share sheet, "Save to Files", and the import picker. Wrapping them would mean a WebView-sized dependency and a second-rate copy of a solved problem, so this package stops at handing you a real path.
+`expo-sharing`, `react-native-share` and `expo-document-picker` already solve the system share sheet, "Save to Files", and the import picker. Wrapping them would add a WebView-sized dependency and a worse copy of a solved problem, so this package stops at handing you a real path.
 
-The exception, and it is a good one on iOS: [`icloudDocuments`](providers/icloud-drive.md) puts the file straight into the user's iCloud Drive, where it shows up in Files.app with no share sheet at all.
+The exception, and a good one on iOS: [`icloudDocuments`](providers/icloud-drive.md) puts the file straight into the user's iCloud Drive, showing up in Files.app with no share sheet at all.
 
 ```ts
 await icloudDocuments.save({ fileUri: path, name: `finance-backup-${stamp}.sqlite` })
@@ -93,13 +93,13 @@ await icloudDocuments.save({ fileUri: path, name: `finance-backup-${stamp}.sqlit
 
 ### Exporting is a privacy decision
 
-The moment that file leaves your sandbox it is outside every guarantee this package makes. A backup that was end-to-end encrypted in [`cloudKitEncrypted`](encryption.md#cloudkits-native-encryption), or behind a `codec`, is **plaintext on disk** the instant you write it somewhere the share sheet can reach - and whatever the user AirDrops it into is no longer your problem or your protection.
+The moment a file leaves your sandbox it is outside every guarantee this package makes. A backup end-to-end encrypted in [`cloudKitEncrypted`](encryption.md#cloudkits-native-encryption), or behind a `codec`, is **plaintext on disk** the instant you write it somewhere the share sheet can reach - whatever the user AirDrops it into is no longer your problem.
 
-For a finance app that usually means: encrypt the export itself, with a passphrase the user enters at export time, and say plainly in the dialog that the file is unencrypted if they decline. See [Encryption](encryption.md#where-the-key-lives) for where that key should live.
+For a finance app that usually means encrypting the export itself with a passphrase entered at export time, and saying plainly in the dialog that the file is unencrypted if the user declines. See [Encryption](encryption.md#where-the-key-lives) for where that key should live.
 
 ### Importing it back
 
-The mirror image, and worth building at the same time - an export nobody can restore is a false promise:
+Worth building at the same time - an export nobody can restore is a false promise:
 
 ```ts
 const picked = await DocumentPicker.getDocumentAsync({ type: 'application/x-sqlite3' })
@@ -109,11 +109,11 @@ await validateBackupFile(picked.assets[0].uri)     // yours: check it is really 
 await restoreFromFile(picked.assets[0].uri)
 ```
 
-Validate before restoring. The file came from outside your app, may be from a much older version, and may not be your file at all.
+Validate before restoring - the file came from outside your app, may be from a much older version, or may not be your file at all.
 
 ### Large databases
 
-Both fetch paths stream. `googleDriveFiles` downloads in 8 MiB chunks through the file adapter, and `cloudKitBackup` streams a `CKAsset` from disk, so neither holds the whole database in memory. Report progress - a multi-hundred-megabyte export with no feedback reads as a hang - and offer a cancel:
+Both fetch paths stream: `googleDriveFiles` downloads in 8 MiB chunks through the file adapter, `cloudKitBackup` streams a `CKAsset` from disk, and neither holds the whole database in memory. Report progress - a multi-hundred-megabyte export with no feedback reads as a hang - and offer a cancel:
 
 ```ts
 await cloudKitBackup.cancel()                        // rejects the restore with ERR_CANCELLED
@@ -121,7 +121,7 @@ await cloudKitBackup.cancel()                        // rejects the restore with
 
 ## Cross-platform large-file backup
 
-That recipe is for a JSON-sized blob. For something too big to hold in memory as a string - a SQLite export, hundreds of MB - [`cloudKitBackup`](providers/cloudkit.md#backuprestore-helper) (iOS/macOS) and [`googleDriveFiles`](providers/google-drive.md#large-files) (Android/web) are the two providers that actually stream from disk instead of loading the whole file. They are not merged into one API because their restore paths genuinely differ - CloudKit invents its own temp path, Drive writes wherever you tell it to via your file adapter - but wrapping both behind one pair of functions is a few lines:
+That recipe suits a JSON-sized blob. For something too big to hold in memory as a string - a SQLite export, hundreds of MB - [`cloudKitBackup`](providers/cloudkit.md#backuprestore-helper) (iOS/macOS) and [`googleDriveFiles`](providers/google-drive.md#large-files) (Android/web) are the two providers that actually stream from disk. They are not merged into one API because their restore paths genuinely differ - CloudKit invents its own temp path, Drive writes wherever your file adapter says - but wrapping both behind one pair of functions is a few lines:
 
 ```ts
 import { Platform } from 'react-native'
@@ -158,7 +158,7 @@ export async function restoreLargeFile (
 }
 ```
 
-On iOS/macOS, `restoreLargeFile`'s `destinationUri` is unused - `cloudKitBackup.restore` returns its own temp path, which is why the parameter is there at all: the caller decides where the file ends up, and on Apple platforms that decision is "wherever CloudKit already put it," while on Drive it is a real filesystem path from `configureGoogleDriveFiles`'s adapter. Move or copy the result into your app's own storage before relying on it living at that path long-term - CloudKit's temp location is not guaranteed to survive past the current run.
+On iOS/macOS, `restoreLargeFile`'s `destinationUri` goes unused - `cloudKitBackup.restore` returns its own temp path, which is why the parameter exists at all: the caller decides where the file ends up, and on Apple platforms that is "wherever CloudKit already put it," while on Drive it is a real path from `configureGoogleDriveFiles`'s adapter. Move or copy the result into your app's own storage before relying on it long-term - CloudKit's temp location is not guaranteed to survive past the current run.
 
 `googleDriveFiles` needs `configureGoogleDriveFiles` called once at startup (see [its setup](providers/google-drive.md#large-files)); `cloudKitBackup` needs nothing beyond the entitlements every other CloudKit call already requires.
 
@@ -180,7 +180,7 @@ if (remote == null) startFresh()   // genuinely nothing stored
 else applyRemote(JSON.parse(remote))
 ```
 
-This is only safe because `null` means one thing. A signed-out user is the dangerous case - there is no error to catch, nothing is reachable, and a store that answered `null` there would send you straight into `startFresh()`. So the facade raises `ERR_NOT_SIGNED_IN` instead when **no** configured provider was reachable, and reserves `null` for "at least one provider answered and none of them had this key". See [absent vs broken](errors.md#distinguishing-absent-from-broken).
+This is only safe because `null` means one thing. A signed-out user is the dangerous case - nothing is reachable and there is no error to catch, so a store answering `null` there would send you straight into `startFresh()`. The facade instead raises `ERR_NOT_SIGNED_IN` when **no** configured provider was reachable, reserving `null` for "at least one provider answered and none had this key". See [absent vs broken](errors.md#distinguishing-absent-from-broken).
 
 ## Cancel a large transfer
 
@@ -202,7 +202,7 @@ try {
 }
 ```
 
-Checked between chunks, so it takes effect during the transfer rather than once the whole file has moved - which is the entire point at a few hundred megabytes.
+Checked between chunks, so it takes effect mid-transfer rather than after the whole file has moved - the entire point at a few hundred megabytes.
 
 CloudKit assets are cancelled by name instead, because that is what identifies a transfer everywhere else in that API:
 
@@ -227,7 +227,7 @@ const store = createCloudStore({
 })
 ```
 
-The package ships no cipher of its own - key management is the part that decides whether this is worth anything, and bundling a cipher would make it look solved. Bring one you chose, and think about where its key lives (Keychain/Keystore, not the same cloud).
+The package ships no cipher of its own - key management is what decides whether this is worth anything, and bundling a cipher would make it look solved. Bring one you chose, and think about where its key lives (Keychain/Keystore, not the same cloud).
 
 Values only, never keys - a `getAllKeys()` that returned ciphertext would be useless. Tiering measures the *encrypted* size, so an inflating codec eats into your thresholds.
 
@@ -235,7 +235,7 @@ On Apple platforms, `cloudKitEncrypted` gives you end-to-end encryption with no 
 
 ## Last-write-wins with a timestamp
 
-Neither CloudKit nor Drive merges for you. The simplest correct policy is to carry a timestamp and compare:
+Neither CloudKit nor Drive merges for you - the simplest correct policy is to carry a timestamp and compare:
 
 ```ts
 interface Blob { data: AppState, updatedAt: number }
@@ -250,12 +250,9 @@ else if (remote.updatedAt > local.updatedAt)
 // Equal timestamps: nothing to do.
 ```
 
-Note that deletions do not propagate under this scheme - a removed item reappears from whichever device still has it. If deletions matter, store tombstones rather than removing entries.
+Deletions do not propagate under this scheme - a removed item reappears from whichever device still has it. Store tombstones rather than removing entries if deletions matter.
 
 ## Two-way sync between Apple and non-Apple devices
-
-The setup for a fleet where any device might write - an Android phone and an
-iPad, a browser and a Mac.
 
 ```ts
 import {
@@ -289,9 +286,9 @@ export async function load (): Promise<AppState | null> {
 Every write must carry the timestamp, on every platform - a value the resolver
 cannot date loses to one it can, so a device that forgets will always lose.
 
-Clock skew is the limitation. Device clocks disagree, so "newest" means "claims
-the latest timestamp". For a backup blob that is fine. For anything where a lost
-write matters, merge in `resolve` rather than picking a winner:
+Clock skew is the limitation: device clocks disagree, so "newest" means "claims
+the latest timestamp" - fine for a backup blob. Where a lost write matters,
+merge in `resolve` rather than picking a winner:
 
 ```ts
 resolve: candidates => JSON.stringify(
@@ -310,7 +307,7 @@ const pairs = await store.multiGet(['profile', 'settings', 'library'])
 await store.multiSet(dirtyEntries)
 ```
 
-Worth reaching for whenever you would have written a loop. On CloudKit this is the difference between one round trip and N - and between one rate-limit budget and N chances to be throttled, which is how a "sync everything on launch" screen ends up showing `ERR_RATE_LIMITED` to users with a lot of data.
+On CloudKit this is one round trip instead of N - and one rate-limit budget instead of N chances to be throttled, which is how a "sync everything on launch" screen ends up showing `ERR_RATE_LIMITED` to users with a lot of data.
 
 ## Drain the queue without wiring it yourself
 
@@ -376,7 +373,7 @@ for (const key of copied) {
 
 `migrate` copies and leaves the source intact, so a partial failure cannot lose data.
 
-That is the one-off, developer-initiated case. If the user is the one choosing where their data lives, see [Let the user choose their provider](#let-the-user-choose-their-provider), which wires the same call into a settings picker.
+If the user, rather than the developer, chooses where their data lives, see [Let the user choose their provider](#let-the-user-choose-their-provider), which wires the same call into a settings picker.
 
 ## Read legacy keys while writing new ones
 
@@ -396,7 +393,7 @@ async function getWithLegacy (key: string): Promise<string | null> {
 }
 ```
 
-Keep the legacy read path for at least one release cycle after adoption. Users who skip a version otherwise lose whatever the old store held.
+Keep the legacy read path for at least one release cycle after adoption, or users who skip a version lose whatever the old store held.
 
 ## Offline-first writes
 
@@ -453,7 +450,7 @@ export function buildStore (choice: Choice) {
 }
 ```
 
-A store with no providers rejects every write with `ERR_NOT_SIGNED_IN` - the wrong thing to show someone who turned sync off deliberately, and not queued either, since that code counts as needing user action. So branch before calling rather than letting the store reject:
+A store with no providers rejects every write with `ERR_NOT_SIGNED_IN` - the wrong thing to show someone who turned sync off deliberately, and not queued either, since that code needs user action. Branch before calling rather than letting the store reject:
 
 ```ts
 export async function save (key: string, value: string) {
@@ -467,8 +464,8 @@ Turning sync off means "stop copying this to a cloud", not "stop saving my data"
 
 ### Or: one primary, plus an optional second copy
 
-Instead of a single choice, offer a primary provider and a tick for mirroring to
-another - which is what makes an Apple user's data reachable on Android. See
+Instead of a single choice, offer a primary provider plus a tick for mirroring
+to another - what makes an Apple user's data reachable on Android. See
 [Also back up to Google Drive](choosing-a-provider.md#also-back-up-to-google-drive).
 
 ```ts
@@ -500,7 +497,7 @@ export function setChoice (next: Choice) {
 
 ### Switching between providers
 
-Offer to bring the data along. `migrate` copies and leaves the source intact, so a failure cannot lose anything:
+`migrate` copies and leaves the source intact, so bringing the data along cannot lose anything on failure:
 
 ```ts
 export async function switchProvider (from: Choice, to: Choice) {
@@ -514,7 +511,7 @@ export async function switchProvider (from: Choice, to: Choice) {
 
 ### Turning it off, and deleting what is stored
 
-Two separate questions - stop syncing, and remove the existing copy. Ask them separately, because "stop backing up" and "delete my backup" are different intentions.
+Two separate questions, asked separately: "stop backing up" and "delete my backup" are different intentions.
 
 ```ts
 export async function turnOff (previous: Choice, alsoDelete: boolean) {
@@ -551,11 +548,11 @@ async function deleteEverything (name: ProviderName) {
 }
 ```
 
-Order matters when the provider needs a session: **delete first, then disconnect.** Once the account is disconnected the deletes become silent no-ops, and the user is told their data is gone when it is not.
+Order matters when the provider needs a session: **delete first, then disconnect.** Once disconnected, deletes become silent no-ops, so the user is told their data is gone when it is not.
 
 ### Leftover data after a switch
 
-If someone moves from iCloud to Drive, the iCloud copy is still there. Either offer to clean it up at the time, or remember the previous provider so the settings screen can offer it later:
+If someone moves from iCloud to Drive, the iCloud copy is still there. Offer to clean it up at the time, or remember the previous provider so the settings screen can offer it later:
 
 ```ts
 const leftover = mmkv.getString('sync/previousProvider')

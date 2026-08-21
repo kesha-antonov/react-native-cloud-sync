@@ -20,7 +20,7 @@ interface CloudProvider {
 }
 ```
 
-`getItem` resolves `null` if and only if the key does not exist. Every other outcome rejects.
+`getItem` resolves `null` only when the key doesn't exist; everything else rejects.
 
 | Export | Provider | Guide |
 |---|---|---|
@@ -88,7 +88,7 @@ interface BackupProgressEvent {
 }
 ```
 
-Pass `destinationUri` to `restore` for anything the user keeps or hands to a share sheet. Without it the file lands in the app's **temporary** directory under a name derived from the record - fine for restoring straight back into the app, wrong for an export, since iOS may reclaim it and the user cannot reach it. Parent directories are created for you. See [letting the user download their backup](recipes.md#let-the-user-download-their-backup).
+Pass `destinationUri` for an export - without it the file lands in a **temporary** directory iOS may reclaim. See [letting the user download their backup](recipes.md#let-the-user-download-their-backup).
 
 ### `googleDriveFiles`
 
@@ -117,11 +117,11 @@ interface DriveFileProgressEvent {
 }
 ```
 
-Needs `configureGoogleDriveFiles` - see below. Rejects with `ERR_CONTAINER_MISCONFIGURED` until then.
+Needs `configureGoogleDriveFiles` (see below), or rejects with `ERR_CONTAINER_MISCONFIGURED`.
 
 ## `cloudKitEncrypted`
 
-CloudKit's own end-to-end encryption, via `CKRecord.encryptedValues`. A `CloudProvider` like any other, so it works directly or through the facade.
+CloudKit's own end-to-end encryption, via `CKRecord.encryptedValues` - a `CloudProvider` like any other.
 
 ```ts
 import { cloudKitEncrypted } from 'react-native-cloud-sync'
@@ -129,9 +129,7 @@ import { cloudKitEncrypted } from 'react-native-cloud-sync'
 await cloudKitEncrypted.setItem('auth.refreshToken', token)
 ```
 
-Values are encrypted on device with a key from the user's iCloud Keychain; Apple stores ciphertext and cannot read it. Apple platforms only - the key never reaches Apple's servers, so CloudKit Web Services has nothing to decrypt with and the Android/web paths reject with `ERR_UNSUPPORTED_PLATFORM`. Values are not queryable, record names are *not* encrypted, and it uses its own record type (`EncryptedKVBlob`) so it cannot collide with `cloudKit`'s schema.
-
-Full guide: [Encryption](encryption.md#cloudkits-native-encryption).
+Encrypted on device with a key from the user's iCloud Keychain. Apple platforms only (`ERR_UNSUPPORTED_PLATFORM` elsewhere), not queryable, record names unencrypted, own record type (`EncryptedKVBlob`). Full guide: [Encryption](encryption.md#cloudkits-native-encryption).
 
 ## `icloudDocuments`
 
@@ -165,9 +163,9 @@ interface DocumentFetchOptions {
 icloudKVGetAllItems(): Promise<Record<string, string>>
 ```
 
-Every key *and* value in the iCloud key-value store, in one call. Not part of the `CloudProvider` contract, because no other provider can do it cheaply - CloudKit and Drive would both have to fetch every record. Here the whole store is already a local dictionary, so this is one bridge hop against the N+1 that `getAllKeys()` plus a read per key costs.
+Every key *and* value in the iCloud key-value store, in one bridge hop - avoids the N+1 cost of `getAllKeys()` plus a read per key that every other provider needs instead.
 
-Values the store holds as something other than a string (it also accepts numbers, dates and data) are omitted rather than coerced, since a stringified number would not round-trip back through `setItem`.
+Values held as something other than a string (it also accepts numbers, dates, data) are omitted, not coerced - a stringified number wouldn't round-trip through `setItem`.
 
 ## Configuration
 
@@ -197,6 +195,7 @@ interface GoogleDriveConfig {
   onAuthExpired?: () => Promise<void> | void
   fetchImpl?: typeof fetch
   chunkBytes?: number                     // googleDriveFiles chunk size, default 8 MiB
+  sessionStore?: GoogleDriveSessionStore  // persists an upload session across a process restart
 }
 
 interface GoogleDriveFileAdapter {
@@ -205,15 +204,28 @@ interface GoogleDriveFileAdapter {
   writeChunk: (uri: string, base64: string) => Promise<void>                      // creates/overwrites
   appendChunk: (uri: string, base64: string) => Promise<void>
 }
+
+interface GoogleDriveSessionStore {
+  get: (name: string) => Promise<GoogleDriveUploadSession | null>
+  set: (name: string, session: GoogleDriveUploadSession) => Promise<void>
+  remove: (name: string) => Promise<void>
+}
+
+interface GoogleDriveUploadSession {
+  sessionUrl: string
+  size: number                            // the source size the session was started against
+}
 ```
 
-`GoogleDriveConfig` also takes `onDuplicateName` (`'newest'` by default, or `'error'`). Drive file names are not unique - it is a file store with ids - so two devices creating the same key while both are offline genuinely produce two files. The list order Drive returns is unspecified, so taking the first match lets two devices settle on different files and diverge permanently with nothing reported. `'newest'` orders by modification time with the id as a tiebreak, which every device agrees on; `'error'` raises `ERR_CONFLICT` so you can reconcile explicitly.
+`GoogleDriveConfig` also takes `onDuplicateName` (`'newest'` by default, or `'error'`) for when two offline devices create the same key and Drive ends up with two files - `'newest'` picks by modification time, `'error'` raises `ERR_CONFLICT` instead.
 
-Both REST configs also take `timeoutMs` - 30000 for CloudKit, 60000 for Drive by default. `GoogleDriveConfig` additionally takes `changePollIntervalMs` (default 30000) for `onRemoteChange`.
+Both REST configs also take `timeoutMs` (defaults under [Timeouts](#timeouts) below). `GoogleDriveConfig` additionally takes `changePollIntervalMs` (default 30000) for `onRemoteChange`.
+
+`sessionStore` lets a `googleDriveFiles.save()` upload resume even after the process itself dies mid-transfer. See [large files](providers/google-drive.md#large-files).
 
 ### More than one account
 
-`configureCloudKit` and `configureGoogleDrive` set one client for the whole process, which is right for a normal app but leaves no way to reach two accounts at once - a profile switcher, a "copy my data to my other account" flow, or two tests that need different configurations.
+`configureCloudKit`/`configureGoogleDrive` set one client per process - no way to reach two accounts at once (a profile switcher, two tests needing different configs).
 
 ```ts
 createGoogleDriveProvider(config: GoogleDriveConfig & {
@@ -245,7 +257,7 @@ store.registerProvider(work)
 await store.migrate({ from: 'drive:personal', to: 'drive:work' })
 ```
 
-`createCloudKitProvider` is REST-only, and that is not a limitation waiting to be lifted: the native path authenticates as whatever iCloud account the *device* is signed into, so "a different set of credentials" has no meaning there. On iOS it therefore talks to CloudKit Web Services rather than to `CloudKit.framework`.
+`createCloudKitProvider` is REST-only permanently - the native path authenticates as whatever account the *device* is signed into, so on iOS it talks to CloudKit Web Services, not `CloudKit.framework`.
 
 ## `createCloudStore`
 
@@ -316,13 +328,13 @@ interface CloudStore {
 
 ### Batch operations
 
-`multiGet`, `multiSet` and `multiRemove` batch **per provider** where the provider has a batch endpoint. CloudKit's `/records/lookup` and `/records/modify` both take arrays, so reading 200 keys is one request rather than 200. Google Drive stores one file per key and has no batch content endpoint, so the store falls back to a sequential loop there - same cost as calling `getItem` yourself, but honest about it rather than pretending.
+`multiGet`/`multiSet`/`multiRemove` batch **per provider** where possible - CloudKit's array-taking endpoints turn 200 keys into one request; Drive has none, so it loops, same cost as calling `getItem` yourself.
 
 `multiGet` results are positional, so you can zip them against your input, and a missing key is `[key, null]` rather than an omitted entry.
 
 `clear()` enumerates with `getAllKeys()` first. A "delete my data" flow built on a hardcoded key list is a flow that forgets a key.
 
-`getAllItems()` is `getAllKeys()` plus `multiGet()`, returning one object. It costs whatever those cost - one batched request per provider that batches, a loop where one does not - and exists because it is the shape a debug screen or a data export actually wants.
+`getAllItems()` is `getAllKeys()` plus `multiGet()` in one object - costs whatever those cost, and exists because it's the shape a debug screen or data export actually wants.
 
 ### Migration
 
@@ -342,9 +354,9 @@ interface MigrateResult {
 }
 ```
 
-The source is left intact - this is a copy, not a move, so a failed migration cannot lose data. `continueOnError` defaults to true because aborting on the first bad key leaves the user half migrated with no record of how far it got; the failures come back in the result instead.
+The source is left intact - a copy, not a move. `continueOnError` defaults to true, so a bad key doesn't abort the rest - failures come back in the result.
 
-Values move verbatim, without passing through `codec`. Both ends sit behind the same codec, so decoding only to re-encode would be wasted work - and for a codec with a random nonce it would rewrite every byte.
+Values move verbatim, without `codec` - both ends sit behind the same one, so re-encoding would be wasted work.
 
 ### The outbox
 
@@ -366,9 +378,9 @@ type DropReason =
   | 'queueFull' | 'accountChanged' | 'discarded'
 ```
 
-`flushOutbox()` is re-entrant-safe: a second call while one is in flight joins it rather than re-sending every entry. Entries added *during* a flush are preserved rather than clobbered by the snapshot being written back.
+`flushOutbox()` is re-entrant-safe - a second call while one's in flight joins it, and entries added mid-flush aren't clobbered.
 
-The queue is bounded three ways - `outboxMaxEntries`, `outboxMaxAttempts` and `outboxMaxAgeMs`. Whenever an entry is abandoned it is reported through `onDropped` and in `FlushResult.dropped`, so the loss is visible rather than silent. `discardPendingWrites` lets the user give up on one from a "pending sync" UI.
+The queue is bounded three ways (`outboxMaxEntries`, `outboxMaxAttempts`, `outboxMaxAgeMs`); an abandoned entry is reported through `onDropped`/`FlushResult.dropped`, not silently. `discardPendingWrites` lets the user give up on one from a "pending sync" UI.
 
 ### Automatic flushing
 
@@ -379,7 +391,7 @@ interface AutoFlushConfig {
 }
 ```
 
-`autoFlush: true` takes the defaults. Deliberately *not* network-aware: that needs `@react-native-community/netinfo`, and requiring every consumer to install it to save one line in the ones that want it is a bad trade. Call `flushOutbox()` from your own reconnect listener as well if you have one.
+`autoFlush: true` takes the defaults - deliberately not network-aware, to avoid forcing `@react-native-community/netinfo` on every consumer. Call `flushOutbox()` from your own reconnect listener too.
 
 ### Encryption at rest
 
@@ -390,9 +402,9 @@ interface ValueCodec {
 }
 ```
 
-Applied to values only, never to keys. Drive's `appDataFolder` is plaintext to anything holding the account's OAuth token; this is the seam for closing that with a cipher you chose. The package ships no crypto of its own - key management is your problem, and bundling a cipher would make it look solved.
+Applied to values only, never keys - closes Drive's plaintext `appDataFolder` with a cipher of your choice. Ships no crypto of its own; key management is yours.
 
-Encoding runs *before* tiering picks a destination, so a value is routed by the size it will actually occupy. A codec that inflates its input therefore makes your effective `kvMaxBytes` smaller than the number says. Decoding runs *before* your resolver sees a candidate, so resolvers still compare plaintext.
+Encoding runs *before* tiering picks a size-based route - an inflating codec shrinks your effective `kvMaxBytes`. Decoding runs *before* resolvers see a candidate, so they still compare plaintext.
 
 Full guide, including what iCloud and Drive already encrypt for you: [Encryption](encryption.md).
 
@@ -403,9 +415,7 @@ checkKey(key: string, providers: ProviderName[]): KeyRule | null
 sanitizeKey(raw: string, maxBytes?: number): string
 ```
 
-One key string has to be an `NSUbiquitousKeyValueStore` key, a CloudKit `recordName` and a Drive filename at once, and the three disagree about what is legal. The store checks before the request and rejects with `ERR_INVALID_KEY`; without that, an illegal record name comes back as `BAD_REQUEST`, maps to `ERR_CONTAINER_MISCONFIGURED`, and sends you looking at your entitlements.
-
-Every rule is scoped to the provider that imposes it, and is only checked when that provider is in your list. Rejecting a key for a restriction that cannot apply is a false alarm, and one that breaks working apps rather than pre-empting a server error.
+A key has to work as an `NSUbiquitousKeyValueStore` key, a CloudKit `recordName`, and a Drive filename at once - the store checks up front and rejects with `ERR_INVALID_KEY` rather than an illegal name surfacing later as `BAD_REQUEST`/`ERR_CONTAINER_MISCONFIGURED`.
 
 | Rule | Applies when |
 |---|---|
@@ -415,33 +425,31 @@ Every rule is scoped to the provider that imposes it, and is only checked when t
 | At most 255 characters | `cloudKit` / `cloudKitEncrypted` configured |
 | At most 64 **UTF-8 bytes** | `icloudKV` configured |
 
-So `auth/anonymousUserId/v1` is a perfectly good key for a key-value-store-only app - `NSUbiquitousKeyValueStore` keys are plain strings with no character rules, and Apple documents only the length. Add `cloudKit` to that store and the same key is rejected, because it now has to serve as a record name too.
+So `auth/anonymousUserId/v1` is fine key-value-store-only, but rejected once `cloudKit` joins, since it must also serve as a record name.
 
-`checkKey` returns `null` when the key is fine, or `{ reason, provider }` describing the first rule it breaks and which provider imposes it. `sanitizeKey` rewrites an arbitrary string into a legal one for keys that come from somewhere you do not control - a filename, a user-entered label. Over-long keys are truncated *and* suffixed with a hash of the original, because truncation alone maps every long key with a shared prefix onto the same short key and silently merges unrelated values.
+`checkKey` returns `null` when fine, or `{ reason, provider }` naming the broken rule. `sanitizeKey` rewrites an uncontrolled string into a legal key, truncating and hashing over-long ones (truncation alone would collapse same-prefix keys onto one).
 
 Set `validateKeys: false` if your keys are known good and you would rather not pay for the check.
 
 ### Timeouts
 
-`timeoutMs` bounds a single provider operation. React Native's `fetch` has no timeout of its own and neither does CloudKit's native stack, so an unanswered socket otherwise hangs forever - including `isAvailable()`, which the store calls before everything else. A timeout raises `ERR_TIMEOUT`, which is classified as retryable, so with the outbox on a hung write is queued rather than lost.
+`timeoutMs` bounds a single provider operation - neither `fetch` nor CloudKit's stack has one, so a socket could otherwise hang forever, including in `isAvailable()`. Raises retryable `ERR_TIMEOUT`, so a hung write queues (with the outbox on) rather than getting lost.
 
 The REST clients have their own defaults independent of this: 30s for CloudKit, 60s for Drive (one "request" there can be an 8 MiB chunk). Both are configurable through `configureCloudKit` / `configureGoogleDrive`.
 
 ### Events
 
-`onRemoteChange` and `onAccountChange` merge the events of every configured provider, so the facade - the recommended entry point - can be subscribed to directly instead of reaching for a raw provider.
+`onRemoteChange`/`onAccountChange` merge every configured provider's events onto the facade, so you subscribe once instead of per provider.
 
-The store also acts on account events itself. An `identityChanged: true` event drops memoised availability, tells every provider to `clearCaches()`, and **abandons the outbox**: a queued entry carries no account identity, so flushing after a switch would write the previous user's data into the new user's account.
+The store also acts on account events: `identityChanged: true` drops memoised availability, calls every provider's `clearCaches()`, and **abandons the outbox** - a queued entry carries no account identity, and could otherwise write the old user's data into the new account.
 
 Call `dispose()` when a store outlives its usefulness - it releases the provider subscriptions and stops auto-flush.
 
 `writeMode` decides whether a write goes to the first available provider (`failover`, the default) or to all of them (`mirror`).
 
-`resolve` changes how a read picks a value. Without it, `getItem` returns the first non-null value in provider order and stops - which silently serves stale data once both an Apple and a non-Apple device are writing. With it, every available provider is consulted and you choose the winner; the result is then written back to providers that disagreed unless `repairOnRead` is false. See [two-way sync](store.md#two-way-sync-across-a-mixed-fleet).
+`resolve` changes how a read picks a value - without it, `getItem` takes the first non-null value in provider order (silently stale once an Apple and non-Apple device both write); with it, every provider is consulted, you pick the winner, and disagreeing providers get written back unless `repairOnRead` is false. See [two-way sync](store.md#two-way-sync-across-a-mixed-fleet).
 
-`OutboxStorage` is **synchronous** - the outbox is read and written on the write path, so there is nowhere to await. An async store cannot be wrapped directly; use MMKV.
-
-The default `outboxStorage` is in-memory, so queued writes do not survive a restart. Pass an MMKV-backed adapter in production - see [the outbox](store.md#making-it-durable).
+`OutboxStorage` is **synchronous** - read/written on the write path with nowhere to await, so an async store can't be wrapped directly; use MMKV. The default is in-memory (writes don't survive a restart) - use an MMKV-backed adapter in production, see [the outbox](store.md#making-it-durable).
 
 ## Tiering
 
@@ -454,7 +462,7 @@ interface TieringConfig {
 const DEFAULT_TIERING: TieringConfig
 ```
 
-Each threshold caps one provider: `kvMaxBytes` the key-value store, `recordMaxBytes` a CloudKit record field. A value above a provider's cap is routed past it to the next configured provider that is both large enough and available, and Google Drive stores whole files so it has no cap of its own. Binary assets are not part of tiering - see [`cloudKitAssets`](providers/cloudkit.md#assets).
+Each threshold caps one provider (`kvMaxBytes` the key-value store, `recordMaxBytes` a CloudKit record field); an oversized value routes to the next provider that's large enough and available. Binary assets aren't part of tiering - see [`cloudKitAssets`](providers/cloudkit.md#assets).
 
 ## Resolvers
 
@@ -466,13 +474,11 @@ resolveByUnion(options?: { key?: (item) => string | number }): ResolveFn
 resolveFirstOf(...resolvers: ResolveFn[]): ResolveFn
 ```
 
-`resolveByTimestamp` reads a numeric or ISO-string timestamp out of each JSON candidate and takes the newest. A candidate it cannot date loses to one it can; if nothing is datable it falls back to provider order; ties keep the earlier provider so results do not flap.
+`resolveByTimestamp` reads a numeric or ISO-string timestamp out of each JSON candidate and takes the newest - an undatable candidate loses to a datable one, ties keep the earlier provider, and if nothing's datable it falls back to provider order.
 
-`resolveByModifiedAt` orders on the **server's** modification time instead, which both CloudKit (`modified.timestamp`) and Drive (`modifiedTime`) already report and which this package now reads. That removes a real constraint: your values no longer have to be JSON carrying a field you remembered to update, so it works on plain strings and on payloads written before you thought about sync.
+`resolveByModifiedAt` orders on the **server's** modification time instead (CloudKit's `modified.timestamp`, Drive's `modifiedTime`), so it works on plain strings and old payloads too. The catch: `NSUbiquitousKeyValueStore` exposes no per-key timestamp, so an `icloudKV` candidate always loses to a dated one; when nothing is dated, `fallback` decides (preference order by default).
 
-The catch, and why it is not the default: `NSUbiquitousKeyValueStore` exposes no per-key timestamp at all, so an `icloudKV` candidate never carries one. An undated candidate loses to any dated one; when *nothing* is dated the `fallback` decides (preference order unless you say otherwise).
-
-`resolveByUnion` is for a different shape entirely: JSON arrays where two devices adding *different* elements should both survive, rather than one write clobbering the other - a list of favorited item ids, dismissed-tip ids. It merges every candidate's array, deduplicated and ordered by first appearance; primitives dedupe by value, and `key` says how to dedupe objects. Deletions do not propagate - a plain array has no tombstones, so removing an element on one device does not remove it from the merge. A candidate that is not a JSON array is dropped, not treated as empty; if none of them are, it falls back to preference order.
+`resolveByUnion` is for JSON arrays where two devices adding *different* elements should both survive - favorited item ids, dismissed-tip ids - merging every candidate's array, deduplicated and ordered by first appearance (`key` dedupes objects). Deletions don't propagate (no tombstones), and a non-array candidate is dropped, falling back to preference order if none qualify.
 
 `resolveFirstOf` tries resolvers in turn and takes the first non-null answer - the practical combination for a mixed fleet:
 
@@ -500,7 +506,7 @@ requiresUserAction(e: unknown): boolean
 isCancelled(e: unknown): boolean
 ```
 
-`isCancelled` is separate from the other two on purpose: a cancelled operation is not a fault to report, and a UI that shows an error toast for one the user asked for is wrong.
+`isCancelled` is separate on purpose - a cancelled operation isn't a fault worth an error toast.
 
 `ErrorCode` is exported as a value, so branches and test fixtures can name a code instead of repeating the string:
 
@@ -510,7 +516,7 @@ import { ErrorCode } from 'react-native-cloud-sync'
 ErrorCode.QUOTA_EXCEEDED   // 'ERR_QUOTA_EXCEEDED'
 ```
 
-`CloudSyncErrorInfo` is the optional detail bag passed to the constructor - the type behind `retryAfterMs`, `limitBytes`, `actualBytes`, `serverValue`, `provider`, `serverErrorCode` and `cause`. Exported for anyone constructing a `CloudSyncError` in a custom provider.
+`CloudSyncErrorInfo` is the constructor's optional detail bag - the type behind `retryAfterMs`, `limitBytes`, `actualBytes`, `serverValue`, `provider`, `serverErrorCode`, `cause` - exported for building a `CloudSyncError` in a custom provider.
 
 Full code table: [Error handling](errors.md#codes).
 
@@ -521,7 +527,7 @@ bytesToBase64(bytes: Uint8Array): string
 base64ToBytes(base64: string): Uint8Array
 ```
 
-The `GoogleDriveFileAdapter` contract is base64 in and base64 out, while modern filesystem APIs are byte-oriented - these bridge the two. Dependency-free and Hermes-safe, unlike `Buffer` or `atob`/`btoa`. See [the adapter](providers/google-drive.md#large-files).
+Bridges `GoogleDriveFileAdapter`'s base64 contract with byte-oriented filesystem APIs - dependency-free and Hermes-safe, unlike `Buffer` or `atob`/`btoa`. See [the adapter](providers/google-drive.md#large-files).
 
 ## Types
 
@@ -550,9 +556,9 @@ interface QuotaInfo { usedBytes?: number, totalBytes?: number, provider: Provide
 type Unsubscribe = () => void
 ```
 
-`ProviderName` is an **open** union. `registerProvider` is documented as the way to plug in a provider you wrote yourself, and while this was a closed union of the four built-ins that was impossible to express in types - a `'dropbox'` provider needed a cast at every call site. The `string & {}` arm keeps autocomplete for the built-in names while accepting any other string; `BuiltInProviderName` is the closed set if you want it.
+`ProviderName` is an **open** union, so `registerProvider`'s custom-provider support (a `'dropbox'` provider) needs no cast at every call site. `string & {}` keeps autocomplete for built-ins while accepting any string; `BuiltInProviderName` is the closed set.
 
-`ItemWithMeta` is what an optional `CloudProvider.getItemWithMeta` returns, and where `ResolveCandidate.modifiedAt` comes from. `QuotaInfo` is what `getQuota()` reports; `totalBytes` is absent for an unlimited or unreported quota, which is not the same as zero.
+`ItemWithMeta` is what an optional `CloudProvider.getItemWithMeta` returns, feeding `ResolveCandidate.modifiedAt`. `QuotaInfo` is what `getQuota()` reports; `totalBytes` absent means unlimited or unreported, not zero.
 
 `AbortLike` is the abort-signal shape the cancellable APIs accept:
 
@@ -564,7 +570,7 @@ interface AbortLike {
 }
 ```
 
-Structural rather than the DOM `AbortSignal`, so any polyfill satisfies it and you do not need `lib.dom` in your tsconfig. A real `AbortSignal` matches it.
+Structural rather than the DOM `AbortSignal`, so any polyfill satisfies it and you don't need `lib.dom` in your tsconfig - a real `AbortSignal` matches it too.
 
 ## The provider contract
 
@@ -590,9 +596,9 @@ interface CloudProvider {
 }
 ```
 
-Everything optional has a working fallback, so a minimal provider is six methods. Implement `multiGet`/`multiSet`/`multiRemove` only when your backend genuinely batches - a "batch" method that secretly loops hides N round trips behind a call that looks like one.
+Everything optional has a working fallback - a minimal provider is six methods. Implement `multiGet`/`multiSet`/`multiRemove` only when your backend genuinely batches; a fake one just hides N round trips behind one call.
 
-`clearCaches` matters more than its size suggests: the store calls it on an identity change, and anything you memoised belongs to the account that just left.
+`clearCaches` matters: the store calls it on an identity change, since anything memoised belongs to the account that just left.
 
 ## React hooks
 
@@ -638,9 +644,7 @@ function SettingsScreen () {
 }
 ```
 
-These exist because every app writes the same three of them, and each one has the same two bugs: a response that arrives after the key changed overwrites the newer one, and a `setState` after unmount. Both are handled once here.
-
-`useCloudItem` writes optimistically and does *not* revert on error, because the store queues retryable failures - reverting would discard a value the outbox is still going to deliver. A failed read likewise leaves the last known value in place rather than blanking the screen on a network blip.
+Every app writes the same three, with the same two bugs - a stale response overwriting a newer one, and `setState` after unmount - handled once here. `useCloudItem` writes optimistically and doesn't revert on error, since the outbox will still deliver it; a failed read likewise keeps the last known value rather than blanking the screen.
 
 `useAccountStatus`'s `identityChanged` is **latched**, not momentary: it stays true once a different identity has signed in, so a screen that mounts just after the event still sees it.
 

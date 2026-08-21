@@ -1,6 +1,6 @@
 # Error handling
 
-The reason this package exists. Every failure is a typed rejection you can branch on, and `null` means exactly one thing.
+Every failure here is a typed rejection you can branch on; `null` means exactly one thing.
 
 ## The contract
 
@@ -27,13 +27,11 @@ try {
 
 ## Why it matters
 
-A `catch { return null }` makes "not signed in", "offline", "out of storage" and "no such key" indistinguishable. The app then cannot tell the user anything useful, and cannot decide whether retrying is sensible.
-
-Worse is a failed write reported as a success. Two libraries in this space do exactly that - one checks the wrong error variable in its completion block, the other discards the operation result - so a quota-exceeded write resolves happily and the data is gone.
+A `catch { return null }` conflates every failure into one useless signal. Worse, a failed write can look like success: real libraries misreport it, so a quota-exceeded write resolves happily while the data vanishes.
 
 ## Codes
 
-These are this package's codes. They map onto CloudKit's own ([framework errors][ck], [Web Services error codes][ckerrors]) and Drive's HTTP statuses, and the original is kept on `serverErrorCode` when there was one.
+These codes map onto CloudKit's own ([framework][ck], [Web Services][ckerrors]) and Drive's HTTP statuses; the original is kept on `serverErrorCode`.
 
 | Code | Meaning | Typical response |
 |---|---|---|
@@ -54,11 +52,7 @@ These are this package's codes. They map onto CloudKit's own ([framework errors]
 | `ERR_CANCELLED` | Cancelled by the caller | Nothing - they asked for it |
 | `ERR_UNKNOWN` | Unclassified; `cause` holds the original | Report it |
 
-`ERR_INVALID_KEY` is raised **before** the request, deliberately. An illegal CloudKit record name otherwise comes back as `BAD_REQUEST`, which maps to `ERR_CONTAINER_MISCONFIGURED` and sends you looking at your entitlements instead of at your key. See [keys](store.md#keys).
-
-`ERR_TIMEOUT` is not a failed operation, only an abandoned wait - the request may well still be in flight, and for an iCloud Drive download it definitely is. That is why it counts as retryable.
-
-`ERR_CANCELLED` is what a cancelled transfer rejects with: [`cloudKitAssets.cancel`](providers/cloudkit.md#assets), `cloudKitBackup.cancel`, or an `AbortLike` signal passed to [`googleDriveFiles`](providers/google-drive.md#large-files).
+Three deserve a note: `ERR_INVALID_KEY` fires **before** the request, so a bad record name doesn't instead surface as a confusing `BAD_REQUEST` (see [keys](store.md#keys)); `ERR_TIMEOUT` is only an abandoned wait, not a failure; and `ERR_CANCELLED` is what a cancelled transfer rejects with - [`cloudKitAssets.cancel`](providers/cloudkit.md#assets), `cloudKitBackup.cancel`, or an `AbortLike` signal to [`googleDriveFiles`](providers/google-drive.md#large-files).
 
 ## Classifying without a switch
 
@@ -75,9 +69,7 @@ try {
 }
 ```
 
-`isCancelled` comes first because a cancelled operation is not a fault. A UI that shows an error toast for something the user asked to stop is wrong.
-
-With the [facade](store.md) and the outbox enabled, retryable failures are already queued for you - so most call sites only need the `requiresUserAction` branch.
+`isCancelled` comes first: cancelling isn't a fault, so don't toast it. The [facade](store.md)'s outbox already queues retryable failures, so most call sites need only `requiresUserAction`.
 
 ## Recognising an error
 
@@ -87,7 +79,7 @@ import { isCloudSyncError } from 'react-native-cloud-sync'
 if (isCloudSyncError(e)) console.warn(e.code)
 ```
 
-Use the guard rather than `instanceof`. A rejection crossing the React Native bridge arrives as a plain object on some paths, so the guard tests shape instead of identity.
+Use the guard, not `instanceof`: a bridge rejection sometimes arrives as a plain object, so it checks shape.
 
 ## Distinguishing "absent" from "broken"
 
@@ -109,9 +101,7 @@ if (value == null)
   seedInitialState()
 ```
 
-For this to be safe, `null` has to mean *only* "no such key" - so the facade raises `ERR_NOT_SIGNED_IN` rather than resolving `null` when **no configured provider was reachable at all**. A signed-out user on first launch would otherwise take the `value == null` branch, seed empty state, and overwrite their real backup on the next write.
-
-The rule holds on both sides of that: if at least one provider answered and none of them had the key, you get `null`, because that genuinely is an absent key.
+That works because the facade raises `ERR_NOT_SIGNED_IN`, never `null`, when no provider is reachable - and the reverse holds too:
 
 ```ts
 // One provider down, another up and holding the value -> the value.
