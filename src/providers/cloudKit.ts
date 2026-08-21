@@ -1,10 +1,11 @@
 import { Platform } from 'react-native'
 
 import { getNativeModule, hasNativeModule, requireNativeModule, subscribeNativeEvent } from '../internal/nativeModule'
-import { getCloudKitClient, isCloudKitConfigured } from '../config'
-import { CloudKitRestClient, type CloudKitRestConfig } from '../internal/cloudKitRest'
-import { normalizeError, unsupportedPlatform } from '../errors'
+import { getCloudKitClient, getSharedFileAdapter, isCloudKitConfigured } from '../config'
+import { CloudKitRestClient, type CloudKitRestConfig, MAX_ASSET_UPLOAD_BYTES } from '../internal/cloudKitRest'
+import { CloudSyncError, ErrorCode, normalizeError, unsupportedPlatform } from '../errors'
 import { toAccountStatus } from '../internal/enums'
+import { base64ToBytes, bytesToBase64 } from '../internal/base64'
 import type {
   AccountChangeEvent,
   AccountStatus,
@@ -383,13 +384,26 @@ export const zones = {
 }
 
 /**
+ * Listeners for asset progress on Android/web, where there is no native event
+ * emitter to bridge - {@link assets.onProgress} subscribes here instead when
+ * not native, and the REST upload/download path publishes into it.
+ */
+const restAssetProgressListeners = new Set<(e: AssetProgressEvent) => void>()
+
+function publishRestAssetProgress(e: AssetProgressEvent): void {
+  for (const listener of restAssetProgressListeners) listener(e)
+}
+
+/**
  * Binary assets (`CKAsset`).
  *
- * Native only. CloudKit Web Services does expose an asset upload flow, but it
- * is a separate multi-step protocol (request an upload URL, POST the bytes,
- * then reference the returned token in a record) that this package does not
- * implement yet - so on Android and web these reject with
- * `ERR_UNSUPPORTED_PLATFORM` rather than appearing to work.
+ * Native on iOS/macOS. On Android and web, `save`/`fetch` go through CloudKit
+ * Web Services' own asset-upload protocol (request a single-use upload URL,
+ * POST the bytes, attach the returned descriptor to the record) - see
+ * {@link MAX_ASSET_UPLOAD_BYTES} for the one hard limit that comes with it.
+ * Custom zones and the native temporary-directory fallback remain native-only
+ * (`ERR_UNSUPPORTED_PLATFORM`), since the REST client has no equivalent of
+ * either.
  *
  * Assets are deliberately an explicit API rather than something the store
  * facade routes to automatically: the caller passes a file path, not a string,
@@ -399,9 +413,12 @@ export const assets = {
   /**
    * Uploads a local file as a field on a record.
    *
-   * Progress is reported per record through {@link onProgress}; a CKAsset is
-   * streamed from disk, so a large file does not have to be held in memory the
-   * way a base64 round trip would.
+   * Progress is reported per record through {@link onProgress}. Natively, a
+   * `CKAsset` is streamed from disk so a large file never has to be held in
+   * memory; over REST the whole file is read once, which is fine given
+   * {@link MAX_ASSET_UPLOAD_BYTES} - CloudKit Web Services itself caps a
+   * single asset upload at 15 MB, so nothing this package could stream would
+   * ever be large enough to need it.
    */
   save: async (
     options: {
@@ -413,20 +430,56 @@ export const assets = {
       zoneName?: string | null
     }
   ): Promise<void> => {
-    if (!isNative())
+    if (isNative()) {
+      try {
+        await requireNativeModule().ckSaveAsset(
+          options.recordType ?? 'KVBlob',
+          options.recordName,
+          options.fieldName,
+          options.fileUri,
+          options.zoneName ?? null
+        )
+      }
+      catch (e) {
+        throw normalizeError(e, NAME)
+      }
+      return
+    }
+
+    if (options.zoneName != null)
       throw unsupportedPlatform(
         NAME,
-        'CKAsset upload is implemented natively only. On Android and web, store the file '
-        + 'with the googleDrive provider instead.'
+        'Custom zones are implemented natively only; the REST client uses the default zone.'
       )
 
     try {
-      await requireNativeModule().ckSaveAsset(
-        options.recordType ?? 'KVBlob',
+      // Checked in this order deliberately: whether CloudKit itself is even
+      // reachable is the more fundamental requirement, so it should surface
+      // first rather than being masked by a missing file adapter.
+      const client = getCloudKitClient()
+      const adapter = getSharedFileAdapter()
+      const size = await adapter.statSize(options.fileUri)
+      if (size > MAX_ASSET_UPLOAD_BYTES)
+        throw new CloudSyncError(
+          ErrorCode.PAYLOAD_TOO_LARGE,
+          `[RNCloudSync] '${options.fileUri}' is ${size} bytes; CloudKit Web Services caps a single `
+          + `asset upload at ${MAX_ASSET_UPLOAD_BYTES} bytes. Use the googleDrive provider for larger `
+          + `files on Android and web.`,
+          { provider: NAME, limitBytes: MAX_ASSET_UPLOAD_BYTES, actualBytes: size }
+        )
+
+      const bytes = base64ToBytes(await adapter.readChunk(options.fileUri, 0, size))
+      await client.uploadAsset(
         options.recordName,
         options.fieldName,
-        options.fileUri,
-        options.zoneName ?? null
+        bytes,
+        (bytesTransferred, bytesTotal) => publishRestAssetProgress({
+          recordName: options.recordName,
+          fieldName: options.fieldName,
+          bytesTransferred,
+          bytesTotal,
+        }),
+        options.recordType
       )
     }
     catch (e) {
@@ -439,10 +492,12 @@ export const assets = {
    * record or field does not exist.
    *
    * Pass `destinationUri` for anything the user is going to keep or hand to a
-   * share sheet. Without it the file lands in the app's temporary directory
-   * under a name derived from the record, and iOS may reclaim that at any
-   * time - fine for restoring straight back into the app, wrong for an export.
-   * Parent directories are created if they do not exist.
+   * share sheet. Natively, without it the file lands in the app's temporary
+   * directory under a name derived from the record, and iOS may reclaim that
+   * at any time - fine for restoring straight back into the app, wrong for an
+   * export. Parent directories are created if they do not exist. Over REST,
+   * `destinationUri` is required: there is no OS-managed temporary directory
+   * this package can fall back to without a native module.
    */
   fetch: async (
     options: {
@@ -452,19 +507,46 @@ export const assets = {
       destinationUri?: string
     }
   ): Promise<string | null> => {
-    if (!isNative())
+    if (isNative())
+      try {
+        return await requireNativeModule().ckFetchAsset(
+          options.recordName,
+          options.fieldName,
+          options.zoneName ?? null,
+          options.destinationUri ?? null
+        )
+      }
+      catch (e) {
+        throw normalizeError(e, NAME)
+      }
+
+    if (options.zoneName != null)
       throw unsupportedPlatform(
         NAME,
-        'CKAsset download is implemented natively only.'
+        'Custom zones are implemented natively only; the REST client uses the default zone.'
+      )
+    if (options.destinationUri == null)
+      throw unsupportedPlatform(
+        NAME,
+        'A default temporary-directory destination is implemented natively only. Pass '
+        + 'destinationUri explicitly on Android and web.'
       )
 
     try {
-      return await requireNativeModule().ckFetchAsset(
+      const bytes = await getCloudKitClient().fetchAsset(
         options.recordName,
         options.fieldName,
-        options.zoneName ?? null,
-        options.destinationUri ?? null
+        (bytesTransferred, bytesTotal) => publishRestAssetProgress({
+          recordName: options.recordName,
+          fieldName: options.fieldName,
+          bytesTransferred,
+          bytesTotal,
+        })
       )
+      if (bytes == null) return null
+
+      await getSharedFileAdapter().writeChunk(options.destinationUri, bytesToBase64(bytes))
+      return options.destinationUri
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -478,6 +560,11 @@ export const assets = {
    * Identified by record and field rather than by a handle, because that is
    * what identifies a transfer everywhere else in this API - `onProgress`
    * reports the same pair, so a UI already has it.
+   *
+   * Native only, still - the REST transfer has no in-flight handle to cancel
+   * yet. Resolves `false` on Android/web rather than throwing, the same as
+   * before, so this is a known gap rather than a broken promise: a REST
+   * `save`/`fetch` cannot currently be stopped once started.
    */
   cancel: async (
     options: { recordName: string; fieldName: string }
@@ -491,20 +578,30 @@ export const assets = {
     }
   },
 
-  /** Upload/download progress for asset transfers. Native only. */
+  /**
+   * Upload/download progress for asset transfers.
+   *
+   * Native on iOS/macOS, bridged from the same event every transfer already
+   * reports. On Android/web there is no native module to bridge, so this
+   * subscribes to the in-JS feed the REST `save`/`fetch` path publishes into
+   * instead - same event shape either way.
+   */
   onProgress: (listener: (e: AssetProgressEvent) => void): Unsubscribe => {
-    if (getNativeModule() == null) return () => undefined
-    return subscribeNativeEvent<AssetProgressNativeEvent>(
-      'onAssetProgress',
-      'assetProgress',
-      (e) => {
-        listener({
-          recordName: e.recordName,
-          fieldName: e.fieldName,
-          bytesTransferred: e.bytesTransferred,
-          bytesTotal: e.bytesTotal,
-        })
-      }
-    )
+    if (isNative())
+      return subscribeNativeEvent<AssetProgressNativeEvent>(
+        'onAssetProgress',
+        'assetProgress',
+        (e) => {
+          listener({
+            recordName: e.recordName,
+            fieldName: e.fieldName,
+            bytesTransferred: e.bytesTransferred,
+            bytesTotal: e.bytesTotal,
+          })
+        }
+      )
+
+    restAssetProgressListeners.add(listener)
+    return () => restAssetProgressListeners.delete(listener)
   },
 }

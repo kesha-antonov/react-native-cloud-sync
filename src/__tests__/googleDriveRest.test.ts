@@ -138,6 +138,86 @@ describe('an id that another device deleted', () => {
   })
 })
 
+describe('HTTP 403 reason classification', () => {
+  // Drive overloads 403 for three unrelated conditions, distinguished only by
+  // `error.errors[0].reason` in the body - a plain status-code check would
+  // misclassify a full-storage user as an auth failure and wrongly prompt them
+  // to reconnect their account instead of telling them to free up space.
+  it('reports storageQuotaExceeded as ERR_QUOTA_EXCEEDED, not an auth failure', async () => {
+    const { client } = makeClient([
+      found('id-1', 'k'),
+      { status: 403, json: { error: { errors: [{ reason: 'storageQuotaExceeded' }] } } },
+    ])
+
+    await expect(client.setItem('k', 'v')).rejects.toMatchObject({
+      code: ErrorCode.QUOTA_EXCEEDED,
+    })
+  })
+
+  it.each(['userRateLimitExceeded', 'rateLimitExceeded'])(
+    'reports %s as ERR_RATE_LIMITED, not an auth failure',
+    async (reason) => {
+      const { client } = makeClient([
+        found('id-1', 'k'),
+        { status: 403, json: { error: { errors: [{ reason }] } } },
+      ])
+
+      await expect(client.setItem('k', 'v')).rejects.toMatchObject({
+        code: ErrorCode.RATE_LIMITED,
+      })
+    }
+  )
+
+  it('falls back to ERR_AUTH_EXPIRED for a 403 with no recognised reason', async () => {
+    const onAuthExpired = jest.fn()
+    const calls: Reply[] = [
+      found('id-1', 'k'),
+      { status: 403, json: { error: { errors: [{ reason: 'insufficientFilePermissions' }] } } },
+    ]
+    const fetchImpl = (() => {
+      const i = { n: 0 }
+      return () => {
+        const reply = calls[Math.min(i.n, calls.length - 1)]
+        i.n += 1
+        const status = reply.status ?? 200
+        return Promise.resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          json: () => Promise.resolve(reply.json ?? {}),
+          text: () => Promise.resolve(reply.text ?? ''),
+          headers: new Headers(),
+        } as unknown as Response)
+      }
+    })() as unknown as typeof fetch
+
+    const client = new GoogleDriveClient({ getAccessToken: () => 'access-token', fetchImpl, onAuthExpired })
+
+    await expect(client.setItem('k', 'v')).rejects.toMatchObject({ code: ErrorCode.AUTH_EXPIRED })
+    expect(onAuthExpired).toHaveBeenCalledTimes(1)
+  })
+
+  it('still treats a plain 401 as an auth failure without inspecting the body', async () => {
+    const { client } = makeClient([found('id-1', 'k'), { status: 401 }])
+
+    await expect(client.setItem('k', 'v')).rejects.toMatchObject({ code: ErrorCode.AUTH_EXPIRED })
+  })
+})
+
+describe('filename query escaping', () => {
+  it('escapes a literal backslash before a literal quote, not after', async () => {
+    const { client, calls } = makeClient([empty])
+
+    await client.getItem('a\\b\'s file')
+
+    const url = decodeURIComponent(calls[0].url)
+    // The one real backslash before "b" is escaped first, becoming two, and
+    // the one real quote is escaped separately, becoming backslash-quote -
+    // `a\b's file` -> `a\\b\'s file`. Regex avoids fighting JS string-literal
+    // escaping for a value that itself contains both backslashes and quotes.
+    expect(/name='a\\\\b\\'s file'/.test(url)).toBe(true)
+  })
+})
+
 describe('getAllKeys', () => {
   it('paginates and memoises every id it saw', async () => {
     const { client, calls } = makeClient([

@@ -18,13 +18,19 @@ afterEach(() => harness.reset())
 describe('cloudKitBackup on a non-native platform', () => {
   beforeEach(() => harness.setPlatform('android'))
 
-  it('save rejects with ERR_UNSUPPORTED_PLATFORM, same as cloudKitAssets', async () => {
+  // cloudKitAssets now has a real REST path over CloudKit Web Services, so an
+  // unconfigured client says so specifically - the same as every other REST
+  // operation on this provider - rather than a blanket "not supported".
+  it('save rejects with ERR_CONTAINER_MISCONFIGURED when CloudKit is not configured', async () => {
     await expect(
       cloudKitBackup.save('/tmp/db.sqlite')
-    ).rejects.toMatchObject({ code: ErrorCode.UNSUPPORTED_PLATFORM })
+    ).rejects.toMatchObject({ code: ErrorCode.CONTAINER_MISCONFIGURED })
   })
 
-  it('restore rejects with ERR_UNSUPPORTED_PLATFORM', async () => {
+  // Omitting `destinationUri` still relies on a native temporary directory
+  // this package has no REST equivalent for, so it stays UNSUPPORTED_PLATFORM
+  // regardless of CloudKit configuration - checked before any network call.
+  it('restore rejects with ERR_UNSUPPORTED_PLATFORM when destinationUri is omitted', async () => {
     await expect(cloudKitBackup.restore()).rejects.toMatchObject({
       code: ErrorCode.UNSUPPORTED_PLATFORM,
     })

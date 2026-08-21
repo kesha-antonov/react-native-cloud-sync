@@ -5,7 +5,11 @@ interface FetchCall { url: string; body: unknown }
 
 function makeClient(
   responses: { status?: number; json: unknown }[],
-  overrides: { onAuthExpired?: () => void; authToken?: string | null } = {}
+  overrides: {
+    onAuthExpired?: () => void
+    authToken?: string | null
+    xhrImpl?: () => XMLHttpRequest
+  } = {}
 ) {
   const calls: FetchCall[] = []
   let i = 0
@@ -32,8 +36,95 @@ function makeClient(
     getAuthToken: () => (overrides.authToken === undefined ? 'web-token' : overrides.authToken),
     onAuthExpired: overrides.onAuthExpired,
     fetchImpl,
+    xhrImpl: overrides.xhrImpl,
   })
   return { client, calls }
+}
+
+interface XhrCall { method: string; url: string; body: unknown }
+
+interface XhrScript {
+  status?: number
+  /** JSON-stringified and set as `responseText`, for the upload path. */
+  json?: unknown
+  /** Set as `response` with `responseType: 'arraybuffer'`, for the download path. */
+  arrayBuffer?: ArrayBuffer
+  networkError?: boolean
+  timeoutError?: boolean
+}
+
+/**
+ * A fake `XMLHttpRequest` good enough for `putAssetBytes`/`fetchAssetBytes`:
+ * captures what was sent, settles asynchronously (a microtask, like a real
+ * request would), and fires one upload- or download-progress event with the
+ * full body size before settling so `onProgress` wiring can be asserted on.
+ */
+function makeXhr(script: XhrScript) {
+  const calls: XhrCall[] = []
+
+  const xhrImpl = (): XMLHttpRequest => {
+    const req: {
+      _method?: string
+      _url?: string
+      timeout: number
+      status: number
+      responseText: string
+      response: unknown
+      responseType: string
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null }
+      onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null
+      onload: (() => void) | null
+      onerror: (() => void) | null
+      ontimeout: (() => void) | null
+      open: (method: string, url: string) => void
+      send: (body?: unknown) => void
+    } = {
+      timeout: 0,
+      status: 0,
+      responseText: '',
+      response: undefined,
+      responseType: '',
+      upload: { onprogress: null },
+      onprogress: null,
+      onload: null,
+      onerror: null,
+      ontimeout: null,
+      open(method, url) {
+        req._method = method
+        req._url = url
+      },
+      send(body) {
+        calls.push({ method: req._method ?? '', url: req._url ?? '', body })
+        void Promise.resolve().then(() => {
+          if (script.networkError) {
+            req.onerror?.()
+            return
+          }
+          if (script.timeoutError) {
+            req.ontimeout?.()
+            return
+          }
+
+          req.status = script.status ?? 200
+          if (script.json !== undefined) req.responseText = JSON.stringify(script.json)
+          if (script.arrayBuffer !== undefined) req.response = script.arrayBuffer
+
+          const total = script.arrayBuffer != null
+            ? script.arrayBuffer.byteLength
+            : typeof body === 'object' && body != null && 'length' in (body as { length?: number })
+              ? (body as { length: number }).length
+              : 0
+          req.upload.onprogress?.({ lengthComputable: true, loaded: total, total })
+          req.onprogress?.({ lengthComputable: true, loaded: total, total })
+
+          req.onload?.()
+        })
+      },
+    }
+    return req as unknown as XMLHttpRequest
+  }
+
+  return { xhrImpl, calls }
 }
 
 describe('AUTHENTICATION_REQUIRED handling', () => {
@@ -291,5 +382,148 @@ describe('isReachable', () => {
     ])
 
     await expect(client.isReachable()).resolves.toBe(false)
+  })
+})
+
+describe('uploadAsset', () => {
+  const descriptor = { fileChecksum: 'chk', size: '3', receipt: 'rcpt' }
+
+  it('requests an upload URL, POSTs the bytes, then attaches the descriptor to the record', async () => {
+    const { xhrImpl, calls: xhrCalls } = makeXhr({ json: { singleFile: descriptor } })
+    const { client, calls } = makeClient(
+      [
+        { json: { tokens: [{ recordName: 'avatar', fieldName: 'image', url: 'https://upload.example/asset' }] } },
+        { json: { records: [{ recordName: 'avatar' }] } }, // create
+      ],
+      { xhrImpl }
+    )
+
+    await client.uploadAsset('avatar', 'image', Uint8Array.from([1, 2, 3]))
+
+    expect(calls[0].url).toContain('/assets/upload')
+    expect(calls[0].body).toEqual({ tokens: [{ recordType: 'KVBlob', recordName: 'avatar', fieldName: 'image' }] })
+
+    expect(xhrCalls).toHaveLength(1)
+    expect(xhrCalls[0].url).toBe('https://upload.example/asset')
+    expect(xhrCalls[0].body).toEqual(Uint8Array.from([1, 2, 3]))
+
+    expect(calls[1].url).toContain('/records/modify')
+    const record = (calls[1].body as { operations: { record: { fields: Record<string, { value: unknown }> } }[] })
+      .operations[0].record
+    expect(record.fields.image).toEqual({ value: descriptor })
+    expect(record.fields.image__size).toEqual({ value: 3 })
+  })
+
+  it('falls back to forceUpdate when the record already has this asset', async () => {
+    const { xhrImpl } = makeXhr({ json: { singleFile: descriptor } })
+    const { client, calls } = makeClient(
+      [
+        { json: { tokens: [{ url: 'https://upload.example/asset' }] } },
+        { json: { records: [{ recordName: 'avatar', serverErrorCode: 'EXISTS' }] } },
+        { json: { records: [{ recordName: 'avatar' }] } },
+      ],
+      { xhrImpl }
+    )
+
+    await client.uploadAsset('avatar', 'image', Uint8Array.from([1, 2, 3]))
+
+    expect(calls).toHaveLength(3)
+    const ops = (calls[2].body as { operations: { operationType: string }[] }).operations
+    expect(ops[0].operationType).toBe('forceUpdate')
+  })
+
+  it('rejects an oversized asset locally, without requesting an upload URL', async () => {
+    const { xhrImpl } = makeXhr({ json: { singleFile: descriptor } })
+    const { client, calls } = makeClient([{ json: {} }], { xhrImpl })
+    const tooBig = new Uint8Array(15 * 1024 * 1024 + 1)
+
+    await expect(client.uploadAsset('avatar', 'image', tooBig)).rejects.toMatchObject({
+      code: ErrorCode.PAYLOAD_TOO_LARGE,
+      limitBytes: 15 * 1024 * 1024,
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('reports real upload progress via XMLHttpRequest, not just start/complete', async () => {
+    const { xhrImpl } = makeXhr({ json: { singleFile: descriptor } })
+    const { client } = makeClient(
+      [{ json: { tokens: [{ url: 'https://upload.example/asset' }] } }, { json: { records: [{ recordName: 'a' }] } }],
+      { xhrImpl }
+    )
+
+    const onProgress = jest.fn()
+    await client.uploadAsset('a', 'f', Uint8Array.from([1, 2, 3]), onProgress)
+
+    expect(onProgress).toHaveBeenCalledWith(3, 3)
+  })
+
+  it('classifies a non-2xx upload response the same way post() classifies HTTP failures', async () => {
+    const { xhrImpl } = makeXhr({ status: 429 })
+    const { client } = makeClient([{ json: { tokens: [{ url: 'https://upload.example/asset' }] } }], { xhrImpl })
+
+    await expect(
+      client.uploadAsset('a', 'f', Uint8Array.from([1]))
+    ).rejects.toMatchObject({ code: ErrorCode.RATE_LIMITED })
+  })
+
+  it('reports a dropped connection as NETWORK_UNAVAILABLE', async () => {
+    const { xhrImpl } = makeXhr({ networkError: true })
+    const { client } = makeClient([{ json: { tokens: [{ url: 'https://upload.example/asset' }] } }], { xhrImpl })
+
+    await expect(
+      client.uploadAsset('a', 'f', Uint8Array.from([1]))
+    ).rejects.toMatchObject({ code: ErrorCode.NETWORK_UNAVAILABLE })
+  })
+})
+
+describe('fetchAsset', () => {
+  it('downloads the bytes behind a fetched record\'s downloadURL', async () => {
+    const bytes = Uint8Array.from([9, 8, 7])
+    const { xhrImpl, calls: xhrCalls } = makeXhr({ arrayBuffer: bytes.buffer })
+    const { client } = makeClient(
+      [{
+        json: {
+          records: [{
+            recordName: 'avatar',
+            fields: { image: { value: { downloadURL: 'https://download.example/asset' } } },
+          }],
+        },
+      }],
+      { xhrImpl }
+    )
+
+    await expect(client.fetchAsset('avatar', 'image')).resolves.toEqual(bytes)
+    expect(xhrCalls[0].url).toBe('https://download.example/asset')
+    expect(xhrCalls[0].method).toBe('GET')
+  })
+
+  it('resolves null when the record does not exist', async () => {
+    const { client } = makeClient([{ json: { records: [{ recordName: 'avatar', serverErrorCode: 'NOT_FOUND' }] } }])
+
+    await expect(client.fetchAsset('avatar', 'image')).resolves.toBeNull()
+  })
+
+  it('resolves null when the record exists but this field was never uploaded', async () => {
+    const { client } = makeClient([{ json: { records: [{ recordName: 'avatar', fields: {} }] } }])
+
+    await expect(client.fetchAsset('avatar', 'image')).resolves.toBeNull()
+  })
+
+  it('reports real download progress via XMLHttpRequest', async () => {
+    const bytes = Uint8Array.from([1, 2, 3, 4])
+    const { xhrImpl } = makeXhr({ arrayBuffer: bytes.buffer })
+    const { client } = makeClient(
+      [{
+        json: {
+          records: [{ recordName: 'a', fields: { f: { value: { downloadURL: 'https://download.example/x' } } } }],
+        },
+      }],
+      { xhrImpl }
+    )
+
+    const onProgress = jest.fn()
+    await client.fetchAsset('a', 'f', onProgress)
+
+    expect(onProgress).toHaveBeenCalledWith(4, 4)
   })
 })

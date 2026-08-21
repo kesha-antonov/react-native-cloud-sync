@@ -11,7 +11,7 @@ The always-on backend for a cross-platform app. It behaves identically on iOS, A
 | Platforms | iOS, Android, web |
 | Auth | OAuth, [`drive.appdata` scope][drivescopes], supplied by your app |
 | Size limits | the user's Drive quota |
-| Survives app uninstall | yes - tied to the account, not the install |
+| Survives app uninstall | yes - tied to the account, not the install; gone only if the user disconnects the app from Drive or deletes the data folder directly |
 | Remote change events | – |
 | Visible to the user in Drive | no |
 
@@ -145,7 +145,26 @@ const restoredPath = await googleDriveFiles.fetch({
 
 Calling `save`/`fetch` before `configureGoogleDriveFiles` rejects with `ERR_CONTAINER_MISCONFIGURED`, naming the missing call - separate from `configureGoogleDrive` because most apps never touch a file this large and shouldn't need to think about filesystem access to use the text/JSON path.
 
-Resumability here is scoped to one call: the upload session lives only in memory, so a chunk that fails mid-flight is retried against Drive's real offset, but a process that dies mid-upload has to restart `save` from byte 0 on the next call. Persisting the session across restarts is not implemented.
+Resumability covers a dropped connection for free: a chunk that fails mid-flight is retried against Drive's real offset rather than restarting the whole transfer. Surviving the *process* dying mid-upload needs one more thing - pass `sessionStore` to `configureGoogleDrive`:
+
+```ts
+import { configureGoogleDrive } from 'react-native-cloud-sync'
+
+configureGoogleDrive({
+  getAccessToken: () => secureStore.get('driveAccessToken'),
+  sessionStore: {
+    get: name => AsyncStorage.getItem(`drive-session:${name}`).then(v => v ? JSON.parse(v) : null),
+    set: (name, session) => AsyncStorage.setItem(`drive-session:${name}`, JSON.stringify(session)),
+    remove: name => AsyncStorage.removeItem(`drive-session:${name}`),
+  },
+})
+```
+
+Without it, the session lives only in memory, and a process that dies mid-upload has to restart `save` from byte 0 on the next call - exactly as before. With it, `save` persists the session before the first chunk goes out, and the next call for the same `name` - even from a fresh process - finds it, asks Drive for the real offset, and resumes from there.
+
+A persisted session is only ever trusted when it still matches the source file's size; a size that has changed since means the session is dropped and a fresh one started, since resuming a byte-range upload into different content would corrupt it. A session Drive no longer recognises (past its ~1 week server-side lifetime, say) is handled the same way - transparently, not as an error. It's a tiny JSON record, not file I/O, so `sessionStore` is a much lighter ask than `GoogleDriveFileAdapter`: one row in whatever key-value storage the host app already has.
+
+Cancelling via `signal` drops the persisted session rather than leaving it - a deliberate stop is not a crash to recover from.
 
 If losing a transfer to the app being backgrounded or killed mid-way is the failure you actually care about, that is a different problem than the one `googleDriveFiles` solves, and [`@kesha-antonov/react-native-background-downloader`][rnbd] is built for exactly it - `createUploadTask`/`createDownloadTask` hand the whole transfer to `NSURLSession`/a foreground service, so it keeps running (and can be re-attached to via `getExistingUploadTasks`/`getExistingDownloadTasks`) even after the OS terminates the app. It does not implement `GoogleDriveFileAdapter` - it works in whole-file HTTP tasks, not the byte-range chunk reads/writes the adapter contract needs - so using it means going around `googleDriveFiles` and driving Drive's plain (non-resumable) `uploadType=media`/`alt=media` endpoints directly with it, trading Drive's own resumable protocol for the OS's background-session resilience instead.
 
@@ -178,9 +197,9 @@ The naive approach - list every file in the drive and filter client-side - is wh
 | Code | Cause |
 |---|---|
 | `ERR_NOT_SIGNED_IN` | `getAccessToken` returned null |
-| `ERR_AUTH_EXPIRED` | Drive rejected the token (HTTP 401/403); `onAuthExpired` fires |
-| `ERR_RATE_LIMITED` | HTTP 429; `retryAfterMs` set from the `Retry-After` header |
-| `ERR_QUOTA_EXCEEDED` | HTTP 507 - the user's Drive is full |
+| `ERR_AUTH_EXPIRED` | HTTP 401, or a 403 whose body doesn't match one of the reasons below; `onAuthExpired` fires |
+| `ERR_RATE_LIMITED` | HTTP 429, or a 403 with `reason: userRateLimitExceeded`/`rateLimitExceeded`; `retryAfterMs` set from `Retry-After` when present (only the plain-429 case carries it) |
+| `ERR_QUOTA_EXCEEDED` | A 403 with `reason: storageQuotaExceeded` - the user's Drive is full. Drive never uses 507 for this, despite it looking like the natural WebDAV-style status |
 
 See [Error handling](../errors.md).
 

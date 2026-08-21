@@ -129,7 +129,7 @@ This package is a wrapper. When something behaves unexpectedly, the answer is us
 [^6]: Its field type is `string | number | null`, so it can't hold binary data at all.
 [^7]: There's a mock factory in there, but it's not exported from the package entry and isn't documented in the README.
 [^8]: No commits since April, and the last four npm releases shipped with Swift that didn't even compile.
-[^9]: `CKAsset`, streamed from disk, on Apple platforms only - not implemented over CloudKit Web Services yet, so Android and web asset calls reject with `ERR_UNSUPPORTED_PLATFORM` instead of quietly working. Use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for binaries there instead - it chunks and resumes the same way `CKAsset` does.
+[^9]: `CKAsset`, streamed from disk, on Apple platforms; CloudKit Web Services' own upload-token protocol on Android and web, capped at 15 MB per asset - a CloudKit Web Services limit, not one this package chose. Use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for anything bigger there instead - it chunks and resumes the same way `CKAsset` does.
 
 [kuatsu]: https://github.com/kuatsu/react-native-cloud-storage
 [ik]: https://github.com/BogdanGeorgian91/react-native-icloud-kit

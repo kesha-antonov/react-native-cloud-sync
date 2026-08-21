@@ -1,12 +1,15 @@
-import { CloudSyncError, ErrorCode } from '../errors'
+import { CloudSyncError, ErrorCode, isCancelled } from '../errors'
 import { throwIfAborted, withTimeout, type AbortLike } from './timeout'
 
 /**
  * Google Drive `appDataFolder` REST client.
  *
  * `appDataFolder` is a hidden per-app, per-Google-account folder: nothing shows
- * up in the user's visible Drive, and the data survives an app uninstall because
- * it is tied to the account rather than the install.
+ * up in the user's visible Drive, and the data is tied to the Google account
+ * rather than the device or install, so reinstalling the app or switching
+ * devices doesn't lose it. It goes away only if the user disconnects the app
+ * from their Drive account or deletes the data folder directly - Google
+ * documents both as the ways this folder is actually removed.
  *
  * Auth is deliberately injected rather than owned. The library does not depend
  * on `@react-native-google-signin/google-signin` (or any other sign-in library),
@@ -55,6 +58,39 @@ export interface GoogleDriveConfig {
    * its own, so without this a dead socket hangs the transfer forever.
    */
   timeoutMs?: number
+  /**
+   * Persists `uploadFile`'s resumable-session URI across process restarts.
+   *
+   * Without this, the session lives only in memory: a process killed mid-upload
+   * loses it, and the next `uploadFile` for the same name starts over from byte
+   * 0 even though Drive still has the bytes already accepted. With it, the next
+   * call finds the persisted session, asks Drive for the real offset, and
+   * resumes from there instead.
+   *
+   * A tiny JSON record, not file I/O - back it with AsyncStorage, MMKV, or a
+   * single row in whatever the host app already uses. Optional; omitting it
+   * keeps today's in-memory-only behaviour.
+   */
+  sessionStore?: GoogleDriveSessionStore
+}
+
+/** What `uploadFile` needs to resume a resumable-upload session later. */
+export interface GoogleDriveUploadSession {
+  sessionUrl: string
+  /** The source size the session was started against - resuming into a file
+   *  that has since changed size would corrupt it, so a mismatch is treated
+   *  as "start fresh" rather than resumed. */
+  size: number
+}
+
+/**
+ * Host-supplied persistence for in-flight `uploadFile` sessions, keyed by the
+ * Drive file name. See {@link GoogleDriveConfig.sessionStore}.
+ */
+export interface GoogleDriveSessionStore {
+  get: (name: string) => Promise<GoogleDriveUploadSession | null>
+  set: (name: string, session: GoogleDriveUploadSession) => Promise<void>
+  remove: (name: string) => Promise<void>
 }
 
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files'
@@ -104,7 +140,8 @@ interface DriveFile {
   name: string
   /** RFC 3339. Requested explicitly - Drive omits it unless `fields` asks. */
   modifiedTime?: string
-  /** Drive's version counter. Increments on every content change. */
+  /** Drive's version counter. Increments on every server-side change to the
+   *  file, not just content - a rename bumps it too. */
   version?: string
 }
 
@@ -195,15 +232,45 @@ export class GoogleDriveClient {
 
     if (res.ok || extraOkStatuses.includes(res.status)) return res
 
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       await this.config.onAuthExpired?.()
       throw new CloudSyncError(
         ErrorCode.AUTH_EXPIRED,
-        `[RNCloudSync] Google Drive returned HTTP ${res.status}; the access token is not valid.`,
+        '[RNCloudSync] Google Drive returned HTTP 401; the access token is not valid.',
+        { provider: 'googleDrive' }
+      )
+    }
+    if (res.status === 403) {
+      // Drive overloads 403 for three unrelated conditions, distinguished only by
+      // `error.errors[0].reason` in the body - never by a different status code.
+      // Quota-exceeded in particular is NOT the 507 a WebDAV-flavoured API might
+      // use; Drive documents it as 403 `storageQuotaExceeded`, so treating it as
+      // an auth failure (and wrongly prompting reconnect) is the wrong default.
+      const reason = await this.driveErrorReason(res)
+
+      if (reason === 'storageQuotaExceeded')
+        throw new CloudSyncError(
+          ErrorCode.QUOTA_EXCEEDED,
+          '[RNCloudSync] Google Drive storage quota exceeded.',
+          { provider: 'googleDrive' }
+        )
+      if (reason === 'userRateLimitExceeded' || reason === 'rateLimitExceeded')
+        throw new CloudSyncError(
+          ErrorCode.RATE_LIMITED,
+          '[RNCloudSync] Google Drive rate limited the request.',
+          { provider: 'googleDrive' }
+        )
+
+      await this.config.onAuthExpired?.()
+      throw new CloudSyncError(
+        ErrorCode.AUTH_EXPIRED,
+        '[RNCloudSync] Google Drive returned HTTP 403; the access token is not valid or lacks permission.',
         { provider: 'googleDrive' }
       )
     }
     if (res.status === 429) {
+      // The request-frequency case, distinct from the per-user 403 variants
+      // above - this one really is a plain 429, no reason string to parse.
       const retryAfter = Number(res.headers.get('Retry-After'))
       throw new CloudSyncError(
         ErrorCode.RATE_LIMITED,
@@ -214,12 +281,6 @@ export class GoogleDriveClient {
         }
       )
     }
-    if (res.status === 507)
-      throw new CloudSyncError(
-        ErrorCode.QUOTA_EXCEEDED,
-        '[RNCloudSync] Google Drive storage quota exceeded.',
-        { provider: 'googleDrive' }
-      )
     // Tagged so callers can tell "this file id is gone" from a generic failure.
     // Without the tag a stale memoised id was indistinguishable from a real
     // error, so it could never be recovered from.
@@ -238,6 +299,23 @@ export class GoogleDriveClient {
   }
 
   /**
+   * Best-effort read of Drive's `error.errors[0].reason` from a failed
+   * response body - the only way a 403 status distinguishes an invalid token
+   * from quota-exceeded from a rate limit. Returns undefined for a body that
+   * is missing, unparseable, or doesn't carry the shape Drive documents,
+   * rather than throwing a second error while already handling one.
+   */
+  private async driveErrorReason(res: Response): Promise<string | undefined> {
+    try {
+      const json = await res.json() as { error?: { errors?: { reason?: string }[] } }
+      return json.error?.errors?.[0]?.reason
+    }
+    catch {
+      return undefined
+    }
+  }
+
+  /**
    * Resolves a file name to its id within appDataFolder, or null if absent.
    *
    * Pass `refresh` to bypass the memo after a cached id turned out to be stale.
@@ -250,8 +328,11 @@ export class GoogleDriveClient {
     this.idCache.delete(name)
 
     // Scope the query server-side. Escaping matters: an apostrophe in a key
-    // would otherwise terminate the quoted literal and produce a malformed query.
-    const q = encodeURIComponent(`name='${name.replace(/'/g, '\\\'')}' and trashed=false`)
+    // would otherwise terminate the quoted literal and produce a malformed
+    // query - and a literal backslash needs the same treatment, escaped FIRST
+    // so it doesn't double-escape the backslash the quote-escaping just added.
+    const escaped = name.replace(/\\/g, '\\\\').replace(/'/g, '\\\'')
+    const q = encodeURIComponent(`name='${escaped}' and trashed=false`)
     const url = `${FILES_URL}?spaces=appDataFolder&q=${q}&fields=files(${FILE_FIELDS})&pageSize=10`
 
     const res = await this.request(url, { method: 'GET' })
@@ -420,11 +501,13 @@ export class GoogleDriveClient {
    * how many bytes it actually has and resuming from there - rather than
    * restarting the transfer.
    *
-   * That resumability is scoped to this call: the session lives only in
-   * memory, so if the process dies mid-upload, the next call to `uploadFile`
-   * starts a fresh session from byte 0. Persisting the session URI so a
-   * restart can resume it too is future scope, not something callers should
-   * assume works today.
+   * That resumability spans a process restart too, when {@link
+   * GoogleDriveConfig.sessionStore} is configured: the session URI is persisted
+   * before the first chunk goes out, and a later `uploadFile` for the same name
+   * finds it, asks Drive for the real offset, and resumes from there instead of
+   * byte 0. Without a `sessionStore`, the session lives only in memory, exactly
+   * as before - a process that dies mid-upload loses it, and the next call
+   * starts fresh.
    */
   async uploadFile(
     name: string,
@@ -433,30 +516,81 @@ export class GoogleDriveClient {
     signal?: AbortLike
   ): Promise<void> {
     throwIfAborted(signal, 'googleDrive')
-    const existingId = await this.findFileId(name)
-    const sessionUrl = await this.startResumableSession(name, existingId)
-
-    let offset = 0
-    let newId: string | undefined
     const total = source.size
+    const resumed = await this.resumeOrStartSession(name, total)
 
-    // A zero-byte file still needs one request to actually create it.
-    do {
-      // Checked between chunks rather than only up front: a cancel during a
-      // multi-hundred-megabyte transfer has to take effect while it is running,
-      // which is the entire point of being able to cancel one.
-      throwIfAborted(signal, 'googleDrive')
-      const length = Math.min(this.chunkBytes, total - offset)
-      const step = await this.putChunkWithRetry(sessionUrl, source, offset, length, total, onProgress)
-      offset = step.nextOffset
-      if (step.id != null) newId = step.id
-    } while (offset < total)
+    // The resumed session was already complete server-side - most likely the
+    // last chunk's own response was what got lost to the process dying, not
+    // the chunk itself. Nothing left to send.
+    if (resumed.completed) {
+      if (resumed.id != null) this.idCache.set(name, resumed.id)
+      await this.config.sessionStore?.remove(name)
+      onProgress?.(total, total)
+      return
+    }
+
+    const sessionUrl = resumed.sessionUrl
+    let offset = resumed.offset
+    let newId: string | undefined
+
+    try {
+      // A zero-byte file still needs one request to actually create it.
+      do {
+        // Checked between chunks rather than only up front: a cancel during a
+        // multi-hundred-megabyte transfer has to take effect while it is running,
+        // which is the entire point of being able to cancel one.
+        throwIfAborted(signal, 'googleDrive')
+        const length = Math.min(this.chunkBytes, total - offset)
+        const step = await this.putChunkWithRetry(sessionUrl, source, offset, length, total, onProgress)
+        offset = step.nextOffset
+        if (step.id != null) newId = step.id
+      } while (offset < total)
+    }
+    catch (e) {
+      // A deliberate cancel abandons the session - the caller asked to stop,
+      // not to resume later. Any other failure (network drop, timeout, the
+      // process itself dying) leaves the persisted session in place, since
+      // that is precisely what lets the next call resume instead of restarting.
+      if (isCancelled(e)) await this.config.sessionStore?.remove(name)
+      throw e
+    }
 
     // A create only learns its id from the final response; an update already
     // had one via `existingId`.
     if (newId != null) this.idCache.set(name, newId)
 
+    await this.config.sessionStore?.remove(name)
     onProgress?.(total, total)
+  }
+
+  /**
+   * Finds an existing session to resume, or starts a new one.
+   *
+   * A persisted session is trusted only when its recorded size still matches
+   * `total` - resuming a byte-range PUT into a file that has since changed
+   * would corrupt it, so a mismatch is treated the same as no session at all.
+   * A persisted session Drive no longer recognises (expired, or the upload id
+   * was never valid) is also treated as absent: `queryUploadOffset` failing is
+   * the signal, since there is no cheaper way to ask than trying to use it.
+   */
+  private async resumeOrStartSession(
+    name: string, total: number
+  ): Promise<{ sessionUrl: string; offset: number; completed: boolean; id?: string }> {
+    const persisted = await this.config.sessionStore?.get(name)
+
+    if (persisted != null && persisted.size === total)
+      try {
+        const { offset, id } = await this.queryUploadOffset(persisted.sessionUrl, total)
+        return { sessionUrl: persisted.sessionUrl, offset, completed: offset >= total, id }
+      }
+      catch {
+        // Falls through to starting a fresh session below.
+      }
+
+    const existingId = await this.findFileId(name)
+    const sessionUrl = await this.startResumableSession(name, existingId)
+    await this.config.sessionStore?.set(name, { sessionUrl, size: total })
+    return { sessionUrl, offset: 0, completed: false }
   }
 
   private async startResumableSession(name: string, existingId: string | null): Promise<string> {
@@ -496,9 +630,16 @@ export class GoogleDriveClient {
     }
     catch (e) {
       if (!isRetryableTransfer(e)) throw e
-      const resumeFrom = await this.queryUploadOffset(sessionUrl, total)
-      const retryLength = Math.min(this.chunkBytes, total - resumeFrom)
-      return await this.putChunk(sessionUrl, source, resumeFrom, retryLength, total, onProgress)
+      const resumed = await this.queryUploadOffset(sessionUrl, total)
+      // The dropped chunk's own response was what got lost, not the chunk -
+      // Drive already has everything. A retry PUT here would send a zero-length,
+      // malformed Content-Range (end before start).
+      if (resumed.offset >= total) {
+        onProgress?.(total, total)
+        return { nextOffset: total, id: resumed.id }
+      }
+      const retryLength = Math.min(this.chunkBytes, total - resumed.offset)
+      return await this.putChunk(sessionUrl, source, resumed.offset, retryLength, total, onProgress)
     }
   }
 
@@ -533,20 +674,33 @@ export class GoogleDriveClient {
     return { nextOffset: total, id: json?.id }
   }
 
-  /** Asks Drive how much of an in-flight resumable session it actually has. */
-  private async queryUploadOffset(sessionUrl: string, total: number): Promise<number> {
+  /**
+   * Asks Drive how much of an in-flight resumable session it actually has, or
+   * discovers the upload was already complete server-side - the completing
+   * chunk's own response can be lost the same way any other one can, and this
+   * status check gets the same completion response back in that case,
+   * `id` included.
+   *
+   * Throws (via `request`) when `sessionUrl` is not a session Drive
+   * recognises any more - expired, or never valid. Callers treat that as the
+   * signal to stop trusting it, since there is no cheaper way to ask.
+   */
+  private async queryUploadOffset(sessionUrl: string, total: number): Promise<{ offset: number; id?: string }> {
     const res = await this.request(sessionUrl, {
       method: 'PUT',
       headers: { 'Content-Range': `bytes */${total}` },
     }, [308])
 
-    if (res.status !== 308) return total // already complete, unexpectedly
+    if (res.status !== 308) {
+      const json = (await res.json().catch(() => null)) as { id?: string } | null
+      return { offset: total, id: json?.id ?? undefined }
+    }
 
     const range = res.headers.get('Range') // "bytes=0-8388607"
-    if (range == null) return 0
+    if (range == null) return { offset: 0 }
 
     const match = /bytes=0-(\d+)/.exec(range)
-    return match ? Number(match[1]) + 1 : 0
+    return { offset: match ? Number(match[1]) + 1 : 0 }
   }
 
   /**

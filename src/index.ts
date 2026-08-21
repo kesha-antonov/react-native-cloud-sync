@@ -63,7 +63,9 @@ export {
 } from './config'
 
 export type { CloudKitRestConfig } from './internal/cloudKitRest'
-export type { GoogleDriveConfig, GoogleDriveFileAdapter } from './internal/googleDriveRest'
+export type {
+  GoogleDriveConfig, GoogleDriveFileAdapter, GoogleDriveSessionStore, GoogleDriveUploadSession
+} from './internal/googleDriveRest'
 
 // The `GoogleDriveFileAdapter` contract is base64 in and base64 out, while every
 // modern filesystem API is byte-oriented - so the codec that bridges them ships

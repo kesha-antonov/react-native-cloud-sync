@@ -1,6 +1,9 @@
 import { GoogleDriveClient } from '../internal/googleDriveRest'
-import type { DriveChunkSink, DriveChunkSource } from '../internal/googleDriveRest'
+import type {
+  DriveChunkSink, DriveChunkSource, GoogleDriveSessionStore, GoogleDriveUploadSession,
+} from '../internal/googleDriveRest'
 import { ErrorCode } from '../errors'
+import type { AbortLike } from '../internal/timeout'
 
 interface Call { url: string; method: string; headers: Headers; body: unknown }
 
@@ -14,7 +17,11 @@ interface ScriptedReply {
 }
 
 /** A Drive stub driven by a queue of replies, one per request. */
-function makeClient(replies: ScriptedReply[], chunkBytes?: number) {
+function makeClient(
+  replies: ScriptedReply[],
+  chunkBytes?: number,
+  sessionStore?: GoogleDriveSessionStore
+) {
   const calls: Call[] = []
   let i = 0
 
@@ -35,8 +42,38 @@ function makeClient(replies: ScriptedReply[], chunkBytes?: number) {
     } as unknown as Response)
   }) as unknown as typeof fetch
 
-  const client = new GoogleDriveClient({ getAccessToken: () => 'access-token', fetchImpl, chunkBytes })
+  const client = new GoogleDriveClient({ getAccessToken: () => 'access-token', fetchImpl, chunkBytes, sessionStore })
   return { client, calls }
+}
+
+/** An in-memory stand-in for the host's persistence, shared across `makeClient`
+ *  calls to simulate a session surviving a fresh `GoogleDriveClient` instance -
+ *  i.e. a process restart. */
+function memorySessionStore(): GoogleDriveSessionStore & { data: Map<string, GoogleDriveUploadSession> } {
+  const data = new Map<string, GoogleDriveUploadSession>()
+  return {
+    data,
+    get: name => Promise.resolve(data.get(name) ?? null),
+    set: (name, session) => {
+      data.set(name, session)
+      return Promise.resolve()
+    },
+    remove: (name) => {
+      data.delete(name)
+      return Promise.resolve()
+    },
+  }
+}
+
+/** A signal a test can flip mid-transfer, without wiring up a real AbortController. */
+function fakeSignal(): AbortLike & { abort: () => void } {
+  const state = { aborted: false }
+  return {
+    get aborted() { return state.aborted },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    abort: () => { state.aborted = true },
+  }
 }
 
 /** A source backed by an in-memory byte array, for `uploadFile`. */
@@ -133,12 +170,136 @@ describe('uploadFile', () => {
     const { client } = makeClient([
       { json: { files: [] } },
       { headers: { Location: 'https://upload.example/session-5' } },
-      { status: 507 },
+      // Drive signals quota-exceeded as 403 with this reason - never a 507.
+      { status: 403, json: { error: { errors: [{ reason: 'storageQuotaExceeded' }] } } },
     ])
 
     await expect(
       client.uploadFile('big.db', memorySource(Uint8Array.from([1, 2, 3])))
     ).rejects.toMatchObject({ code: ErrorCode.QUOTA_EXCEEDED })
+  })
+})
+
+describe('uploadFile session persistence', () => {
+  it('survives a fresh client instance: resumes from the real offset instead of restarting', async () => {
+    const store = memorySessionStore()
+    const bytes = Uint8Array.from([0, 1, 2, 3, 4, 5, 6])
+
+    // "Before restart": the session is started and one chunk lands, then the
+    // process dies mid-transfer (modelled here as an unrecoverable failure).
+    const before = makeClient([
+      { json: { files: [] } }, // findFileId: not found
+      { headers: { Location: 'https://upload.example/session-restart' } }, // initiate
+      { status: 308, headers: { Range: 'bytes=0-3' } }, // chunk 1 of 4 bytes: accepted
+      // simulated crash - never sent, never resolved cleanly. Quota-exceeded
+      // (a real 403 + reason, never a 507) stands in for "some unrecoverable
+      // failure interrupted the upload".
+      { status: 403, json: { error: { errors: [{ reason: 'storageQuotaExceeded' }] } } },
+    ], 4, store)
+
+    await expect(
+      before.client.uploadFile('resumable.db', memorySource(bytes))
+    ).rejects.toMatchObject({ code: ErrorCode.QUOTA_EXCEEDED })
+
+    // The session was persisted before the first chunk went out, and a crash
+    // is not a cancel, so it is still there for the next attempt.
+    expect(store.data.get('resumable.db')).toEqual({
+      sessionUrl: 'https://upload.example/session-restart',
+      size: 7,
+    })
+
+    // "After restart": a brand new client, sharing only the session store.
+    const after = makeClient([
+      { status: 308, headers: { Range: 'bytes=0-3' } }, // offset query: 4 bytes already landed
+      { status: 200, json: { id: 'new-id' } }, // remaining bytes: complete
+    ], undefined, store)
+
+    const onProgress = jest.fn()
+    await after.client.uploadFile('resumable.db', memorySource(bytes), onProgress)
+
+    // No findFileId, no fresh session - straight to the offset query, then one
+    // PUT for the bytes that were never confirmed.
+    expect(after.calls).toHaveLength(2)
+    expect(after.calls[0].headers.get('Content-Range')).toBe('bytes */7')
+    expect(after.calls[1].method).toBe('PUT')
+    expect(after.calls[1].headers.get('Content-Range')).toBe('bytes 4-6/7')
+    expect(onProgress).toHaveBeenLastCalledWith(7, 7)
+    expect(store.data.has('resumable.db')).toBe(false)
+  })
+
+  it('discards a persisted session once the upload it describes has finished', async () => {
+    const store = memorySessionStore()
+    store.data.set('small.db', { sessionUrl: 'https://upload.example/stale', size: 3 })
+
+    // Only one request: the offset query itself reports completion (a 200,
+    // not a 308) - the completing chunk's own response is what got lost, not
+    // the chunk. No further PUT should follow.
+    const { client, calls } = makeClient([
+      { status: 200, json: { id: 'already-there' } },
+    ], undefined, store)
+
+    const onProgress = jest.fn()
+    await client.uploadFile('small.db', memorySource(Uint8Array.from([1, 2, 3])), onProgress)
+
+    expect(calls).toHaveLength(1)
+    expect(onProgress).toHaveBeenLastCalledWith(3, 3)
+    expect(store.data.has('small.db')).toBe(false)
+  })
+
+  it('ignores a persisted session for a file that has since changed size', async () => {
+    const store = memorySessionStore()
+    store.data.set('changed.db', { sessionUrl: 'https://upload.example/old-size', size: 5 })
+
+    const { client, calls } = makeClient([
+      { json: { files: [] } }, // findFileId
+      { headers: { Location: 'https://upload.example/new-size' } }, // fresh session
+      { status: 200, json: { id: 'new-id' } }, // single PUT, complete
+    ], undefined, store)
+
+    await client.uploadFile('changed.db', memorySource(Uint8Array.from([1, 2, 3])))
+
+    // The stale session URI is never touched - every request targets the
+    // freshly started one instead.
+    for (const call of calls) expect(call.url).not.toContain('old-size')
+    expect(store.data.has('changed.db')).toBe(false)
+  })
+
+  it('discards a persisted session Drive no longer recognises, and starts fresh transparently', async () => {
+    const store = memorySessionStore()
+    store.data.set('expired.db', { sessionUrl: 'https://upload.example/expired', size: 3 })
+
+    const { client, calls } = makeClient([
+      { status: 404 }, // offset query against the expired session
+      { json: { files: [] } }, // findFileId
+      { headers: { Location: 'https://upload.example/fresh' } }, // fresh session
+      { status: 200, json: { id: 'new-id' } }, // single PUT, complete
+    ], undefined, store)
+
+    await client.uploadFile('expired.db', memorySource(Uint8Array.from([1, 2, 3])))
+
+    expect(calls[0].url).toBe('https://upload.example/expired')
+    expect(calls[2].url).toContain('uploadType=resumable')
+    expect(store.data.has('expired.db')).toBe(false)
+  })
+
+  it('drops the persisted session on an explicit cancel, rather than leaving it for a future resume', async () => {
+    const store = memorySessionStore()
+    const signal = fakeSignal()
+
+    const { client } = makeClient([
+      { json: { files: [] } },
+      { headers: { Location: 'https://upload.example/cancel-me' } },
+      { status: 308, headers: { Range: 'bytes=0-3' } }, // chunk 1: accepted
+    ], 4, store)
+
+    const bytes = Uint8Array.from([0, 1, 2, 3, 4, 5, 6])
+    const onProgress = jest.fn(() => signal.abort()) // abort right after chunk 1 lands
+
+    await expect(
+      client.uploadFile('cancel-me.db', memorySource(bytes), onProgress, signal)
+    ).rejects.toMatchObject({ code: ErrorCode.CANCELLED })
+
+    expect(store.data.has('cancel-me.db')).toBe(false)
   })
 })
 

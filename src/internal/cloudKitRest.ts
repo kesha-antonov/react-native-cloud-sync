@@ -1,4 +1,4 @@
-import { CloudSyncError, ErrorCode } from '../errors'
+import { CloudSyncError, ErrorCode, timedOut } from '../errors'
 import { byteLength } from './bytes'
 import { withTimeout } from './timeout'
 
@@ -51,6 +51,16 @@ export interface CloudKitRestConfig {
   /** Overridable for tests. Defaults to global `fetch`. */
   fetchImpl?: typeof fetch
   /**
+   * Overridable for tests. Defaults to the global `XMLHttpRequest` constructor.
+   *
+   * Only used for the raw asset-bytes upload/download - `fetch` in React
+   * Native exposes no upload-progress events at all, and `XMLHttpRequest.upload
+   * .onprogress` (and its response-side `.onprogress`) are what the per-record
+   * progress `cloudKitAssets.onProgress` promises actually needs. Every other
+   * request in this client stays on `fetch`.
+   */
+  xhrImpl?: () => XMLHttpRequest
+  /**
    * Abandon a request that has not answered in this long. Default 30000.
    *
    * React Native's `fetch` has no timeout of its own, so without this a socket
@@ -58,6 +68,31 @@ export interface CloudKitRestConfig {
    * the path of every read, so one hung probe stalls the whole store.
    */
   timeoutMs?: number
+}
+
+/**
+ * CloudKit Web Services' own ceiling on a single asset upload, undocumented
+ * anywhere except the upload endpoint's own reference page: 15 MB, and the
+ * upload URL it hands out is valid for 15 minutes. Native `CKAsset` has no such
+ * limit - this is specific to the REST upload-token protocol.
+ */
+export const MAX_ASSET_UPLOAD_BYTES = 15 * 1024 * 1024
+
+/**
+ * The "Asset Dictionary" CloudKit Web Services deals in - what the upload
+ * endpoint returns after receiving bytes, and what a fetched record's Asset
+ * field value looks like. Passed back verbatim as a record field's value to
+ * attach an upload to a record; never reconstructed field-by-field, since it
+ * is an opaque blob the server itself validates.
+ */
+export interface CloudKitAssetDescriptor {
+  fileChecksum: string
+  size: string | number
+  receipt: string
+  referenceChecksum?: string
+  wrappingKey?: string
+  /** Present only when fetching the record that owns this field, not on upload. */
+  downloadURL?: string
 }
 
 /**
@@ -108,6 +143,8 @@ interface CloudKitResponse {
   redirectURL?: string
   /** Set when a query has more results than one response can carry. */
   continuationMarker?: string
+  /** Present only on an `/assets/upload` response. */
+  tokens?: { recordName?: string; fieldName?: string; url?: string }[]
 }
 
 /**
@@ -212,6 +249,35 @@ export class CloudKitRestClient {
     }
   }
 
+  /**
+   * HTTP-status classification for a response with no CloudKit error envelope
+   * of its own to inspect - `post()`'s fallback tail, and the raw asset-bytes
+   * transfer, which talks to an opaque single-use upload/download URL rather
+   * than a `/records/...` JSON endpoint.
+   */
+  private async classifyHttpStatus(status: number): Promise<CloudSyncError> {
+    if (status === 401 || status === 421) {
+      await this.handleAuthExpired()
+      return new CloudSyncError(
+        ErrorCode.AUTH_EXPIRED,
+        `[RNCloudSync] CloudKit returned HTTP ${status}; the web auth token is no longer valid.`,
+        { provider: 'cloudKit' }
+      )
+    }
+    if (status === 429 || status === 503)
+      return new CloudSyncError(
+        ErrorCode.RATE_LIMITED,
+        `[RNCloudSync] CloudKit returned HTTP ${status}.`,
+        { provider: 'cloudKit' }
+      )
+
+    return new CloudSyncError(
+      ErrorCode.UNKNOWN,
+      `[RNCloudSync] CloudKit returned HTTP ${status}.`,
+      { provider: 'cloudKit' }
+    )
+  }
+
   private async post(path: string, body: unknown): Promise<CloudKitResponse> {
     const token = await this.requireAuthToken()
     const url
@@ -250,29 +316,8 @@ export class CloudKitRestClient {
     if (json?.serverErrorCode != null)
       throw await this.toError(json.serverErrorCode, json.reason, json.retryAfter)
 
-    if (!res.ok) {
-      // HTTP-level failure with no parseable CloudKit error body.
-      if (res.status === 401 || res.status === 421) {
-        await this.handleAuthExpired()
-        throw new CloudSyncError(
-          ErrorCode.AUTH_EXPIRED,
-          `[RNCloudSync] CloudKit returned HTTP ${res.status}; the web auth token is no longer valid.`,
-          { provider: 'cloudKit' }
-        )
-      }
-      if (res.status === 429 || res.status === 503)
-        throw new CloudSyncError(
-          ErrorCode.RATE_LIMITED,
-          `[RNCloudSync] CloudKit returned HTTP ${res.status}.`,
-          { provider: 'cloudKit' }
-        )
-
-      throw new CloudSyncError(
-        ErrorCode.UNKNOWN,
-        `[RNCloudSync] CloudKit returned HTTP ${res.status}.`,
-        { provider: 'cloudKit' }
-      )
-    }
+    // HTTP-level failure with no parseable CloudKit error body.
+    if (!res.ok) throw await this.classifyHttpStatus(res.status)
 
     return json ?? {}
   }
@@ -442,11 +487,22 @@ export class CloudKitRestClient {
         { provider: 'cloudKit', limitBytes: MAX_RECORD_BYTES, actualBytes: bytes }
       )
 
-    const record = {
-      recordType,
-      recordName,
-      fields: { [VALUE_FIELD]: { value } },
-    }
+    await this.saveFields(recordName, { [VALUE_FIELD]: { value } }, recordType)
+  }
+
+  /**
+   * Creates `recordName`, falling back to an unconditional update when it
+   * already exists - the create-then-fall-back dance every write after the
+   * first one takes. Shared by {@link saveRecord} (a `value` field) and
+   * {@link uploadAsset} (an Asset field plus its `__size` sidecar), which need
+   * the exact same dance for a different field set.
+   */
+  private async saveFields(
+    recordName: string,
+    fields: Record<string, { value: unknown }>,
+    recordType: string
+  ): Promise<void> {
+    const record = { recordType, recordName, fields }
 
     // `atomic` defaults to true server-side. Setting it explicitly documents the
     // intent and keeps behaviour stable if that default ever changes.
@@ -496,6 +552,193 @@ export class CloudKitRestClient {
         typeof serverValue === 'string' ? serverValue : null
       )
     }
+  }
+
+  /**
+   * Uploads `bytes` as `fieldName` on `recordName`, via CloudKit Web Services'
+   * asset-upload protocol: request a single-use upload URL, POST the raw bytes
+   * to it, then attach the descriptor it returns (plus a `__size` sidecar, so
+   * a later {@link fetchAsset} can report real download progress) to the
+   * record - the same create-then-update dance {@link saveRecord} uses.
+   *
+   * `onProgress` reports real bytes transferred, via `XMLHttpRequest` rather
+   * than `fetch` - see {@link CloudKitRestConfig.xhrImpl}.
+   */
+  async uploadAsset(
+    recordName: string,
+    fieldName: string,
+    bytes: Uint8Array,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void,
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<void> {
+    if (bytes.length > MAX_ASSET_UPLOAD_BYTES)
+      throw new CloudSyncError(
+        ErrorCode.PAYLOAD_TOO_LARGE,
+        `[RNCloudSync] Asset is ${bytes.length} bytes; CloudKit Web Services caps a single asset `
+        + `upload at ${MAX_ASSET_UPLOAD_BYTES} bytes. Use the googleDrive provider for larger files `
+        + `on Android and web.`,
+        { provider: 'cloudKit', limitBytes: MAX_ASSET_UPLOAD_BYTES, actualBytes: bytes.length }
+      )
+
+    const uploadUrl = await this.requestAssetUploadUrl(recordType, recordName, fieldName)
+    const descriptor = await this.putAssetBytes(uploadUrl, bytes, onProgress)
+
+    await this.saveFields(recordName, {
+      [fieldName]: { value: descriptor },
+      [`${fieldName}__size`]: { value: bytes.length },
+    }, recordType)
+  }
+
+  /**
+   * Downloads the bytes behind `fieldName` on `recordName`, or `null` when the
+   * record or the field's asset does not exist.
+   *
+   * A fetched record's Asset field carries a `downloadURL` - that is the only
+   * step this needs beyond the usual record lookup; there is no separate
+   * "request a download token" round trip the way upload has one.
+   */
+  async fetchAsset(
+    recordName: string,
+    fieldName: string,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void,
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<Uint8Array | null> {
+    void recordType
+    const json = await this.post('/records/lookup', { records: [{ recordName }] })
+    const record = json.records?.find(r => r.recordName === recordName) ?? json.records?.[0]
+    if (record == null) return null
+
+    if (record.serverErrorCode != null) {
+      if (record.serverErrorCode === 'NOT_FOUND') return null
+      throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
+    }
+
+    const asset = record.fields?.[fieldName]?.value as CloudKitAssetDescriptor | undefined
+    if (asset?.downloadURL == null) return null
+
+    return await this.fetchAssetBytes(asset.downloadURL, onProgress)
+  }
+
+  private async requestAssetUploadUrl(
+    recordType: string, recordName: string, fieldName: string
+  ): Promise<string> {
+    const json = await this.post('/assets/upload', {
+      tokens: [{ recordType, recordName, fieldName }],
+    })
+
+    const url = json.tokens?.[0]?.url
+    if (url == null)
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] CloudKit did not return an asset upload URL.',
+        { provider: 'cloudKit' }
+      )
+
+    return url
+  }
+
+  private get xhr(): () => XMLHttpRequest {
+    return this.config.xhrImpl ?? (() => new XMLHttpRequest())
+  }
+
+  /**
+   * POSTs raw bytes to a single-use CKWS asset-upload URL, reporting real
+   * upload progress via `XMLHttpRequest.upload.onprogress` - `fetch` exposes no
+   * upload-progress events in React Native. Scoped to just this one call:
+   * every other CloudKit REST request stays on `fetch` through `post()`, for
+   * the timeout/error handling already built there.
+   */
+  private putAssetBytes(
+    url: string,
+    bytes: Uint8Array,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+  ): Promise<CloudKitAssetDescriptor> {
+    return new Promise((resolve, reject) => {
+      const req = this.xhr()
+      req.open('POST', url)
+      req.timeout = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+
+      req.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded, e.total)
+      }
+
+      req.onload = () => {
+        if (req.status < 200 || req.status >= 300) {
+          this.classifyHttpStatus(req.status).then(reject).catch(reject)
+          return
+        }
+
+        try {
+          const json = JSON.parse(req.responseText) as { singleFile?: CloudKitAssetDescriptor }
+          if (json.singleFile == null) throw new Error('response had no singleFile')
+          onProgress?.(bytes.length, bytes.length)
+          resolve(json.singleFile)
+        }
+        catch (e) {
+          reject(new CloudSyncError(
+            ErrorCode.UNKNOWN,
+            '[RNCloudSync] CloudKit did not return an asset descriptor after upload.',
+            { provider: 'cloudKit', cause: e }
+          ))
+        }
+      }
+
+      req.onerror = () => reject(new CloudSyncError(
+        ErrorCode.NETWORK_UNAVAILABLE,
+        '[RNCloudSync] CloudKit asset upload failed to reach the server.',
+        { provider: 'cloudKit' }
+      ))
+      req.ontimeout = () => reject(timedOut(req.timeout, 'cloudKit'))
+
+      req.send(bytes)
+    })
+  }
+
+  /**
+   * GETs raw bytes from a record's asset `downloadURL`, reporting real
+   * download progress via `XMLHttpRequest.onprogress`, for the same reason
+   * {@link putAssetBytes} uses XHR rather than `fetch`.
+   *
+   * Treated as self-contained, the same way the upload URL is (Apple's own
+   * reference issues that one with no `ckAPIToken`/`ckWebAuthToken` at all) -
+   * if that assumption is ever wrong for a download URL specifically, it
+   * surfaces as an HTTP-level auth failure here rather than a silent wrong
+   * answer.
+   */
+  private fetchAssetBytes(
+    url: string,
+    onProgress?: (bytesTransferred: number, bytesTotal: number) => void
+  ): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+      const req = this.xhr()
+      req.open('GET', url)
+      req.responseType = 'arraybuffer'
+      req.timeout = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+
+      req.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded, e.total)
+      }
+
+      req.onload = () => {
+        if (req.status < 200 || req.status >= 300) {
+          this.classifyHttpStatus(req.status).then(reject).catch(reject)
+          return
+        }
+
+        const buf = req.response as ArrayBuffer
+        onProgress?.(buf.byteLength, buf.byteLength)
+        resolve(new Uint8Array(buf))
+      }
+
+      req.onerror = () => reject(new CloudSyncError(
+        ErrorCode.NETWORK_UNAVAILABLE,
+        '[RNCloudSync] CloudKit asset download failed to reach the server.',
+        { provider: 'cloudKit' }
+      ))
+      req.ontimeout = () => reject(timedOut(req.timeout, 'cloudKit'))
+
+      req.send()
+    })
   }
 
   /**

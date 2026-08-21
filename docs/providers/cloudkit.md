@@ -10,7 +10,7 @@ Your app's real data, on Apple platforms, with the option of reaching it elsewhe
 |---|:---:|:---:|:---:|
 | Records | native | REST | REST |
 | Custom zones | native | – | – |
-| Assets (`CKAsset`) | native | – | – |
+| Assets (`CKAsset`) | native | REST (15 MB cap) | REST (15 MB cap) |
 | Remote change events | native | – | – |
 | Auth | implicit | Apple ID sign-in | Apple ID sign-in |
 
@@ -79,7 +79,7 @@ A Client token only grants what the signed-in user could already do, so it is sa
 
 ### Getting a `ckWebAuthToken`
 
-1. `GET https://api.apple-cloudkit.com/database/1/<container>/<env>/public/users/caller?ckAPIToken=<token>`
+1. `GET https://api.apple-cloudkit.com/database/1/<container>/<env>/public/users/current?ckAPIToken=<token>`
 2. That returns **HTTP 421** with a `redirectURL` in a top-level error dict.
 3. Load `redirectURL` in a WebView.
 4. Intercept navigation to your callback scheme and read `ckWebAuthToken` from the query string.
@@ -119,7 +119,7 @@ await cloudKitZones.remove('Projects')
 
 ## Assets
 
-For anything above the 1 MB record limit - images, audio, exports. The file is streamed from disk as a `CKAsset`, so a large file never has to be held in memory the way a base64 round trip would.
+For anything above the 1 MB record limit - images, audio, exports. Natively, the file is streamed from disk as a `CKAsset`, so a large file never has to be held in memory the way a base64 round trip would.
 
 ```ts
 import { cloudKitAssets } from 'react-native-cloud-sync'
@@ -139,6 +139,7 @@ await cloudKitAssets.save({
 const path = await cloudKitAssets.fetch({
   recordName: 'avatar',
   fieldName: 'image',
+  destinationUri: `${documentsDir}/avatar.png`, // required on Android/web, see below
 })
 // null when the record or field does not exist.
 ```
@@ -147,7 +148,15 @@ Progress is reported per record, so it can be attributed when several transfers 
 
 Assets are an explicit API rather than something the [store facade](../store.md) routes to automatically: you pass a file path, not a string, and there is no way to infer that intent from a `setItem` call.
 
-**Native only.** CloudKit Web Services does expose an asset upload flow, but it is a separate multi-step protocol this package does not implement yet - so on Android and web these reject with `ERR_UNSUPPORTED_PLATFORM` instead of appearing to work. Use `googleDrive` for binaries there.
+### On Android and web
+
+`save`/`fetch` go through CloudKit Web Services' own asset-upload protocol: request a single-use upload URL, POST the file's bytes to it, then attach the descriptor it returns to the record. Three things follow from that:
+
+- **15 MB per asset, hard limit.** This is CloudKit Web Services' own ceiling on the upload-token protocol specifically - narrower than the 50 MB Apple documents for a `CKAsset` field in general, and unrelated to the 1 MB *record* limit above. Oversized files reject locally with `ERR_PAYLOAD_TOO_LARGE` before any request goes out. Use [`googleDriveFiles`](google-drive.md#large-files) for anything bigger on Android/web.
+- **Needs a file adapter.** Reading and writing the local file uses the same `GoogleDriveFileAdapter` contract [`googleDriveFiles`](google-drive.md#large-files) does - call `configureGoogleDriveFiles(adapter)` once and both providers use it, even if you never touch `googleDrive` itself.
+- **`destinationUri` is required on `fetch`.** Natively, omitting it falls back to the app's temporary directory; over REST there is no OS-managed temporary directory this package can reach without a native module, so it rejects with `ERR_UNSUPPORTED_PLATFORM` instead of guessing a path.
+
+Two things stay native-only, both rejecting with `ERR_UNSUPPORTED_PLATFORM`: a custom `zoneName` (the REST client has no zone support at all, [same as everywhere else](#custom-zones)), and `cancel()` - a REST transfer has no in-flight handle to stop yet, so it resolves `false` the same as before rather than throwing.
 
 ### Backup/restore helper
 
@@ -170,7 +179,7 @@ const restoredPath = await cloudKitBackup.restore({
 
 The download side reports real progress from the first callback, not just at completion: `save` stashes the file's byte count alongside the asset, so a subsequent `restore` (even from a different device) knows the total before the transfer starts.
 
-Native only, same as `cloudKitAssets` - on Android and web, use [`googleDriveFiles`](google-drive.md#large-files) instead. [Recipes](../recipes.md#cross-platform-large-file-backup) shows the two paired behind one function.
+Same platform behavior as `cloudKitAssets` above - including the 15 MB cap on Android/web, so a database export near that size needs [`googleDriveFiles`](google-drive.md#large-files) instead, and `restore()` without a `destinationUri` needs a native module. [Recipes](../recipes.md#cross-platform-large-file-backup) shows the two paired behind one function.
 
 ## Events
 

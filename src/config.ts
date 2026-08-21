@@ -74,13 +74,23 @@ export function getGoogleDriveFileAdapter(): GoogleDriveFileAdapter {
   if (driveFileAdapter == null)
     throw new CloudSyncError(
       ErrorCode.CONTAINER_MISCONFIGURED,
-      '[RNCloudSync] googleDriveFiles needs a file adapter. Call configureGoogleDriveFiles({ '
-      + 'statSize, readChunk, writeChunk, appendChunk }) before saving or fetching a file.',
+      '[RNCloudSync] This needs a file adapter. Call configureGoogleDriveFiles({ '
+      + 'statSize, readChunk, writeChunk, appendChunk }) before saving or fetching a file - shared '
+      + 'by googleDriveFiles and by cloudKitAssets on Android/web.',
       { provider: 'googleDrive' }
     )
 
   return driveFileAdapter
 }
+
+/**
+ * Same adapter and same `configureGoogleDriveFiles` call, under a name that
+ * doesn't imply it's Drive-specific. `cloudKitAssets`'s REST path (Android/web)
+ * reads and writes local files the exact same way `googleDriveFiles` does, and
+ * asking a host app to register two near-identical adapters for that would be
+ * pure friction for no benefit.
+ */
+export const getSharedFileAdapter = getGoogleDriveFileAdapter
 
 export function isGoogleDriveFilesConfigured(): boolean {
   return driveFileAdapter != null
