@@ -1,0 +1,86 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - sync-demo
+  - cloud
+---
+# The Sync tab talks to real icloudKV/cloudKit/googleDrive providers (or the
+# mirror facade over icloudKV+googleDrive), so success depends on the
+# account/token on the test device. Increment/Pull log their call
+# synchronously before the async result (see the other cloud flows), so
+# those assertions are timing-safe regardless of outcome. Reset has no
+# synchronous marker - it only logs on settle - so it accepts either the
+# success or failure line.
+#
+# Two Maestro/iOS quirks worth knowing (see faults.yaml for the full note):
+# text selectors are a full-string regex match, so expected fragments are
+# wrapped in .*...*; and an off-screen element isn't tappable/assertable at
+# all, so the Event log section needs an explicit scroll before it's checked.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Sync demo.*"
+- assertVisible: ".*no value yet.*"
+
+- tapOn:
+    id: "sync-provider-cloudKit"
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "sync-btn-increment"
+- scrollUntilVisible:
+    element:
+      id: "sync-btn-clear"
+    direction: DOWN
+- assertVisible: ".*increment via cloudKit.*"
+
+- scrollUntilVisible:
+    element:
+      id: "sync-btn-pull"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "sync-btn-pull"
+- scrollUntilVisible:
+    element:
+      id: "sync-btn-clear"
+    direction: DOWN
+- assertVisible: ".*manual pull.*"
+
+- scrollUntilVisible:
+    element:
+      id: "sync-btn-reset"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "sync-btn-reset"
+- scrollUntilVisible:
+    element:
+      id: "sync-btn-clear"
+    direction: DOWN
+- assertVisible: ".*(removed|remove ->).*"
+
+- tapOn:
+    id: "sync-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"
+
+- scrollUntilVisible:
+    element:
+      id: "sync-provider-mirror"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "sync-provider-mirror"
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "sync-btn-increment"
+- scrollUntilVisible:
+    element:
+      id: "sync-btn-clear"
+    direction: DOWN
+- assertVisible: ".*increment via mirror.*"

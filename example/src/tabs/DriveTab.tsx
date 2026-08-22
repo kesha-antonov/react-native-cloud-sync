@@ -58,21 +58,52 @@ export function DriveTab() {
         subtitle="Paste an OAuth access token with the drive.appdata scope. In a real app this
           comes from your sign-in library; the library itself stays auth-agnostic."
       >
-        <Field label="access token" value={token} onChangeText={setToken} placeholder="ya29..." />
+        <Field
+          testID="drive-field-token"
+          label="access token"
+          value={token}
+          onChangeText={setToken}
+          placeholder="ya29..."
+        />
         <ButtonRow>
-          <Button label={configured ? 'Reconfigure' : 'Configure'} onPress={configure} />
+          <Button testID="drive-btn-configure" label={configured ? 'Reconfigure' : 'Configure'} onPress={configure} />
         </ButtonRow>
       </Section>
 
       <Section title="Operations" tint={tabTint.drive}>
-        <Field label="file name" value={key} onChangeText={setKey} />
-        <Field label="contents" value={value} onChangeText={setValue} multiline />
+        <Field testID="drive-field-key" label="file name" value={key} onChangeText={setKey} />
+        <Field testID="drive-field-value" label="contents" value={value} onChangeText={setValue} multiline />
         <ButtonRow>
-          <Button label="getItem" busy={busy} onPress={run('getItem', () => googleDrive.getItem(key))} />
-          <Button label="setItem" busy={busy} onPress={run('setItem', () => googleDrive.setItem(key, value))} />
-          <Button label="removeItem" busy={busy} onPress={run('removeItem', () => googleDrive.removeItem(key))} />
-          <Button label="getAllKeys" busy={busy} onPress={run('getAllKeys', () => googleDrive.getAllKeys())} />
-          <Button label="isAvailable" busy={busy} onPress={run('isAvailable', () => googleDrive.isAvailable())} />
+          <Button
+            testID="drive-btn-getItem"
+            label="getItem"
+            busy={busy}
+            onPress={run('getItem', () => googleDrive.getItem(key))}
+          />
+          <Button
+            testID="drive-btn-setItem"
+            label="setItem"
+            busy={busy}
+            onPress={run('setItem', () => googleDrive.setItem(key, value))}
+          />
+          <Button
+            testID="drive-btn-removeItem"
+            label="removeItem"
+            busy={busy}
+            onPress={run('removeItem', () => googleDrive.removeItem(key))}
+          />
+          <Button
+            testID="drive-btn-getAllKeys"
+            label="getAllKeys"
+            busy={busy}
+            onPress={run('getAllKeys', () => googleDrive.getAllKeys())}
+          />
+          <Button
+            testID="drive-btn-isAvailable"
+            label="isAvailable"
+            busy={busy}
+            onPress={run('isAvailable', () => googleDrive.isAvailable())}
+          />
         </ButtonRow>
         <Text style={styles.body}>
           Reads resolve a name to a file id with one scoped query and then cache it. Listing
@@ -84,7 +115,7 @@ export function DriveTab() {
       <Section title="Log" tint={tabTint.drive}>
         <LogView entries={log.entries} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="drive-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>

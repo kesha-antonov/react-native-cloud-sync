@@ -1,0 +1,171 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - faults
+  - local
+---
+# FaultsTab runs entirely against createMemoryProvider() - no iCloud/Google
+# account or network needed - so every code path here is deterministic.
+# ErrorCode values live in src/errors.ts; isRetryable/requiresUserAction
+# classify each one there too, which is what the asserted lines mirror.
+#
+# The Log section sits below the fold, and every fault button sits above it
+# in one screen's worth of content - so this oscillates the outer ScrollView:
+# scroll UP to reach a button (a no-op once it's already visible), tap it,
+# then scroll DOWN to the Clear button to bring the newest log line into
+# view before asserting. tapOn never scrolls on its own on iOS - an
+# off-screen element isn't in the accessibility tree at all - and
+# assertVisible never scrolls either, so both directions are explicit.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Cloud Sync.*"
+- tapOn:
+    id: "tab-more"
+- tapOn:
+    id: "more-item-faults"
+- assertVisible: ".*Fault injection.*"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*No activity yet - run an operation above..*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-notSignedIn"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*injected Not signed in.*"
+- assertVisible: ".*getItem -> ERR_NOT_SIGNED_IN.*"
+- assertVisible: ".*classification: retryable=false needsUserAction=true.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-offline"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*getItem -> ERR_NETWORK_UNAVAILABLE.*"
+- assertVisible: ".*classification: retryable=true needsUserAction=false.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-quotaExceeded"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*getItem -> ERR_QUOTA_EXCEEDED.*"
+- assertVisible: ".*classification: retryable=false needsUserAction=true.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-rateLimited"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: '.*getItem -> ERR_RATE_LIMITED \(retryAfterMs=30000\).*'
+- assertVisible: ".*classification: retryable=true needsUserAction=false.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-authExpired"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*getItem -> ERR_AUTH_EXPIRED.*"
+- assertVisible: ".*classification: retryable=false needsUserAction=true.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-conflict"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*getItem -> ERR_CONFLICT.*"
+- assertVisible: ".*classification: retryable=false needsUserAction=false.*"
+
+# Fails twice (ERR_NETWORK_UNAVAILABLE x2), then the fault clears itself and
+# the third attempt reads the seeded value back.
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-heal"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*attempt 1 -> ERR_NETWORK_UNAVAILABLE.*"
+- assertVisible: ".*attempt 2 -> ERR_NETWORK_UNAVAILABLE.*"
+- assertVisible: ".*attempt 3 -> seeded.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-identityChange"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: ".*accountChange status=available identityChanged=true.*"
+
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-notSignedIn"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "faults-btn-remoteChange"
+- scrollUntilVisible:
+    element:
+      id: "faults-btn-clear"
+    direction: DOWN
+- assertVisible: '.*remoteChange reason=serverChange keys=\[demo/key\].*'
+
+- tapOn:
+    id: "faults-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"

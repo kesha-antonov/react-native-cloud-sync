@@ -17,12 +17,12 @@ import { styles, tabTint } from '../theme'
 import { useLog } from '../useLog'
 
 const FAULTS = [
-  { code: ErrorCode.NOT_SIGNED_IN, label: 'Not signed in' },
-  { code: ErrorCode.NETWORK_UNAVAILABLE, label: 'Offline' },
-  { code: ErrorCode.QUOTA_EXCEEDED, label: 'Quota exceeded' },
-  { code: ErrorCode.RATE_LIMITED, label: 'Rate limited' },
-  { code: ErrorCode.AUTH_EXPIRED, label: 'Auth expired' },
-  { code: ErrorCode.CONFLICT, label: 'Conflict' },
+  { code: ErrorCode.NOT_SIGNED_IN, label: 'Not signed in', testID: 'faults-btn-notSignedIn' },
+  { code: ErrorCode.NETWORK_UNAVAILABLE, label: 'Offline', testID: 'faults-btn-offline' },
+  { code: ErrorCode.QUOTA_EXCEEDED, label: 'Quota exceeded', testID: 'faults-btn-quotaExceeded' },
+  { code: ErrorCode.RATE_LIMITED, label: 'Rate limited', testID: 'faults-btn-rateLimited' },
+  { code: ErrorCode.AUTH_EXPIRED, label: 'Auth expired', testID: 'faults-btn-authExpired' },
+  { code: ErrorCode.CONFLICT, label: 'Conflict', testID: 'faults-btn-conflict' },
 ] as const
 
 /**
@@ -93,7 +93,7 @@ export function FaultsTab() {
       >
         <ButtonRow>
           {FAULTS.map(f => (
-            <Button key={f.code} label={f.label} busy={busy} onPress={inject(f.code, f.label)} />
+            <Button key={f.code} testID={f.testID} label={f.label} busy={busy} onPress={inject(f.code, f.label)} />
           ))}
         </ButtonRow>
       </Section>
@@ -105,6 +105,7 @@ export function FaultsTab() {
       >
         <ButtonRow>
           <Button
+            testID="faults-btn-heal"
             label="Fail twice then succeed"
             busy={busy}
             onPress={() => {
@@ -133,10 +134,12 @@ export function FaultsTab() {
       >
         <ButtonRow>
           <Button
+            testID="faults-btn-identityChange"
             label="Emit identity change"
             onPress={() => provider.emitAccountChange({ status: 'available', identityChanged: true })}
           />
           <Button
+            testID="faults-btn-remoteChange"
             label="Emit remote change"
             onPress={() => provider.emitRemoteChange({ keys: ['demo/key'], reason: 'serverChange' })}
           />
@@ -146,7 +149,7 @@ export function FaultsTab() {
       <Section title="Log" tint={tabTint.faults}>
         <LogView entries={log.entries} height={220} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="faults-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>

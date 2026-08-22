@@ -62,13 +62,33 @@ export function CloudKitTab() {
       )}
 
       <Section title="Record" tint={tabTint.cloudkit}>
-        <Field label="recordName" value={key} onChangeText={setKey} />
-        <Field label="value" value={value} onChangeText={setValue} multiline />
+        <Field testID="cloudkit-field-key" label="recordName" value={key} onChangeText={setKey} />
+        <Field testID="cloudkit-field-value" label="value" value={value} onChangeText={setValue} multiline />
         <ButtonRow>
-          <Button label="getItem" busy={busy} onPress={run('getItem', () => cloudKit.getItem(key))} />
-          <Button label="setItem" busy={busy} onPress={run('setItem', () => cloudKit.setItem(key, value))} />
-          <Button label="removeItem" busy={busy} onPress={run('removeItem', () => cloudKit.removeItem(key))} />
-          <Button label="getAllKeys" busy={busy} onPress={run('getAllKeys', () => cloudKit.getAllKeys())} />
+          <Button
+            testID="cloudkit-btn-getItem"
+            label="getItem"
+            busy={busy}
+            onPress={run('getItem', () => cloudKit.getItem(key))}
+          />
+          <Button
+            testID="cloudkit-btn-setItem"
+            label="setItem"
+            busy={busy}
+            onPress={run('setItem', () => cloudKit.setItem(key, value))}
+          />
+          <Button
+            testID="cloudkit-btn-removeItem"
+            label="removeItem"
+            busy={busy}
+            onPress={run('removeItem', () => cloudKit.removeItem(key))}
+          />
+          <Button
+            testID="cloudkit-btn-getAllKeys"
+            label="getAllKeys"
+            busy={busy}
+            onPress={run('getAllKeys', () => cloudKit.getAllKeys())}
+          />
         </ButtonRow>
       </Section>
 
@@ -82,6 +102,7 @@ export function CloudKitTab() {
       >
         <ButtonRow>
           <Button
+            testID="cloudkit-btn-oversized"
             label="Write 1.5 MB"
             busy={busy}
             onPress={run('setItem (1.5 MB)', () => cloudKit.setItem(key, 'x'.repeat(1_500_000)))}
@@ -94,11 +115,22 @@ export function CloudKitTab() {
         tint={tabTint.cloudkit}
         subtitle={isApple ? undefined : 'Native only - the REST client uses the default zone.'}
       >
-        <Field label="zoneName" value={zone} onChangeText={setZone} />
+        <Field testID="cloudkit-field-zone" label="zoneName" value={zone} onChangeText={setZone} />
         <ButtonRow>
-          <Button label="create" busy={busy} onPress={run('zones.create', () => cloudKitZones.create(zone))} />
-          <Button label="list" busy={busy} onPress={run('zones.list', () => cloudKitZones.list())} />
           <Button
+            testID="cloudkit-btn-zoneCreate"
+            label="create"
+            busy={busy}
+            onPress={run('zones.create', () => cloudKitZones.create(zone))}
+          />
+          <Button
+            testID="cloudkit-btn-zoneList"
+            label="list"
+            busy={busy}
+            onPress={run('zones.list', () => cloudKitZones.list())}
+          />
+          <Button
+            testID="cloudkit-btn-zoneRemove"
             label="remove"
             tone="danger"
             busy={busy}
@@ -110,18 +142,24 @@ export function CloudKitTab() {
       <Section title="Account" tint={tabTint.cloudkit}>
         <ButtonRow>
           <Button
+            testID="cloudkit-btn-getAccountStatus"
             label="getAccountStatus"
             busy={busy}
             onPress={run('getAccountStatus', () => cloudKit.getAccountStatus())}
           />
-          <Button label="isAvailable" busy={busy} onPress={run('isAvailable', () => cloudKit.isAvailable())} />
+          <Button
+            testID="cloudkit-btn-isAvailable"
+            label="isAvailable"
+            busy={busy}
+            onPress={run('isAvailable', () => cloudKit.isAvailable())}
+          />
         </ButtonRow>
       </Section>
 
       <Section title="Log" tint={tabTint.cloudkit}>
         <LogView entries={log.entries} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="cloudkit-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>

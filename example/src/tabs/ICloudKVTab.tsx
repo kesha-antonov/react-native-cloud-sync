@@ -53,17 +53,37 @@ export function ICloudKVTab() {
       />
 
       <Section title="Value" tint={tabTint.kv}>
-        <Field label="key" value={key} onChangeText={setKey} />
-        <Field label="value" value={value} onChangeText={setValue} multiline />
+        <Field testID="kv-field-key" label="key" value={key} onChangeText={setKey} />
+        <Field testID="kv-field-value" label="value" value={value} onChangeText={setValue} multiline />
       </Section>
 
       <Section title="Operations" tint={tabTint.kv}>
         <ButtonRow>
-          <Button label="getItem" busy={busy} onPress={run('getItem', () => icloudKV.getItem(key))} />
-          <Button label="setItem" busy={busy} onPress={run('setItem', () => icloudKV.setItem(key, value))} />
-          <Button label="removeItem" busy={busy} onPress={run('removeItem', () => icloudKV.removeItem(key))} />
-          <Button label="getAllKeys" busy={busy} onPress={run('getAllKeys', () => icloudKV.getAllKeys())} />
-          <Button label="sync()" busy={busy} onPress={run('sync', () => icloudKVSync())} />
+          <Button
+            testID="kv-btn-getItem"
+            label="getItem"
+            busy={busy}
+            onPress={run('getItem', () => icloudKV.getItem(key))}
+          />
+          <Button
+            testID="kv-btn-setItem"
+            label="setItem"
+            busy={busy}
+            onPress={run('setItem', () => icloudKV.setItem(key, value))}
+          />
+          <Button
+            testID="kv-btn-removeItem"
+            label="removeItem"
+            busy={busy}
+            onPress={run('removeItem', () => icloudKV.removeItem(key))}
+          />
+          <Button
+            testID="kv-btn-getAllKeys"
+            label="getAllKeys"
+            busy={busy}
+            onPress={run('getAllKeys', () => icloudKV.getAllKeys())}
+          />
+          <Button testID="kv-btn-sync" label="sync()" busy={busy} onPress={run('sync', () => icloudKVSync())} />
         </ButtonRow>
         <Text style={styles.body}>
           sync() maps to NSUbiquitousKeyValueStore.synchronize(), which schedules an
@@ -74,11 +94,17 @@ export function ICloudKVTab() {
       <Section title="Account" tint={tabTint.kv}>
         <ButtonRow>
           <Button
+            testID="kv-btn-getAccountStatus"
             label="getAccountStatus"
             busy={busy}
             onPress={run('getAccountStatus', () => icloudKV.getAccountStatus())}
           />
-          <Button label="isAvailable" busy={busy} onPress={run('isAvailable', () => icloudKV.isAvailable())} />
+          <Button
+            testID="kv-btn-isAvailable"
+            label="isAvailable"
+            busy={busy}
+            onPress={run('isAvailable', () => icloudKV.isAvailable())}
+          />
         </ButtonRow>
         <Text style={styles.body}>
           Five states, not a boolean: available, noAccount, restricted,
@@ -90,7 +116,7 @@ export function ICloudKVTab() {
       <Section title="Log" tint={tabTint.kv}>
         <LogView entries={log.entries} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="kv-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>

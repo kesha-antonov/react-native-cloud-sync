@@ -1,0 +1,147 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - drive
+  - cloud
+---
+# Google Drive needs an OAuth access token from the host app - configure()
+# accepts an empty/fake one without rejecting (it just hands back null from
+# getAccessToken later, which the following calls then reject on), so this
+# flow exercises the real "type a token in, configure, try an operation"
+# path without needing a live token. configure() logs synchronously (no
+# network round trip), so that assertion is a genuine result, not just a
+# tap-happened check; the operation assertions below only check that the tap
+# logged its call - `run()` logs the label synchronously (as "· <label>")
+# before the async result, so checking that glyph-prefixed line is
+# timing-safe and can't accidentally match the button's own label instead.
+#
+# Two Maestro/iOS quirks worth knowing (see faults.yaml for the full note):
+# text selectors are a full-string regex match, so expected fragments are
+# wrapped in .*...*; and an off-screen element isn't tappable/assertable at
+# all, so the Log section needs an explicit scroll before it's checked.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Cloud Sync.*"
+- tapOn:
+    id: "tab-drive"
+- assertVisible: ".*Google Drive.*"
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-clear"
+    direction: DOWN
+- assertVisible: ".*No activity yet - run an operation above..*"
+
+- scrollUntilVisible:
+    element:
+      id: "drive-field-token"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "drive-field-token"
+- inputText: "maestro-fake-token"
+- hideKeyboard
+- waitForAnimationToEnd:
+    timeout: 800
+
+# Wrapped in retry: this specific tap (right after a keyboard dismiss, which
+# shifts the ScrollView's content insets) has occasionally landed while the
+# view was still settling, leaving the tap a no-op even though Maestro
+# reports it as completed. Retrying the whole scroll+tap+assert unit is a
+# robust way to correct for that without special-casing exact timings.
+- retry:
+    maxRetries: "3"
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: "drive-btn-configure"
+          direction: UP
+          centerElement: true
+      - waitForAnimationToEnd:
+          timeout: 500
+      - tapOn:
+          id: "drive-btn-configure"
+      - scrollUntilVisible:
+          element:
+            id: "drive-btn-clear"
+          direction: DOWN
+      - assertVisible: '.*configureGoogleDrive\(\) done.*'
+
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-getItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "drive-btn-getItem"
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-setItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "drive-btn-setItem"
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· setItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-removeItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "drive-btn-removeItem"
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· removeItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-getAllKeys"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "drive-btn-getAllKeys"
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getAllKeys.*"
+
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-isAvailable"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "drive-btn-isAvailable"
+- scrollUntilVisible:
+    element:
+      id: "drive-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· isAvailable.*"
+
+- tapOn:
+    id: "drive-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"

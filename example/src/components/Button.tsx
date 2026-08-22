@@ -9,6 +9,7 @@ interface Props {
   selected?: boolean
   busy?: boolean
   disabled?: boolean
+  testID?: string
 }
 
 /**
@@ -20,11 +21,12 @@ interface Props {
  * (and `tone="primary"`) fill solid with the accent color; disabled stays a
  * flat dim, same as before.
  */
-export function Button({ label, onPress, tone = 'default', selected, busy, disabled }: Props) {
+export function Button({ label, onPress, tone = 'default', selected, busy, disabled, testID }: Props) {
   const isDisabled = disabled === true || busy === true
   const filled = selected === true || tone === 'primary'
   return (
     <Pressable
+      testID={testID}
       onPress={onPress}
       disabled={isDisabled}
       style={({ pressed }) => [

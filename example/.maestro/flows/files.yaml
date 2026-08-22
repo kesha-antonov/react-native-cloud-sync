@@ -1,0 +1,60 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - files
+  - local
+---
+# Generate writes pseudo-random bytes to the cache directory locally - no
+# account or network involved, so it's deterministic on every platform. save
+# and restore stream through cloudKitBackup (Apple) or googleDriveFiles
+# (elsewhere, and only once its adapter is installed and Drive is
+# configured), which are exercised in cloudkit.yaml/drive.yaml instead - this
+# flow sticks to what's unconditionally testable.
+#
+# Two Maestro/iOS quirks worth knowing (see faults.yaml for the full note):
+# text selectors are a full-string regex match, so expected fragments are
+# wrapped in .*...*; and an off-screen element isn't tappable/assertable at
+# all, so the Log section needs an explicit scroll before it's checked.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Cloud Sync.*"
+- tapOn:
+    id: "tab-more"
+- tapOn:
+    id: "more-item-files"
+- assertVisible: ".*Large files.*"
+- assertVisible: ".*No file generated yet..*"
+
+- tapOn:
+    id: "files-field-size"
+- eraseText
+- inputText: "1"
+- hideKeyboard
+- waitForAnimationToEnd:
+    timeout: 800
+
+# Wrapped in retry: this specific tap (right after a keyboard dismiss, which
+# shifts the ScrollView's content insets) has occasionally landed while the
+# view was still settling, leaving the tap a no-op even though Maestro
+# reports it as completed. Retrying the whole scroll+tap+assert unit is a
+# robust way to correct for that without special-casing exact timings.
+- retry:
+    maxRetries: "3"
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: "files-btn-generate"
+          direction: UP
+          centerElement: true
+      - waitForAnimationToEnd:
+          timeout: 500
+      - tapOn:
+          id: "files-btn-generate"
+      - scrollUntilVisible:
+          element:
+            id: "files-btn-clear"
+          direction: DOWN
+      - assertVisible: ".*demo-backup.bin.*"
+
+- tapOn:
+    id: "files-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"

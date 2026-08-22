@@ -130,6 +130,7 @@ export default function App() {
               return (
                 <TabBarItem
                   key={t.key}
+                  testID={`tab-${t.key}`}
                   label={t.label}
                   icon={t.icon}
                   tint={t.tint}
@@ -139,6 +140,7 @@ export default function App() {
               )
             })}
             <TabBarItem
+              testID="tab-more"
               label="More"
               icon="ellipsis"
               tint={overflowActive ? current.tint : colors.textDim}
@@ -161,12 +163,14 @@ export default function App() {
 }
 
 function TabBarItem({
+  testID,
   label,
   icon,
   tint,
   isActive,
   onPress,
 }: {
+  testID: string
   label: string
   icon: SFSymbol
   tint: string
@@ -176,6 +180,7 @@ function TabBarItem({
   const color = isActive ? tint : colors.textDim
   return (
     <Pressable
+      testID={testID}
       onPress={onPress}
       accessibilityRole="tab"
       accessibilityLabel={label}

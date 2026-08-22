@@ -1,0 +1,16 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - smoke
+  - local
+---
+# App launches, fonts finish loading (App.tsx renders null until they do),
+# and the chrome + first tab are on screen.
+- launchApp:
+    clearState: true
+- assertVisible: "Cloud Sync"
+- assertVisible: "Sync demo"
+- assertVisible: "Sync"
+- assertVisible: "iCloud KV"
+- assertVisible: "CloudKit"
+- assertVisible: "Drive"
+- assertVisible: "More"

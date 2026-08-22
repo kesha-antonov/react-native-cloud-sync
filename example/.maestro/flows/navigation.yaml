@@ -1,0 +1,59 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - navigation
+  - local
+---
+# The bottom tab bar pins the first four tabs (App.tsx PRIMARY_TABS) and
+# folds the rest behind a "More" sheet (MoreSheet.tsx) - walk every one of
+# them and check the right screen title lands. Tapping by testID (rather than
+# label text) avoids ambiguity once a screen's own log view starts echoing
+# button labels back as text.
+- launchApp:
+    clearState: true
+- assertVisible: "Cloud Sync"
+
+- tapOn:
+    id: "tab-kv"
+- assertVisible: "iCloud key-value store"
+
+- tapOn:
+    id: "tab-cloudkit"
+- assertVisible: "Zones"
+
+- tapOn:
+    id: "tab-drive"
+- assertVisible: "Google Drive"
+
+- tapOn:
+    id: "tab-sync"
+- assertVisible: "Sync demo"
+
+- tapOn:
+    id: "tab-more"
+- assertVisible: "Files"
+- assertVisible: "Store"
+- assertVisible: "Faults"
+
+- tapOn:
+    id: "more-item-files"
+- assertVisible: "Large files"
+
+- tapOn:
+    id: "tab-more"
+- tapOn:
+    id: "more-item-store"
+- assertVisible: "Store facade"
+
+- tapOn:
+    id: "tab-more"
+- tapOn:
+    id: "more-item-faults"
+- assertVisible: "Fault injection"
+
+# Reopen the sheet and dismiss it with Done instead of picking a row - the
+# active tab underneath should be left alone.
+- tapOn:
+    id: "tab-more"
+- tapOn:
+    id: "more-done"
+- assertVisible: "Fault injection"

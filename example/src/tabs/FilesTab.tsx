@@ -146,6 +146,7 @@ export function FilesTab() {
         >
           <ButtonRow>
             <Button
+              testID="files-btn-adapter"
               label={adapterReady ? 'Reinstall adapter' : 'Install adapter'}
               onPress={installAdapter}
             />
@@ -169,9 +170,9 @@ export function FilesTab() {
         subtitle="Generates a file of pseudo-random bytes in the cache directory, large enough
           that chunking and progress actually mean something."
       >
-        <Field label="size (MB)" value={sizeMb} onChangeText={setSizeMb} placeholder="12" />
+        <Field testID="files-field-size" label="size (MB)" value={sizeMb} onChangeText={setSizeMb} placeholder="12" />
         <ButtonRow>
-          <Button label="Generate" busy={busy} onPress={generate} />
+          <Button testID="files-btn-generate" label="Generate" busy={busy} onPress={generate} />
         </ButtonRow>
         <Text style={styles.body}>
           {sourceUri == null
@@ -188,12 +189,13 @@ export function FilesTab() {
       >
         <ButtonRow>
           <Button
+            testID="files-btn-save"
             label="save"
             busy={busy}
             disabled={!canTransfer || sourceUri == null}
             onPress={upload}
           />
-          <Button label="restore" busy={busy} disabled={!canTransfer} onPress={download} />
+          <Button testID="files-btn-restore" label="restore" busy={busy} disabled={!canTransfer} onPress={download} />
         </ButtonRow>
         <Text style={styles.body}>
           {progress == null ? 'Idle.' : `${(progress * 100).toFixed(1)}%`}
@@ -203,7 +205,7 @@ export function FilesTab() {
       <Section title="Log" tint={tabTint.files}>
         <LogView entries={log.entries} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="files-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>

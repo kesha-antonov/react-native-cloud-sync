@@ -227,6 +227,7 @@ export function SyncDemoTab() {
           {PROVIDERS.map(p => (
             <Button
               key={p.name}
+              testID={`sync-provider-${p.name}`}
               label={`${p.name}${available[p.name] === false ? ' (n/a)' : ''}`}
               onPress={() => setSelected(p.name)}
               selected={p.name === selected}
@@ -234,6 +235,7 @@ export function SyncDemoTab() {
             />
           ))}
           <Button
+            testID="sync-provider-mirror"
             label="mirror (iCloud + Drive)"
             onPress={() => setSelected('mirror')}
             selected={selected === 'mirror'}
@@ -281,16 +283,16 @@ export function SyncDemoTab() {
           </View>
         )}
         <ButtonRow>
-          <Button label="Increment" busy={busy} onPress={increment} />
-          <Button label="Pull" busy={busy} onPress={pull} />
-          <Button label="Reset" tone="danger" busy={busy} onPress={reset} />
+          <Button testID="sync-btn-increment" label="Increment" busy={busy} onPress={increment} />
+          <Button testID="sync-btn-pull" label="Pull" busy={busy} onPress={pull} />
+          <Button testID="sync-btn-reset" label="Reset" tone="danger" busy={busy} onPress={reset} />
         </ButtonRow>
       </Section>
 
       <Section title="Event log" tint={tabTint.sync}>
         <LogView entries={log.entries} height={240} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="sync-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>

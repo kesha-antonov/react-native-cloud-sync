@@ -1,0 +1,120 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - store
+  - local
+---
+# StoreTab's facade is backed by two createMemoryProvider() doubles (named
+# 'icloudKV' and 'googleDrive' so tiering picks them up) - no account or
+# network needed, so unlike the Sync/iCloudKV/CloudKit/Drive tabs these
+# assertions check the actual result, not just that the tap happened.
+#
+# Two Maestro/iOS quirks this works around (see faults.yaml for the longer
+# version of this note):
+# - text selectors are a full-string regex match, not a substring search, so
+#   every expected fragment is wrapped in .*...* to match it anywhere in the
+#   merged log line (which is prefixed with a timestamp and glyph).
+# - an off-screen element isn't in the iOS accessibility tree at all, and
+#   neither tapOn nor assertVisible scrolls to find one - so the Log section
+#   (below the fold) needs an explicit scrollUntilVisible before it's
+#   asserted on, oscillating back up to reach the next button.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Cloud Sync.*"
+- tapOn:
+    id: "tab-more"
+- tapOn:
+    id: "more-item-store"
+- assertVisible: ".*Store facade.*"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: ".*Queue empty..*"
+
+- scrollUntilVisible:
+    element:
+      id: "store-btn-setItemSmall"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "store-btn-setItemSmall"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: ".*setItem -> ok.*"
+
+- scrollUntilVisible:
+    element:
+      id: "store-btn-setItemSmall"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "store-btn-getItem"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: '.*getItem -> "facade value".*'
+
+- scrollUntilVisible:
+    element:
+      id: "store-btn-setItemSmall"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "store-btn-getAllKeys"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: '.*getAllKeys -> \["demo/store"\].*'
+
+- scrollUntilVisible:
+    element:
+      id: "store-btn-flush"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "store-btn-flush"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: '.*flushOutbox -> \{"drained":0,"remaining":0,"dropped":\[\]\}.*'
+
+- scrollUntilVisible:
+    element:
+      id: "store-btn-flush"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "store-btn-refresh"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: ".*Queue empty..*"
+
+- scrollUntilVisible:
+    element:
+      id: "store-btn-migrate"
+    direction: UP
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "store-btn-migrate"
+- scrollUntilVisible:
+    element:
+      id: "store-btn-clear"
+    direction: DOWN
+- assertVisible: '.*migrate -> \{"copied":\["demo/store"\],"skipped":\[\],"failed":\[\]\}.*'
+
+- tapOn:
+    id: "store-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"

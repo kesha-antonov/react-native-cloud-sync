@@ -1,0 +1,12 @@
+# Maestro workspace config for the example app.
+# https://docs.maestro.dev
+#
+# Run everything:              maestro test example/.maestro
+# Run one flow:                maestro test example/.maestro/flows/smoke.yaml
+# Local-only (no real account/token needed to make useful assertions):
+#                               maestro test example/.maestro --include-tags=local
+# Flows that exercise a real iCloud/CloudKit/Drive backend (assertions only
+# check that the tap produced a log line, not that the call succeeded):
+#                               maestro test example/.maestro --include-tags=cloud
+flows:
+  - "flows/*.yaml"

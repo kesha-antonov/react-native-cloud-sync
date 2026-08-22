@@ -43,6 +43,7 @@ export function MoreSheet<K extends string>({ visible, items, activeKey, onSelec
         <View style={s.header}>
           <Text style={s.title}>More</Text>
           <Pressable
+            testID="more-done"
             onPress={onClose}
             hitSlop={8}
             accessibilityRole="button"
@@ -59,6 +60,7 @@ export function MoreSheet<K extends string>({ visible, items, activeKey, onSelec
             return (
               <Pressable
                 key={item.key}
+                testID={`more-item-${item.key}`}
                 onPress={() => onSelect(item.key)}
                 accessibilityRole="button"
                 accessibilityLabel={item.label}

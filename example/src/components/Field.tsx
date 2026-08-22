@@ -9,15 +9,17 @@ interface Props {
   onChangeText: (v: string) => void
   placeholder?: string
   multiline?: boolean
+  testID?: string
 }
 
-export function Field({ label, value, onChangeText, placeholder, multiline }: Props) {
+export function Field({ label, value, onChangeText, placeholder, multiline, testID }: Props) {
   const [focused, setFocused] = useState(false)
 
   return (
     <View style={s.wrap}>
       <Text style={s.label}>{label}</Text>
       <TextInput
+        testID={testID}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}

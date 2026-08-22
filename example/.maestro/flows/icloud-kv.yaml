@@ -1,0 +1,154 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - icloud-kv
+  - cloud
+---
+# icloudKV talks to a real NSUbiquitousKeyValueStore (Apple only - Android/web
+# reject every call with ERR_UNSUPPORTED_PLATFORM). Whether a call succeeds
+# depends on the signed-in iCloud account on the test device, so these
+# assertions only check that each tap logged its call - `run()` in the tab
+# logs the label synchronously (as "· <label>") before the async result, so
+# checking for that glyph-prefixed line is timing-safe regardless of how
+# fast the call resolves, and (unlike bareword label text) can't accidentally
+# match the button's own always-on-screen label instead of the log.
+#
+# Two Maestro/iOS quirks worth knowing (see faults.yaml for the full note):
+# text selectors are a full-string regex match, so expected fragments are
+# wrapped in .*...*; and an off-screen element isn't tappable/assertable at
+# all, so the Log section needs an explicit scroll before it's checked.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Cloud Sync.*"
+- tapOn:
+    id: "tab-kv"
+- assertVisible: ".*iCloud key-value store.*"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*No activity yet - run an operation above..*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-getItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-getItem"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-setItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-setItem"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· setItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-removeItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-removeItem"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· removeItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-getAllKeys"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-getAllKeys"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getAllKeys.*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-sync"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-sync"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· sync.*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-getAccountStatus"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-getAccountStatus"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getAccountStatus.*"
+
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-isAvailable"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-btn-isAvailable"
+- scrollUntilVisible:
+    element:
+      id: "kv-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· isAvailable.*"
+
+- tapOn:
+    id: "kv-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"
+
+# The key field defaults to non-empty text - edit it and confirm the
+# TextInput round-trips the new value, proving the field is wired up.
+- scrollUntilVisible:
+    element:
+      id: "kv-field-key"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "kv-field-key"
+- eraseText
+- inputText: "demo/maestro-key"
+- hideKeyboard
+- assertVisible: ".*demo/maestro-key.*"

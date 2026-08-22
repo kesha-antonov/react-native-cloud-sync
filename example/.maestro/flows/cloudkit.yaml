@@ -1,0 +1,184 @@
+appId: com.example.reactnativecloudsync
+tags:
+  - cloudkit
+  - cloud
+---
+# On Apple this hits native CloudKit.framework against the private database
+# (implicit iCloud auth); elsewhere it's the REST client, which needs
+# configureCloudKit() first. Most assertions here only check that the tap
+# logged its call - `run()` logs the label synchronously (as "· <label>")
+# before the async result, so checking that glyph-prefixed line is
+# timing-safe and can't accidentally match the button's own always-on-screen
+# label instead. The oversized write is the exception: the 1 MB cap is
+# enforced locally before any network call, so ERR_PAYLOAD_TOO_LARGE is
+# deterministic on every platform/account.
+#
+# Two Maestro/iOS quirks worth knowing (see faults.yaml for the full note):
+# text selectors are a full-string regex match, so expected fragments are
+# wrapped in .*...*; and an off-screen element isn't tappable/assertable at
+# all, so the Log section needs an explicit scroll before it's checked.
+- launchApp:
+    clearState: true
+- assertVisible: ".*Cloud Sync.*"
+- tapOn:
+    id: "tab-cloudkit"
+- assertVisible: ".*Zones.*"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*No activity yet - run an operation above..*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-getItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-getItem"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-setItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-setItem"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· setItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-removeItem"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-removeItem"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· removeItem.*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-getAllKeys"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-getAllKeys"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getAllKeys.*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-oversized"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-oversized"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*ERR_PAYLOAD_TOO_LARGE.*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-zoneCreate"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-zoneCreate"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: '.*· zones\.create.*'
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-zoneList"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-zoneList"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: '.*· zones\.list.*'
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-zoneRemove"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-zoneRemove"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: '.*· zones\.remove.*'
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-getAccountStatus"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-getAccountStatus"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· getAccountStatus.*"
+
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-isAvailable"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 500
+- tapOn:
+    id: "cloudkit-btn-isAvailable"
+- scrollUntilVisible:
+    element:
+      id: "cloudkit-btn-clear"
+    direction: DOWN
+- assertVisible: ".*· isAvailable.*"
+
+- tapOn:
+    id: "cloudkit-btn-clear"
+- assertVisible: ".*No activity yet - run an operation above..*"

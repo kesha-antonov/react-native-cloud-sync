@@ -97,17 +97,33 @@ export function StoreTab() {
           + `larger ones are routed to a record-capable provider automatically. Size limits `
           + `stop being the app's problem.`}
       >
-        <Field label="key" value={key} onChangeText={setKey} />
-        <Field label="value" value={value} onChangeText={setValue} multiline />
+        <Field testID="store-field-key" label="key" value={key} onChangeText={setKey} />
+        <Field testID="store-field-value" label="value" value={value} onChangeText={setValue} multiline />
         <ButtonRow>
-          <Button label="setItem (small)" busy={busy} onPress={run('setItem', () => store.setItem(key, value))} />
           <Button
+            testID="store-btn-setItemSmall"
+            label="setItem (small)"
+            busy={busy}
+            onPress={run('setItem', () => store.setItem(key, value))}
+          />
+          <Button
+            testID="store-btn-setItemLarge"
             label="setItem (128 KB)"
             busy={busy}
             onPress={run('setItem 128KB', () => store.setItem(key, 'x'.repeat(128 * 1024)))}
           />
-          <Button label="getItem" busy={busy} onPress={run('getItem', () => store.getItem(key))} />
-          <Button label="getAllKeys" busy={busy} onPress={run('getAllKeys', () => store.getAllKeys())} />
+          <Button
+            testID="store-btn-getItem"
+            label="getItem"
+            busy={busy}
+            onPress={run('getItem', () => store.getItem(key))}
+          />
+          <Button
+            testID="store-btn-getAllKeys"
+            label="getAllKeys"
+            busy={busy}
+            onPress={run('getAllKeys', () => store.getAllKeys())}
+          />
         </ButtonRow>
         <Text style={styles.body}>
           small provider:
@@ -129,8 +145,13 @@ export function StoreTab() {
           just hide them."
       >
         <ButtonRow>
-          <Button label="Flush" busy={busy} onPress={run('flushOutbox', () => store.flushOutbox())} />
-          <Button label="Refresh" onPress={refresh} />
+          <Button
+            testID="store-btn-flush"
+            label="Flush"
+            busy={busy}
+            onPress={run('flushOutbox', () => store.flushOutbox())}
+          />
+          <Button testID="store-btn-refresh" label="Refresh" onPress={refresh} />
         </ButtonRow>
         <Text style={[styles.body, { color: pending.length > 0 ? colors.warn : colors.textDim }]}>
           {pending.length === 0
@@ -144,6 +165,7 @@ export function StoreTab() {
       <Section title="Migration" tint={tabTint.store}>
         <ButtonRow>
           <Button
+            testID="store-btn-migrate"
             label="icloudKV -> googleDrive"
             busy={busy}
             onPress={run('migrate', () => store.migrate({ from: 'icloudKV', to: 'googleDrive' }))}
@@ -155,7 +177,7 @@ export function StoreTab() {
       <Section title="Log" tint={tabTint.store}>
         <LogView entries={log.entries} />
         <ButtonRow>
-          <Button label="Clear" onPress={log.clear} />
+          <Button testID="store-btn-clear" label="Clear" onPress={log.clear} />
         </ButtonRow>
       </Section>
     </ScrollView>
