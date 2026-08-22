@@ -100,36 +100,36 @@ This package is a wrapper: unexpected behavior is usually explained in Apple's o
 | CloudKit records | ✅ | – | ✅ | ✅ | – | ✅ |
 | Google Drive | ✅ | ✅ | – | – | – | – |
 | iOS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Android | ✅ | ✅ | – | ❌ [^1] | – | – |
-| Web | ✅ | partial [^2] | – | – | – | – |
-| **CloudKit on Android/web** | ✅ | – | – | ❌ [^1] | – | – |
+| Android | ✅ | ✅ | – | ❌ [[1]](#note-1) | – | – |
+| Web | ✅ | partial [[2]](#note-2) | – | – | – | – |
+| **CloudKit on Android/web** | ✅ | – | – | ❌ [[1]](#note-1) | – | – |
 | New Architecture | ✅ | ✅ | ✅ | ✅ | ✅ | – |
-| **Legacy Architecture** | ✅ | ❌ | ✅ [^3] | ✅ [^3] | ✅ [^3] | ✅ |
+| **Legacy Architecture** | ✅ | ❌ | ✅ [[3]](#note-3) | ✅ [[3]](#note-3) | ✅ [[3]](#note-3) | ✅ |
 | Typed error codes | ✅ | – | partial | ✅ | – | – |
 | 5-value account status | ✅ | boolean | boolean | ✅ | – | – |
-| Identity-change event | ✅ | ⚠️ [^4] | – | ✅ | – | – |
-| Remote-change event | ✅ | ✅ | – | n/a | ❌ [^5] | ✅ |
+| Identity-change event | ✅ | ⚠️ [[4]](#note-4) | – | ✅ | – | – |
+| Remote-change event | ✅ | ✅ | – | n/a | ❌ [[5]](#note-5) | ✅ |
 | Offline write queue | ✅ | – | – | ✅ | – | – |
 | Size tiering | ✅ | – | – | – | – | – |
-| Binary / assets | ✅ [^9] | ✅ | ❌ [^6] | ✅ | – | – |
+| Binary / assets | ✅ [[9]](#note-9) | ✅ | ❌ [[6]](#note-6) | ✅ | – | – |
 | User-visible iCloud Drive files | ✅ | – | – | – | ✅ | – |
 | Native end-to-end encryption | ✅ | – | – | – | – | – |
 | Batch operations | ✅ | – | – | – | – | – |
 | React hooks | ✅ | ✅ | – | – | – | – |
 | Encryption seam | ✅ | – | – | – | – | – |
-| Exported test harness | ✅ | – | – | ⚠️ [^7] | – | – |
+| Exported test harness | ✅ | – | – | ⚠️ [[7]](#note-7) | – | – |
 | Mac Catalyst | ✅ | – | – | ⚠️ | – | – |
-| Actively maintained | ✅ | ✅ | ✅ | ❌ [^8] | ❌ [^5] | ❌ |
+| Actively maintained | ✅ | ✅ | ✅ | ❌ [[8]](#note-8) | ❌ [[5]](#note-5) | ❌ |
 
-[^1]: expo-cloudkit's README: Android throws `CloudKitNotSupportedError` on every call.
-[^2]: Google Drive support is text-based only.
-[^3]: Via the Expo Modules API - pulls in `expo-modules-core`.
-[^4]: Fires before JS binds the emitter, crashing with `std::bad_function_call` (SIGABRT) - hit three times.
-[^5]: One version ever shipped; the change-listener PR has sat open since February.
-[^6]: Field type is `string | number | null` - can't hold binary data.
-[^7]: A mock factory exists, but isn't exported or documented.
-[^8]: No commits since April; the last four releases shipped with Swift that didn't compile.
-[^9]: `CKAsset` on Apple platforms; CloudKit Web Services' upload-token protocol on Android/web, capped at 15 MB (CloudKit's limit, not this package's). Use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for anything bigger - it chunks and resumes the same way.
+<a id="note-1"></a>**[1]** expo-cloudkit's README: Android throws `CloudKitNotSupportedError` on every call.  
+<a id="note-2"></a>**[2]** Google Drive support is text-based only.  
+<a id="note-3"></a>**[3]** Via the Expo Modules API - pulls in `expo-modules-core`.  
+<a id="note-4"></a>**[4]** Fires before JS binds the emitter, crashing with `std::bad_function_call` (SIGABRT) - hit three times.  
+<a id="note-5"></a>**[5]** One version ever shipped; the change-listener PR has sat open since February.  
+<a id="note-6"></a>**[6]** Field type is `string | number | null` - can't hold binary data.  
+<a id="note-7"></a>**[7]** A mock factory exists, but isn't exported or documented.  
+<a id="note-8"></a>**[8]** No commits since April; the last four releases shipped with Swift that didn't compile.  
+<a id="note-9"></a>**[9]** `CKAsset` on Apple platforms; CloudKit Web Services' upload-token protocol on Android/web, capped at 15 MB (CloudKit's limit, not this package's). Use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for anything bigger - it chunks and resumes the same way.
 
 [kuatsu]: https://github.com/kuatsu/react-native-cloud-storage
 [ik]: https://github.com/BogdanGeorgian91/react-native-icloud-kit
