@@ -27,7 +27,7 @@
 
 ## ✨ Features
 
-- ☁️ Four providers behind one API - [`NSUbiquitousKeyValueStore`][kvs], [CloudKit][ck] records, [iCloud Drive][icdrive] documents, Google Drive [`appDataFolder`][appdata] - directly or through one facade.
+- ☁️ Four providers behind one API - [`NSUbiquitousKeyValueStore`][kvs] (Apple's small key-value iCloud store), [CloudKit][ck] records, [iCloud Drive][icdrive] documents, Google Drive [`appDataFolder`][appdata] - directly or through one facade.
 - 🍏 CloudKit reaches Android and web too, via [CloudKit Web Services][ckws] - the same [private database][ckdb] your iOS app uses.
 - 📂 `icloudDocuments` writes into the user's real iCloud Drive, visible in Files.app - unlike an invisible `CKAsset`.
 - 🚨 Every failure is a typed rejection (`ERR_NOT_SIGNED_IN`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED` with `retryAfterMs`, ...); `null` means only "key doesn't exist".
