@@ -2,7 +2,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { SFSymbol } from 'sf-symbols-typescript'
 
-import { colors, radius, space } from '../theme'
+import { colors, fontFamily, radius, space } from '../theme'
 import { IconSymbol } from './IconSymbol'
 
 export interface MoreItem<K extends string = string> {
@@ -96,7 +96,7 @@ const s = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: 20,
-    fontWeight: '800',
+    fontFamily: fontFamily.ui800,
     letterSpacing: -0.3,
   },
   done: {
@@ -111,7 +111,7 @@ const s = StyleSheet.create({
   doneText: {
     color: colors.accent,
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: fontFamily.ui600,
   },
   list: {
     marginHorizontal: space.lg,
@@ -139,6 +139,6 @@ const s = StyleSheet.create({
     flex: 1,
     color: colors.text,
     fontSize: 16,
-    fontWeight: '500',
+    fontFamily: fontFamily.ui500,
   },
 })

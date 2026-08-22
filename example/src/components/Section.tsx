@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 
-import { colors, radius, space } from '../theme'
+import { colors, fontFamily, radius, space } from '../theme'
 
 interface Props {
   title: string
@@ -67,10 +67,11 @@ const s = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: fontFamily.ui700,
   },
   subtitle: {
     color: colors.textDim,
+    fontFamily: fontFamily.ui400,
     fontSize: 12,
     lineHeight: 17,
   },
@@ -81,7 +82,7 @@ const s = StyleSheet.create({
   },
   badgeText: {
     fontSize: 10.5,
-    fontWeight: '700',
+    fontFamily: fontFamily.ui700,
     letterSpacing: 0.2,
   },
   body: {

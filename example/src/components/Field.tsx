@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { StyleSheet, Text, TextInput, View } from 'react-native'
 
-import { colors, mono, radius } from '../theme'
+import { colors, fontFamily, mono, radius } from '../theme'
 
 interface Props {
   label: string
@@ -38,7 +38,7 @@ const s = StyleSheet.create({
   label: {
     color: colors.textDim,
     fontSize: 11,
-    fontWeight: '600',
+    fontFamily: fontFamily.ui600,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },

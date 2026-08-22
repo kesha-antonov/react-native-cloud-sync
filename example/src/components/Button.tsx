@@ -1,6 +1,6 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 
-import { colors, radius } from '../theme'
+import { colors, fontFamily, radius } from '../theme'
 
 interface Props {
   label: string
@@ -79,9 +79,9 @@ const s = StyleSheet.create({
   label: {
     color: colors.text,
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: fontFamily.ui600,
   },
   labelFilled: {
-    color: '#ffffff',
+    color: colors.onAccent,
   },
 })

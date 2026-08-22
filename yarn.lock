@@ -1657,10 +1657,24 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@expo-google-fonts/libre-franklin@npm:^0.4.1":
+  version: 0.4.2
+  resolution: "@expo-google-fonts/libre-franklin@npm:0.4.2"
+  checksum: 10/f93db633a4cf7f5b25073d64b3f94f1814508e8696ee9c9f8413bf6d159a1f0af1207ed4c88ac097998f1beb9b3c96302d007c0f044023810bad055a79c195f7
+  languageName: node
+  linkType: hard
+
 "@expo-google-fonts/material-symbols@npm:^0.4.1":
   version: 0.4.44
   resolution: "@expo-google-fonts/material-symbols@npm:0.4.44"
   checksum: 10/02213ff7c3d84ce5dc6eff54abae3a4306a7f8379d5281c74cc690268024802dcbcdd5ad399ca799b414cf809c929d760f4603caa8645106cb64928efcad6ad0
+  languageName: node
+  linkType: hard
+
+"@expo-google-fonts/space-mono@npm:^0.4.0":
+  version: 0.4.2
+  resolution: "@expo-google-fonts/space-mono@npm:0.4.2"
+  checksum: 10/e945fc8e4bc0336382312fccc7d62689008c0d7e4e273070a3a4210fc29f886ee27d0f88907255122eb5fb27f61cc994f345ca62ed14f8bc801fbb160c954e4a
   languageName: node
   linkType: hard
 
@@ -5597,6 +5611,8 @@ __metadata:
   dependencies:
     "@babel/core": "npm:^7.29.7"
     "@eslint/js": "npm:^10.0.1"
+    "@expo-google-fonts/libre-franklin": "npm:^0.4.1"
+    "@expo-google-fonts/space-mono": "npm:^0.4.0"
     "@react-native-community/cli": "npm:^20.2.0"
     "@react-native/metro-config": "npm:^0.86.2"
     "@stylistic/eslint-plugin": "npm:^5.10.0"
@@ -5606,6 +5622,7 @@ __metadata:
     eslint-plugin-react-hooks: "npm:^7.1.1"
     expo: "npm:^57.0.10"
     expo-file-system: "npm:~57.0.4"
+    expo-font: "npm:~57.0.1"
     expo-status-bar: "npm:~57.0.1"
     expo-symbols: "npm:~57.0.2"
     expo-system-ui: "npm:~57.0.2"

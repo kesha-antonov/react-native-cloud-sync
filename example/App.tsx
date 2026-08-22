@@ -2,6 +2,16 @@ import { useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
+import {
+  LibreFranklin_400Regular,
+  LibreFranklin_400Regular_Italic,
+  LibreFranklin_500Medium,
+  LibreFranklin_600SemiBold,
+  LibreFranklin_700Bold,
+  LibreFranklin_800ExtraBold,
+} from '@expo-google-fonts/libre-franklin'
+import { SpaceMono_400Regular, SpaceMono_700Bold } from '@expo-google-fonts/space-mono'
+import { useFonts } from 'expo-font'
 import type { SFSymbol } from 'sf-symbols-typescript'
 
 import { DeviceBanner } from './src/components/DeviceBanner'
@@ -14,7 +24,7 @@ import { FilesTab } from './src/tabs/FilesTab'
 import { ICloudKVTab } from './src/tabs/ICloudKVTab'
 import { StoreTab } from './src/tabs/StoreTab'
 import { SyncDemoTab } from './src/tabs/SyncDemoTab'
-import { colors, tabTint } from './src/theme'
+import { colors, fontFamily, tabTint } from './src/theme'
 
 const TABS = [
   {
@@ -67,15 +77,31 @@ export default function App() {
   const [moreOpen, setMoreOpen] = useState(false)
   const current = TABS.find(t => t.key === active) ?? TABS[0]
   const overflowActive = OVERFLOW_TABS.some(t => t.key === active)
+  const [fontsLoaded] = useFonts({
+    LibreFranklin_400Regular,
+    LibreFranklin_400Regular_Italic,
+    LibreFranklin_500Medium,
+    LibreFranklin_600SemiBold,
+    LibreFranklin_700Bold,
+    LibreFranklin_800ExtraBold,
+    SpaceMono_400Regular,
+    SpaceMono_700Bold,
+  })
 
   const selectTab = (key: TabKey) => {
     setActive(key)
     setMoreOpen(false)
   }
 
+  // Every text style in this app names one of the two loaded families
+  // directly (see theme.ts) rather than falling back to a system font, so
+  // rendering before they're ready would show blank glyphs, not a fallback
+  // face - hold the whole tree back until useFonts resolves.
+  if (!fontsLoaded) return null
+
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <SafeAreaView style={s.root} edges={['top', 'left', 'right']}>
         <View style={s.topBar}>
           <View>
@@ -181,11 +207,12 @@ const s = StyleSheet.create({
   brand: {
     color: colors.text,
     fontSize: 16,
-    fontWeight: '800',
+    fontFamily: fontFamily.ui800,
     letterSpacing: -0.2,
   },
   brandSub: {
     color: colors.textFaint,
+    fontFamily: fontFamily.ui400,
     fontSize: 10.5,
     marginTop: 1,
   },
@@ -216,6 +243,6 @@ const s = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 10.5,
-    fontWeight: '600',
+    fontFamily: fontFamily.ui600,
   },
 })

@@ -1,6 +1,6 @@
 import { Platform, StyleSheet, Text, View } from 'react-native'
 
-import { colors, mono } from '../theme'
+import { colors, fontFamily } from '../theme'
 import { deviceLabel } from '../deviceId'
 
 /**
@@ -46,8 +46,7 @@ const s = StyleSheet.create({
   },
   text: {
     color: colors.textDim,
-    fontFamily: mono,
+    fontFamily: fontFamily.monoBold,
     fontSize: 11,
-    fontWeight: '600',
   },
 })

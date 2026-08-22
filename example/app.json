@@ -4,7 +4,7 @@
     "slug": "react-native-cloud-sync-example",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,

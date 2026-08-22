@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import { ScrollView, StyleSheet, Text, View } from 'react-native'
 
-import { colors, mono, radius } from '../theme'
+import { colors, fontFamily, mono, radius } from '../theme'
 
 export interface LogEntry {
   id: number
@@ -72,18 +72,23 @@ const s = StyleSheet.create({
   },
   content: {
     padding: 8,
-    gap: 4,
   },
   empty: {
     color: colors.textFaint,
+    fontFamily: fontFamily.ui400Italic,
     fontSize: 12,
-    fontStyle: 'italic',
     padding: 4,
   },
+  // A faint bottom rule under every row, evoking ruled notebook paper - a
+  // real fixed-height ruling would break the moment a message wraps onto a
+  // second line, so this rules under content instead of under a fixed grid.
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 6,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
   rail: {
     width: 2,

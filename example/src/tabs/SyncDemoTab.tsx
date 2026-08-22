@@ -17,7 +17,7 @@ import { Button, ButtonRow } from '../components/Button'
 import { TabHeader } from '../components/Header'
 import { LogView } from '../components/LogView'
 import { Section } from '../components/Section'
-import { colors, mono, styles, tabTint } from '../theme'
+import { colors, fontFamily, mono, styles, tabTint } from '../theme'
 import { deviceId } from '../deviceId'
 import { useLog } from '../useLog'
 
@@ -310,7 +310,7 @@ const s = StyleSheet.create({
   counter: {
     color: colors.accent,
     fontSize: 48,
-    fontWeight: '700',
+    fontFamily: fontFamily.ui700,
     fontVariant: ['tabular-nums'],
   },
   meta: {
