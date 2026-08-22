@@ -56,7 +56,11 @@ function slug(text) {
     .replace(/\s+/g, '-')
 }
 
-/** Heading slugs per file, ignoring anything inside a fence. */
+/**
+ * Anchor targets per file, ignoring anything inside a fence: heading slugs,
+ * plus the explicit `<a id="...">` markers a footnote needs (markdown has no
+ * syntax for an anchor that is not a heading).
+ */
 function anchorsOf(source) {
   const found = new Set()
   let inFence = false
@@ -68,6 +72,7 @@ function anchorsOf(source) {
     if (inFence) continue
     const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line)
     if (heading != null) found.add(slug(heading[1]))
+    for (const m of line.matchAll(/<a\s+(?:id|name)="([^"]+)"/g)) found.add(m[1])
   }
   return found
 }

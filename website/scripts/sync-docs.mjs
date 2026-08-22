@@ -272,6 +272,13 @@ function rewriteLinks (markdown, ownerByAnchor, page) {
     // cannot express) keep repo-relative src on GitHub/npm; the site needs an
     // absolute URL instead.
     .replace(/src="assets\/([^"]+)"/g, (_m, path) => `src="${RAW}/assets/${path}"`)
+    // Bare anchor targets (`<a id="note-1"></a>`) are what GitHub understands,
+    // but MDX compiles a literal lowercase tag to an intrinsic element instead
+    // of routing it through the theme's component map - so Docusaurus never
+    // registers the id and the broken-anchor check fails on links that work.
+    // <Anchor> (website/src/theme/MDXComponents.js) goes through Link, which
+    // does register it.
+    .replace(/<a id="([^"]+)"><\/a>/g, (_m, id) => `<Anchor id="${id}" />`)
 }
 
 function frontMatter (page) {
