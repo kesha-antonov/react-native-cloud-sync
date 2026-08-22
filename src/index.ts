@@ -1,8 +1,8 @@
 /**
  * react-native-cloud-sync
  *
- * iCloud key-value store, CloudKit and Google Drive behind one API, on iOS,
- * Android and the web, on both React Native architectures.
+ * iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API,
+ * on iOS, Android and the web, on both React Native architectures.
  */
 
 // Providers, each usable directly.

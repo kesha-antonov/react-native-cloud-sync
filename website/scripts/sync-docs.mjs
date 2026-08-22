@@ -45,7 +45,7 @@ export const PAGES = [
     title: 'React Native Cloud Sync',
     sidebarLabel: 'Introduction',
     description:
-      'iCloud key-value store, CloudKit and Google Drive behind one API for React Native and Expo - '
+      'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API for React Native and Expo - '
       + 'on iOS, Android and the web, on both architectures.',
     sections: ['✨ Features', '💡 Why?', '📚 Upstream documentation'],
   },

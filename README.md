@@ -13,7 +13,7 @@
 <h1 align="center">react-native-cloud-sync</h1>
 
 <p align="center">
-  iCloud key-value store, CloudKit and Google Drive behind one API - iOS, Android, web, both architectures.
+  iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API - iOS, Android, web, both architectures.
 </p>
 
 <p align="center">

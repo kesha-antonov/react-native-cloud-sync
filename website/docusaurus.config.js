@@ -6,7 +6,7 @@ const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'React Native Cloud Storage',
-  tagline: 'iCloud, CloudKit and Google Drive behind one API - iOS, Android and web',
+  tagline: 'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API - iOS, Android and web',
   favicon: 'img/favicon.svg',
 
   url: 'https://kesha-antonov.github.io',
