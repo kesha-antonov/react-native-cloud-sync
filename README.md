@@ -37,7 +37,7 @@
 - 📦 Small values go to the key-value store, larger ones to a [`CKRecord`][ckrecord] field, binary to a [`CKAsset`][ckasset] or a resumable Drive upload. The size check picks the target.
 - 🔁 Retryable failures queue into a durable outbox: backoff honours retry hints, auto-drains on foreground, bounded, never overwrites a newer write.
 - 🧺 `multiGet`/`multiSet`/`multiRemove`/`clear` batch for real, one request per provider.
-- 🪝 React hooks from `/hooks`: `useCloudItem`, `useAccountStatus`, `usePendingWrites`. They drop stale responses and never `setState` after unmount.
+- 🪝 React hooks from `/hooks`: `useCloudItem`, `useCloudItems`, `useCloudCollection`, `useAccountStatus`, `usePendingWrites`. They drop stale responses and never `setState` after unmount.
 - 🔐 `cloudKitEncrypted` uses CloudKit's own `encryptedValues`, so only ciphertext leaves the device; every other provider has a `codec` seam for your own cipher.
 - 🧪 An in-memory provider with fault injection, plus the native mock, both exported (`/testing`, `/jest-mock`), so every failure path is testable in Jest.
 - ⚙️ React Native 0.71 through 0.86+, old and new architecture, with the `#ifdef` bridge for the legacy one.

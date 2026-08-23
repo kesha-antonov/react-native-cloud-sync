@@ -610,6 +610,8 @@ import { useCloudItem } from 'react-native-cloud-sync/hooks'
 
 ```ts
 useCloudItem<T>(store: CloudStore, key: string, options?: UseCloudItemOptions<T>): UseCloudItemResult<T>
+useCloudItems<T>(store: CloudStore, keys: string[], options?: UseCloudItemsOptions<T>): UseCloudItemsResult<T>
+useCloudCollection<T>(store: CloudStore, prefix: string, options?: UseCloudItemsOptions<T>): UseCloudCollectionResult<T>
 useAccountStatus(provider: CloudProvider): UseAccountStatusResult
 usePendingWrites(store: CloudStore, pollIntervalMs?: number): UsePendingWritesResult
 useRemoteChange(store: CloudStore, listener: (e: RemoteChangeEvent) => void): void
@@ -632,6 +634,25 @@ interface UseCloudItemOptions<T> {
   serialize?: (value: T) => string    // default JSON.stringify
   watch?: boolean                     // re-read on remote change, default true
 }
+
+interface UseCloudItemsResult<T> {
+  values: Record<string, T | null>    // absent key = not fetched yet, null = fetched and missing
+  loading: boolean                    // true only for the initial fetch and refresh()
+  error: CloudSyncError | null
+  setValue: (key: string, next: T) => Promise<void>
+  remove: (key: string) => Promise<void>
+  refresh: () => Promise<void>        // re-fetches every tracked key
+}
+
+interface UseCloudItemsOptions<T> {
+  parse?: (raw: string) => T          // default JSON.parse
+  serialize?: (value: T) => string    // default JSON.stringify
+  watch?: boolean                     // re-fetch a key on remote change, default true
+}
+
+interface UseCloudCollectionResult<T> extends UseCloudItemsResult<T> {
+  keys: string[]                      // every key currently starting with `prefix`
+}
 ```
 
 ```tsx
@@ -644,7 +665,9 @@ function SettingsScreen () {
 }
 ```
 
-Every app writes the same three, with the same two bugs - a stale response overwriting a newer one, and `setState` after unmount - handled once here. `useCloudItem` writes optimistically and doesn't revert on error, since the outbox will still deliver it; a failed read likewise keeps the last known value rather than blanking the screen.
+Every app writes the same ones, with the same two bugs - a stale response overwriting a newer one, and `setState` after unmount - handled once here. `useCloudItem` writes optimistically and doesn't revert on error, since the outbox will still deliver it; a failed read likewise keeps the last known value rather than blanking the screen.
+
+`useCloudItems` is the multi-key form: one batched `multiGet` instead of one `useCloudItem` per row in a list. `useCloudCollection` adds the membership index on top - every key starting with `prefix`, kept live - for the common case of a collection stored as one key per record.
 
 `useAccountStatus`'s `identityChanged` is **latched**, not momentary: it stays true once a different identity has signed in, so a screen that mounts just after the event still sees it.
 
