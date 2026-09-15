@@ -23,9 +23,24 @@
   <a href="https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes">Platform Notes</a>
 </p>
 
+<hr />
+
+<h3 align="center">Support my work</h3>
+
 <p align="center">
-  <sub>Used in production by <a href="https://cryptoc-app.web.app/"><strong>cryptoc</strong></a>, which syncs portfolio and watchlist data to the user's own iCloud or Google Drive.</sub>
+  <a href="https://cryptoc-app.web.app/"><img src="https://cryptoc-app.web.app/img/icon.png" width="88" height="88" alt="cryptoc app icon" /></a>
 </p>
+
+<p align="center">
+  <strong>cryptoc</strong> - your crypto portfolio on the home screen, lock screen and Apple&nbsp;Watch.<br />
+  No account, no exchange API keys, no ads. It is the app this library was built for, and downloading it pays for the time that goes into maintaining it.
+</p>
+
+<p align="center">
+  <a href="https://apps.apple.com/app/cryptoc/id1333169178"><img height="40" src="https://cryptoc-app.web.app/img/appstore.svg" alt="Download on the App Store" /></a>&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=co.ssoul.CryptoC"><img height="59" src="https://cryptoc-app.web.app/img/googleplay.png" alt="Get it on Google Play" /></a>
+</p>
+
+<hr />
 
 ---
 
