@@ -56,6 +56,8 @@
 </tr>
 </table>
 
+<hr />
+
 ## ✨ Features
 
 - ☁️ Four providers behind one API: [`NSUbiquitousKeyValueStore`][kvs] (Apple's small key-value iCloud store), [CloudKit][ck] records, [iCloud Drive][icdrive] documents and Google Drive [`appDataFolder`][appdata]. Use them directly or through one facade.
