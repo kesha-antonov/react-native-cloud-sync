@@ -23,6 +23,10 @@
   <a href="https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes">Platform Notes</a>
 </p>
 
+<p align="center">
+  <sub>Using it in production? A ⭐ helps other developers find the library.</sub>
+</p>
+
 <hr />
 
 <table align="center">
