@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 - 2026-09-15
+
+- **`useCloudItems` and `useCloudCollection`** - a screen backed by many keys
+  otherwise calls `useCloudItem` once per row, one `getItem` and one
+  `onRemoteChange` subscription each. `useCloudItems` binds a list of keys with
+  a single batched `multiGet`, with a per-key ticket so a slow fetch can never
+  clobber a newer write to a different key. `useCloudCollection` layers a live
+  prefix-based membership index on top, for a collection stored as one key per
+  record. The hooks module also gained the test coverage it had none of
+- **Documentation site** at
+  [kesha-antonov.github.io/react-native-cloud-sync](https://kesha-antonov.github.io/react-native-cloud-sync/),
+  generated from this README so the two cannot drift apart
+- **Releases publish from CI through npm trusted publishing** - the tarball
+  carries provenance, and no npm token is stored in the repository
+- Example app gained a Maestro UI test suite and a light "Notebook" theme
+
 ## 0.3.0 - 2026-08-22
 
 - **`cloudKitAssets` on Android and web** - `save`/`fetch` no longer reject
