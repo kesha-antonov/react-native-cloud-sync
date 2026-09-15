@@ -23,6 +23,10 @@
   <a href="https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes">Platform Notes</a>
 </p>
 
+<p align="center">
+  <sub>Used in production by <a href="https://cryptoc-app.web.app/"><strong>cryptoc</strong></a>, which syncs portfolio and watchlist data to the user's own iCloud or Google Drive.</sub>
+</p>
+
 ---
 
 ## ✨ Features
@@ -360,6 +364,8 @@ Issues and pull requests welcome. Run `yarn lint`, `yarn typecheck` and `yarn te
 ## 👥 Authors
 
 - [Kesha Antonov](https://github.com/kesha-antonov)
+
+I also build **[cryptoc](https://cryptoc-app.web.app/)** - a crypto portfolio app with home screen, lock screen and Watch widgets, no account and no exchange API keys. It is where this library came from.
 
 ## 📄 License
 

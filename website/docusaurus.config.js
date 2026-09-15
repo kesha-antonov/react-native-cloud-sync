@@ -97,6 +97,14 @@ const config = {
               { label: 'Issues', href: `${REPO}/issues` },
             ],
           },
+          {
+            title: 'Built by',
+            items: [
+              { label: 'Kesha Antonov', href: 'https://github.com/kesha-antonov' },
+              { label: 'cryptoc - crypto portfolio app', href: 'https://cryptoc-app.web.app/' },
+              { label: 'Sponsor', href: 'https://github.com/sponsors/kesha-antonov' },
+            ],
+          },
         ],
         copyright: `Copyright © ${new Date().getFullYear()} Kesha Antonov. MIT licensed.`,
       },
