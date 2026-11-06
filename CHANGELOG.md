@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-11-06
 
 ### Breaking changes
 
@@ -43,6 +43,7 @@
 ### Other
 
 - Example app on Expo SDK 58 and React Native 0.88, which the iOS 27 SDK needs.
+- The docs site and README open with an animation of a change syncing between iPhone, iPad, Mac, Android and the web.
 
 ## 0.4.0 - 2026-09-15
 
