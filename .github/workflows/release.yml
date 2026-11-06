@@ -110,4 +110,5 @@ jobs:
       # nothing, so the only code executing while the OIDC token is
       # available is npm itself. No NPM_TOKEN secret to store, leak or rotate.
       - name: Publish
-        run: npm publish dist/*.tgz --provenance --access public
+        # ./ keeps npm from reading dist/<file> as a GitHub user/repo shorthand
+        run: npm publish ./dist/*.tgz --provenance --access public
