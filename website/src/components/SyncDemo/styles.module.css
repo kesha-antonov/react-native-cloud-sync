@@ -1,0 +1,20 @@
+.figure {
+  margin: 0 0 2rem;
+}
+
+.placeholder {
+  aspect-ratio: 760 / 440;
+  border-radius: 16px;
+  background: var(--ifm-color-emphasis-100);
+}
+
+.caption {
+  margin-top: 0.6rem;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .placeholder { aspect-ratio: 358 / 380; }
+}

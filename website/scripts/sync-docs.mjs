@@ -48,6 +48,9 @@ export const PAGES = [
       'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API for React Native and Expo - '
       + 'on iOS, Android and the web, on both architectures.',
     sections: ['✨ Features', '💡 Why?', '📚 Upstream documentation'],
+    // The animated sync scene (src/components/SyncDemo). Site only: on GitHub
+    // and npm the README shows a recorded GIF of it instead.
+    prepend: '<SyncDemo />',
   },
   {
     id: 'comparison',
@@ -329,6 +332,7 @@ function main () {
       }
       body = parts.join('\n\n')
     }
+    if (page.prepend != null) body = `${page.prepend}\n\n${body}`
 
     const out = join(OUT, `${page.id}.md`)
     // Nested ids (providers/cloudkit) need their directory to exist.

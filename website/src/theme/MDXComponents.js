@@ -1,6 +1,7 @@
 import React from 'react'
 import Link from '@docusaurus/Link'
 import MDXComponents from '@theme-original/MDXComponents'
+import SyncDemo from '@site/src/components/SyncDemo'
 
 /**
  * Bare anchor target, e.g. the footnote markers under the comparison table.
@@ -20,4 +21,5 @@ function Anchor ({ id }) {
 export default {
   ...MDXComponents,
   Anchor,
+  SyncDemo,
 }

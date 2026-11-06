@@ -24,6 +24,10 @@
 </p>
 
 <p align="center">
+  <img src="assets/sync-demo.gif" width="760" alt="A book saved on an iPhone syncs through iCloud to an iPad and a Mac and through Google Drive to an Android phone and the web, then un-saved on Android it syncs back everywhere" />
+</p>
+
+<p align="center">
   <sub>Using it in production? A ⭐ helps other developers find the library.</sub>
 </p>
 

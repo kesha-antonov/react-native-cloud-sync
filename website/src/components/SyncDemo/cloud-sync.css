@@ -1,0 +1,469 @@
+/* react-native-cloud-sync: one app on three devices, wired through the clouds. */
+.sd {
+  & .ss-stage {
+    --sd-gutter: 28px;
+    --ss-accent: #2563eb;
+    --sd-wire: #c7cdd6;
+    --sd-screen: #fff;
+    --sd-ink: #111;
+    --sd-ink-2: #6b7280;
+    --sd-soft: color-mix(in srgb, var(--ss-accent) 11%, #fff);
+    overflow: hidden;
+    border-radius: 16px;
+    background: var(--ss-well);
+  }
+
+  & .ss-stage[data-theme="dark"] {
+    --ss-accent: #3b82f6;
+    --sd-wire: #3a3f48;
+    --sd-screen: #111214;
+    --sd-ink: #f2f2f2;
+    --sd-ink-2: #9aa0aa;
+    --sd-soft: color-mix(in srgb, var(--ss-accent) 22%, #111214);
+  }
+
+  /* ---- Devices: pinned from the top, running off the bottom ---- */
+
+  .sd-phone {
+    position: absolute;
+    top: 196px;
+  }
+
+  .sd-phone--android { left: 198px; }
+  .sd-phone--ios { left: 352px; }
+
+  & .ss-stage[data-layout="compact"] .sd-phone--android { left: var(--sd-gutter); }
+  & .ss-stage[data-layout="compact"] .sd-phone--ios { right: var(--sd-gutter); left: auto; }
+
+  & .ss-stage[data-theme="dark"] .sd-phone--android {
+    box-shadow: 0 0 0 1px #3a3a3c;
+  }
+
+  & .ss-stage[data-layout="compact"] {
+    --sd-gutter: 14px;
+  }
+
+  & .ss-stage[data-layout="compact"] .sd-phone { top: 84px; }
+
+  /* ---- The app, in iOS points ---- */
+
+  .sd-app {
+    position: absolute;
+    inset: 0;
+    background: var(--sd-screen);
+    color: var(--sd-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, "Segoe UI", sans-serif;
+  }
+
+  /* The Pixel screen is 412pt wide to the iPhone's 402: laid out at the
+     iPhone's width and scaled up, the two apps line up row for row */
+  .sd-app--android {
+    right: auto;
+    bottom: auto;
+    width: 402px;
+    height: 893px;
+    transform: scale(1.0249);
+    transform-origin: 0 0;
+  }
+
+  .sd-app__title {
+    position: absolute;
+    top: 58px;
+    left: 24px;
+    font-size: 44px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+  }
+
+  .sd-cover {
+    position: absolute;
+    top: 136px;
+    left: 50%;
+    width: 150px;
+    height: 225px;
+    margin-left: -75px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #e9a46a 0%, #c8673a 60%, #93422a 100%);
+    box-shadow: 0 8px 18px rgb(120 50 20 / 0.22), 0 1px 2px rgb(0 0 0 / 0.18);
+  }
+
+  .sd-book {
+    position: absolute;
+    top: 384px;
+    right: 0;
+    left: 0;
+    font-size: 44px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .sd-author {
+    position: absolute;
+    top: 442px;
+    right: 0;
+    left: 0;
+    color: var(--sd-ink-2);
+    font-size: 26px;
+    line-height: 1.3;
+    text-align: center;
+  }
+
+  .sd-btn {
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--sd-soft);
+    color: var(--ss-accent);
+    font-weight: 600;
+    transition: background-color 0.25s ease, color 0.25s ease, transform 0.15s ease;
+    will-change: transform;
+  }
+
+  & .ss-stage[data-theme="dark"] .sd-btn:not([data-on]) { color: #8ab4ff; }
+
+  .sd-btn[data-on] {
+    background: var(--ss-accent);
+    color: #fff;
+  }
+
+  .sd-btn[data-pressed] { transform: scale(0.97); }
+
+  .sd-btn__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 24px;
+    line-height: 24px;
+    white-space: nowrap;
+  }
+
+  .sd-btn--phone {
+    position: absolute;
+    top: 500px;
+    right: 24px;
+    left: 24px;
+    height: 84px;
+    font-size: 30px;
+  }
+
+  .sd-btn--phone .sd-btn__label { gap: 10px; height: 36px; line-height: 36px; }
+
+  .sd-more {
+    position: absolute;
+    top: 620px;
+    right: 24px;
+    left: 24px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .sd-shelf {
+    display: grid;
+    grid-template-columns: repeat(3, 96px);
+    gap: 16px;
+  }
+
+  .sd-mini {
+    height: 144px;
+    border-radius: 6px;
+  }
+
+  .sd-mini--a { background: linear-gradient(180deg, #7fa7c9, #3f6b93); }
+  .sd-mini--b { background: linear-gradient(180deg, #9cc1a4, #4f7f5c); }
+  .sd-mini--c { background: linear-gradient(180deg, #d8c39a, #a2834d); }
+
+
+  /* ---- Clouds ---- */
+
+  .sd-chip {
+    position: absolute;
+    z-index: 21;
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 14px 0 12px;
+    border-radius: 999px;
+    background: var(--ss-surface);
+    box-shadow: var(--ss-shadow-ground), 0 0 0 0 transparent;
+    color: var(--ss-text-strong);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    transition: box-shadow 0.3s ease, transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    will-change: transform;
+  }
+
+  .sd-chip[data-active] {
+    box-shadow: var(--ss-shadow-ground), 0 0 0 3px color-mix(in srgb, var(--ss-accent) 25%, transparent);
+    transform: translateX(-50%) scale(1.04);
+  }
+
+  .sd-chip--icloud { top: 27px; left: 600px; }
+  .sd-chip--icloud svg { color: #3b9cf5; }
+  .sd-chip--drive { top: 27px; left: 190px; }
+
+  & .ss-stage[data-layout="compact"] .sd-chip--drive {
+    top: 24px;
+    left: 50%;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+  }
+
+  /* ---- The web ---- */
+
+  .sd-web {
+    position: absolute;
+    top: 116px;
+    left: 24px;
+    width: 160px;
+    height: 380px;
+    box-shadow: var(--ss-shadow-window);
+  }
+
+  .sd-web__body {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    align-content: start;
+    gap: 14px;
+    height: 100%;
+    padding: 14px;
+    background: var(--sd-screen);
+    color: var(--sd-ink);
+  }
+
+  .sd-cover--web {
+    position: static;
+    flex: none;
+    width: 40px;
+    height: 60px;
+    margin: 0;
+    border-radius: 4px;
+    box-shadow: 0 4px 10px rgb(120 50 20 / 0.22);
+  }
+
+  .sd-web__text {
+    display: grid;
+    align-content: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .sd-book--web {
+    position: static;
+    font-size: 15px;
+    text-align: left;
+  }
+
+  .sd-author--web {
+    position: static;
+    font-size: 11px;
+    text-align: left;
+  }
+
+  .sd-shelf--web {
+    grid-template-columns: repeat(3, 40px);
+    gap: 10px;
+  }
+
+  .sd-shelf--web .sd-mini { height: 48px; border-radius: 4px; }
+
+  .sd-btn--web {
+    grid-column: 1 / -1;
+    height: 30px;
+    font-size: 12px;
+  }
+
+  .sd-btn--web .sd-btn__label { gap: 4px; height: 14px; line-height: 14px; }
+
+  .sd-web__lines {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 7px;
+    margin-top: 2px;
+  }
+
+  /* ---- iPad: a black bezel, the app laid out in iPad points ---- */
+
+  .sd-ipad {
+    position: absolute;
+    top: 286px;
+    left: 592px;
+    width: 144px;
+    height: 204px;
+    padding: 6px;
+    border-radius: 16px;
+    background: #1c1c1e;
+    box-shadow: 0 0 0 1px #3a3a3c inset, 0 14px 30px -14px rgb(0 0 0 / 0.45);
+  }
+
+  .sd-ipad__screen {
+    position: relative;
+    overflow: hidden;
+    height: 100%;
+    border-radius: 10px;
+    background: var(--sd-screen);
+  }
+
+  /* 132 px of screen holds a 560 pt wide layout */
+  .sd-app--ipad {
+    right: auto;
+    bottom: auto;
+    width: 560px;
+    height: 820px;
+    transform: scale(0.2357);
+    transform-origin: 0 0;
+  }
+
+  /* A tablet layout: the cover beside its details, not stacked */
+  .sd-app--ipad {
+    .sd-app__title { top: 44px; left: 32px; font-size: 40px; }
+    .sd-cover { top: 120px; left: 32px; width: 200px; height: 300px; margin-left: 0; }
+    .sd-book { top: 136px; left: 260px; font-size: 48px; text-align: left; }
+    .sd-author { top: 200px; left: 260px; font-size: 28px; text-align: left; }
+    .sd-btn--phone { top: 262px; right: 32px; left: 260px; }
+    .sd-more { top: 468px; right: 32px; left: 32px; }
+    .sd-shelf { grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .sd-mini { height: 220px; }
+  }
+
+  /* ---- MacBook: a lid with a black bezel, the base a silver wedge ---- */
+
+  .sd-mac {
+    position: absolute;
+    top: 140px;
+    left: 500px;
+    width: 200px;
+  }
+
+  .sd-mac__lid {
+    height: 134px;
+    padding: 6px 6px 9px;
+    border-radius: 10px 10px 2px 2px;
+    background: #1c1c1e;
+    box-shadow: 0 0 0 1px #3a3a3c inset;
+  }
+
+  .sd-mac__screen {
+    display: grid;
+    grid-template-rows: 12px minmax(0, 1fr);
+    overflow: hidden;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--sd-screen);
+  }
+
+  .sd-mac__menu {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    background: color-mix(in srgb, var(--sd-ink) 6%, var(--sd-screen));
+    color: var(--sd-ink);
+    font-size: 7px;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, "Segoe UI", sans-serif;
+  }
+
+  .sd-mac__apple {
+    width: 6px;
+    height: 7px;
+    border-radius: 3px 3px 3px 3px / 3px 3px 4px 4px;
+    background: currentColor;
+  }
+
+  .sd-mac__screen .sd-web__body {
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 12px;
+  }
+
+  .sd-mac__screen .sd-cover--web { grid-row: span 2; }
+  .sd-mac__screen .sd-btn--web { grid-column: 2; height: 26px; }
+  .sd-mac__screen .sd-web__lines { gap: 6px; }
+
+  .sd-mac__base {
+    position: relative;
+    height: 8px;
+    margin: 0 -8px;
+    border-radius: 0 0 8px 8px / 0 0 6px 6px;
+    background: linear-gradient(180deg, #e3e5e8 0%, #c4c8cd 60%, #9fa4ab 100%);
+    box-shadow: 0 10px 20px -10px rgb(0 0 0 / 0.4);
+  }
+
+  .sd-mac__base::before {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 40px;
+    height: 3px;
+    margin-left: -20px;
+    border-radius: 0 0 4px 4px;
+    background: #9fa4ab;
+    content: "";
+  }
+
+  & .ss-stage[data-theme="dark"] .sd-mac__base {
+    background: linear-gradient(180deg, #6b7079 0%, #4a4e55 60%, #33363b 100%);
+  }
+
+  & .ss-stage[data-theme="dark"] .sd-mac__base::before { background: #2a2c30; }
+
+  /* ---- Device names ---- */
+
+  .sd-label {
+    position: absolute;
+    z-index: 22;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 10px 0 8px;
+    border-radius: 999px;
+    background: var(--ss-surface);
+    box-shadow: var(--ss-shadow-ground);
+    color: var(--ss-text-strong);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  .sd-label svg { color: var(--sd-ink-2); transition: color 0.3s ease; }
+
+  .sd-label[data-active] {
+    background: var(--ss-accent);
+    color: #fff;
+  }
+
+  .sd-label[data-active] svg { color: #fff; }
+
+  /* ---- Wires ---- */
+
+  .ss-connector__line,
+  .ss-connector__arrow { stroke-width: 2.5; }
+
+  .sd-wire .ss-connector__line {
+    stroke: var(--sd-wire);
+    stroke-width: 1.5;
+  }
+}
+
+/* The browser takes the dark page's surface too */
+.sd .ss-stage[data-theme="dark"] .sd-web.ss-window {
+  background: var(--sd-screen);
+  box-shadow: 0 0 0 1px #2c2f36, 0 12px 28px -12px rgb(0 0 0 / 0.6);
+}
+
+.sd .ss-stage[data-theme="dark"] .sd-web > .ss-window__bar {
+  border-bottom-color: #2c2f36;
+}
+
+.sd .ss-stage[data-theme="dark"] .sd-web .ss-window__dot {
+  background: #3a3f48;
+}
