@@ -128,6 +128,16 @@ export interface CloudProvider {
    */
   multiGet?: (keys: string[]) => Promise<(string | null)[]>
 
+  /**
+   * {@link multiGet} plus each value's server modification time, in one go.
+   *
+   * Optional. A resolving `multiGet` whose resolver orders on `modifiedAt`
+   * uses this when present, falls back to one {@link getItemWithMeta} per key
+   * when only that exists, and to plain {@link multiGet} otherwise - so the
+   * batched read resolves exactly as `getItem` would.
+   */
+  multiGetWithMeta?: (keys: string[]) => Promise<(ItemWithMeta | null)[]>
+
   /** Writes many key/value pairs in one go. Optional, same fallback rule. */
   multiSet?: (entries: [string, string][]) => Promise<void>
 
@@ -269,7 +279,20 @@ export interface ResolveCandidate {
  * the app knows what its values mean. Returning `null` means "none of these",
  * which reads as absent.
  */
-export type ResolveFn = (candidates: ResolveCandidate[]) => string | null
+export interface ResolveFn {
+  (candidates: ResolveCandidate[]): string | null
+  /**
+   * Whether this resolver reads {@link ResolveCandidate.modifiedAt}.
+   *
+   * A batched read only has to fetch server timestamps for a resolver that
+   * uses them, and fetching them can cost the batching itself. Left
+   * undefined, the store assumes it does and fetches them, so a custom
+   * resolver resolves identically through `getItem` and `multiGet`. Set it
+   * to `false` on a resolver that never looks at `modifiedAt` to keep
+   * `multiGet` a single request per provider. The built-in resolvers set it.
+   */
+  usesModifiedAt?: boolean
+}
 
 export interface CloudStoreOptions {
   /**
@@ -331,8 +354,14 @@ export interface CloudStoreOptions {
    */
   outboxMaxEntries?: number
   /**
-   * Give up on a queued write after this many failed attempts. Default 12,
-   * which with the capped exponential backoff is roughly an hour of retrying.
+   * Give up on a queued write after this many failed attempts. Default 12.
+   *
+   * After the n-th failure the next retry waits 2^n seconds, capped at five
+   * minutes (or the server's `Retry-After`, when it sends one). With the
+   * default that is 2 + 4 + ... + 256 seconds plus three five-minute waits:
+   * about 23.5 minutes from the first retry to the last, at minimum. A retry
+   * only happens when a flush runs, so with infrequent flushes it spans longer
+   * in wall-clock time - {@link outboxMaxAgeMs} bounds that.
    */
   outboxMaxAttempts?: number
   /**

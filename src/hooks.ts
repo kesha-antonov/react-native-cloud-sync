@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudStore } from './store'
 import { normalizeError, type CloudSyncError } from './errors'
+import { hasOwn, setOwn } from './internal/records'
 import type {
   AccountChangeEvent,
   AccountStatus,
@@ -123,9 +124,20 @@ export function useCloudItem<T = unknown>(
     }
   }, [store, key])
 
+  const initialRef = useRef(initialValue)
+  initialRef.current = initialValue
+  const loadedKey = useRef(key)
+
   useEffect(() => {
+    // A different key: the value on screen belongs to the previous one. Fall
+    // back to `initialValue` while the new key loads rather than showing the
+    // old key's value under the new key's name.
+    if (loadedKey.current !== key) {
+      loadedKey.current = key
+      setLocalValue(initialRef.current)
+    }
     void read()
-  }, [read])
+  }, [read, key])
 
   useEffect(() => {
     if (!watch) return
@@ -144,7 +156,10 @@ export function useCloudItem<T = unknown>(
     // discard a value the outbox is still going to deliver.
     setLocalValue(next)
     // Invalidate any read in flight, so its older answer cannot land on top.
+    // That read's `finally` will no longer clear `loading`, so clear it here:
+    // the local value is now the current one.
     ticket.current += 1
+    setLoading(false)
     try {
       await store.setItem(key, serialize(next))
       if (mounted.current) setError(null)
@@ -158,6 +173,7 @@ export function useCloudItem<T = unknown>(
   const remove = useCallback(async (): Promise<void> => {
     setLocalValue(null)
     ticket.current += 1
+    setLoading(false)
     try {
       await store.removeItem(key)
       if (mounted.current) setError(null)
@@ -287,7 +303,11 @@ export function useCloudItems<T = unknown>(
           // A write or a newer fetch already claimed this key - this answer
           // is no longer the current one.
           if (keyTicket.current.get(k) !== mine.get(k)) continue
-          next[k] = raw == null ? null : parseRef.current(raw)
+          // Left the tracked list while this fetch was in flight. Storing it
+          // would also mark it "already fetched", so if it rejoined later it
+          // would show this answer instead of being fetched again.
+          if (!keysRef.current.includes(k)) continue
+          setOwn(next, k, raw == null ? null : parseRef.current(raw))
         }
         return next
       })
@@ -308,14 +328,17 @@ export function useCloudItems<T = unknown>(
   const hasLoadedOnce = useRef(false)
   useEffect(() => {
     const current = keysRef.current
-    const missing = current.filter(k => !(k in valuesRef.current))
+    // Own properties only: `in` also sees Object.prototype, so a key named
+    // `constructor` or `toString` was treated as already fetched and never
+    // loaded.
+    const missing = current.filter(k => !hasOwn(valuesRef.current, k))
 
     const keep = new Set(current)
     setValues((prev) => {
       let changed = false
       const next: Record<string, T | null> = {}
       for (const k of Object.keys(prev))
-        if (keep.has(k)) next[k] = prev[k]
+        if (keep.has(k)) setOwn(next, k, prev[k])
         else changed = true
 
       return changed ? next : prev
@@ -421,10 +444,37 @@ export function useCloudCollection<T = unknown>(
     }
   }, [])
 
+  /**
+   * Local membership changes, in order, so a listing that was already in
+   * flight when one happened cannot undo it: a key created by `setValue`
+   * while `getAllKeys` was running would otherwise vanish from the list when
+   * the older listing landed, and a removed key would reappear.
+   */
+  const localOps = useRef<{ seq: number; key: string; op: 'add' | 'remove' }[]>([])
+  const opSeq = useRef(0)
+  const listTicket = useRef(0)
+
+  const recordOp = (key: string, op: 'add' | 'remove'): void => {
+    opSeq.current += 1
+    localOps.current.push({ seq: opSeq.current, key, op })
+  }
+
   const listKeys = useCallback(async (): Promise<void> => {
+    const mine = ++listTicket.current
+    const startedAt = opSeq.current
     const all = await store.getAllKeys()
-    if (!mounted.current) return
-    setKeys(all.filter(k => k.startsWith(prefix)))
+    // A newer listing started after this one; its answer is the fresher one.
+    if (!mounted.current || listTicket.current !== mine) return
+
+    const listed = new Set(all.filter(k => k.startsWith(prefix)))
+    for (const { seq, key, op } of localOps.current) {
+      if (seq <= startedAt) continue
+      if (op === 'add') listed.add(key)
+      else listed.delete(key)
+    }
+    // Everything up to this listing's start is reflected in what it saw.
+    localOps.current = localOps.current.filter(o => o.seq > startedAt)
+    setKeys([...listed])
   }, [store, prefix])
 
   useEffect(() => {
@@ -445,12 +495,16 @@ export function useCloudCollection<T = unknown>(
   const items = useCloudItems<T>(store, keys, options)
 
   const setValue = useCallback(async (key: string, next: T): Promise<void> => {
-    if (key.startsWith(prefix)) setKeys(prev => (prev.includes(key) ? prev : [...prev, key]))
+    if (key.startsWith(prefix)) {
+      recordOp(key, 'add')
+      setKeys(prev => (prev.includes(key) ? prev : [...prev, key]))
+    }
     await items.setValue(key, next)
   }, [items, prefix])
 
   const remove = useCallback(async (key: string): Promise<void> => {
     await items.remove(key)
+    recordOp(key, 'remove')
     setKeys(prev => (prev.includes(key) ? prev.filter(k => k !== key) : prev))
   }, [items])
 
@@ -499,15 +553,20 @@ export function useAccountStatus(provider: CloudProvider): UseAccountStatusResul
     }
   }, [])
 
+  // Bumped by every refresh and every account event, so a status query that
+  // was in flight when an event arrived cannot overwrite the newer status.
+  const ticket = useRef(0)
+
   const refresh = useCallback(async (): Promise<void> => {
+    const mine = ++ticket.current
     try {
       const next = await provider.getAccountStatus()
-      if (!mounted.current) return
+      if (!mounted.current || ticket.current !== mine) return
       setStatus(next)
       setError(null)
     }
     catch (e) {
-      if (mounted.current) setError(normalizeError(e))
+      if (mounted.current && ticket.current === mine) setError(normalizeError(e))
     }
   }, [provider])
 
@@ -518,6 +577,7 @@ export function useAccountStatus(provider: CloudProvider): UseAccountStatusResul
   useEffect(() => {
     if (provider.onAccountChange == null) return
     return provider.onAccountChange((e: AccountChangeEvent) => {
+      ticket.current += 1
       setStatus(e.status)
       if (e.identityChanged) setIdentityChanged(true)
     })

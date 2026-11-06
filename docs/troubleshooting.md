@@ -15,7 +15,9 @@ if (status !== 'available') promptSignIn(status)
 
 ## `ERR_CONTAINER_MISCONFIGURED`
 
-Either the app has no iCloud entitlement, or the container identifier in the entitlements file doesn't match the container that exists in the CloudKit Console.
+Natively, check `Info.plist` first: without `RNCloudSyncContainerIdentifier` CloudKit is disabled and every call rejects with this - the Expo config plugin writes it, a bare project adds it by hand ([Platform Notes](PLATFORM_NOTES.md#entitlements)). Otherwise the app has no iCloud entitlement, or the container identifier doesn't match the container that exists in the CloudKit Console.
+
+Over REST, an `ACCESS_DENIED` from CloudKit lands here too: the signed-in user lacks rights to the record type, zone or database, so check the security roles in the Console - signing in again won't help.
 
 ## `getAllKeys()` fails on CloudKit, but reads and writes work
 

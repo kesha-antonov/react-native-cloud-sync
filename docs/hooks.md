@@ -53,11 +53,11 @@ useCloudItem<string>(store, 'theme', {
 
 ### Stale responses cannot land
 
-Every read carries a ticket; a stale one - key changed, overtaken, invalidated - is dropped instead of written into state, avoiding a hand-rolled version's flash-of-wrong-value bug on fast navigation.
+Every read carries a ticket; a stale one - key changed, overtaken, invalidated - is dropped instead of written into state, avoiding a hand-rolled version's flash-of-wrong-value bug on fast navigation. When `key` changes, `value` falls back to `initialValue` while the new key loads rather than showing the old key's value under the new name.
 
 ## `useCloudItems`
 
-The multi-key sibling of `useCloudItem`. Binds a list of keys with one batched `multiGet` instead of one `useCloudItem` per row.
+The multi-key sibling of `useCloudItem`. Binds a list of keys with one batched `multiGet` instead of one `useCloudItem` per row. With `resolve` on the store, that `multiGet` resolves each key as `getItem` would, server timestamps and read repair included - see [the cost](store.md#the-cost).
 
 ```tsx
 function NotesList ({ noteIds }: { noteIds: string[] }) {
@@ -104,7 +104,7 @@ function NotesList () {
 
 Same shape as `useCloudItems`, plus `keys: string[]` for the current membership. Re-lists on mount and after any remote-change event that could plausibly have added or removed a member - not only one naming a key already under this prefix.
 
-A `setValue` for a key not seen before joins `keys` immediately, so a newly created record appears in its own list without waiting on a round trip to confirm it. `remove` leaves the collection the same way.
+A `setValue` for a key not seen before joins `keys` immediately, so a newly created record appears in its own list without waiting on a round trip to confirm it. `remove` leaves the collection the same way. A listing already in flight when either happens can't undo it.
 
 ## `useAccountStatus`
 
@@ -121,7 +121,7 @@ function SyncBanner () {
 }
 ```
 
-All five [`AccountStatus`](errors.md) values, not a boolean - "signed out", "temporarily unavailable" and "could not determine" each need different UI.
+[`AccountStatus`](errors.md) values as the provider reports them, not a boolean - "signed out", "temporarily unavailable" and "could not determine" each need different UI. `cloudKit` reports all five; `icloudKV` only `available` or `noAccount` ([why](providers/icloud-kv.md#availability-and-account-state)). An account event that arrives while a status query is in flight wins over the query's older answer.
 
 `identityChanged` is **latched**: it stays true once a different identity signs in, so a screen mounting right after the event still sees it.
 

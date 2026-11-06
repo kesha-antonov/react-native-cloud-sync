@@ -55,6 +55,10 @@ Values aren't queryable either - CloudKit can't index an encrypted field, so the
 
 It's also a separate record type (`EncryptedKVBlob`, not `cloudKit`'s `KVBlob`): CloudKit records encryption in the schema, so a field cannot be encrypted for one write and plain for another - the two providers would collide on a field-type conflict if they shared one. `cloudKit` and `cloudKitEncrypted` are separate stores; moving data between them is a `migrate()`.
 
+Record names are prefixed too: key `token` is stored as record `rncs-enc.token`. CloudKit record names are unique across record types, so a separate type alone left both providers addressing the same record - a delete through one removed the other's data. Plain `cloudKit` rejects keys starting with `rncs-enc.`, and the prefix eats into CloudKit's 255-character limit, so a `cloudKitEncrypted` key can be at most 246 characters (longer rejects with `ERR_INVALID_KEY`). Records written before the prefix existed are not migrated and no longer read back.
+
+A failed write is queued in memory only, not in `outboxStorage`: the store holds plaintext until native code encrypts it, so it never puts this provider's values on disk. A queued write is lost if the app restarts. Reads also check the record type: a record under `rncs-enc.<key>` that is not an `EncryptedKVBlob` rejects with `ERR_INVALID_KEY` instead of being read as plaintext.
+
 ### Advanced Data Protection
 
 Separate from the above, and outside your app's control. [ADP][adp] is a user-facing iCloud setting extending end-to-end encryption to most iCloud categories, including iCloud Drive and iCloud backups - on, `icloudDocuments` files and device backups become E2E encrypted; off (the default), Apple holds those keys.
@@ -88,6 +92,8 @@ const store = createCloudStore({
 ```
 
 The provider only ever sees ciphertext; your app only ever sees plaintext, and both halves may be async. This package deliberately ships **no cipher** - bring a library you chose: `react-native-quick-crypto`, `expo-crypto` plus a Keychain-backed key, `libsodium`.
+
+Use the `key` argument as associated data (the AAD of an AEAD cipher), so ciphertext copied from one key to another fails to decode instead of reading as valid. Replay and rollback - the server serving an older ciphertext for the same key - are also the codec's job; the store cannot detect them.
 
 ### What it applies to, and what it does not
 
@@ -158,18 +164,19 @@ function encryptedStore (dataKey: Uint8Array) {
     providers: ['googleDrive'],
     outboxStorage: mmkvAdapter,
     codec: {
-      encode: async (value) => {
+      encode: async (value, key) => {
         // A fresh nonce per write. Reusing one across writes is the classic
         // way to destroy GCM's guarantees.
         const nonce = randomBytes(12)
-        const ciphertext = await aesGcmEncrypt(value, dataKey, nonce)
+        // The key as associated data: this ciphertext only decodes under this key.
+        const ciphertext = await aesGcmEncrypt(value, dataKey, nonce, key)
         return `${toBase64(nonce)}.${toBase64(ciphertext)}`
       },
-      decode: async (stored) => {
+      decode: async (stored, key) => {
         const [nonce, ciphertext] = stored.split('.')
         // Throws on an authentication-tag mismatch, which is what we want -
         // a wrong key must not read as a successful decode.
-        return await aesGcmDecrypt(fromBase64(ciphertext), dataKey, fromBase64(nonce))
+        return await aesGcmDecrypt(fromBase64(ciphertext), dataKey, fromBase64(nonce), key)
       },
     },
   })

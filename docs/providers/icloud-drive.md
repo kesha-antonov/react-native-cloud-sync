@@ -64,6 +64,15 @@ and the Info.plist entry that makes the folder *visible* is:
 
 Miss the Info.plist half and files still sync, but the folder never appears in Files.app - usually the whole reason you reached for this. The plugin writes both.
 
+Which container to use can be named in Info.plist too, as `RNCloudSyncDocumentsContainerIdentifier` - the plugin writes it when `iCloudDocuments` is on. Optional: without it, the CloudKit container from `RNCloudSyncContainerIdentifier` is used if declared, else the first ubiquity container in the entitlements.
+
+```xml
+<key>RNCloudSyncDocumentsContainerIdentifier</key>
+<string>iCloud.com.your.app</string>
+```
+
+A separate key so an app can have iCloud Drive without CloudKit - see [Platform Notes](../PLATFORM_NOTES.md#entitlements).
+
 > One gotcha Apple doesn't make obvious: iOS caches `NSUbiquitousContainers`, re-reading it only when the app's **version** changes. Bump `CFBundleShortVersionString` when you add or change it, or the folder stays hidden on a device that already ran the old build.
 
 ## Operations
@@ -83,9 +92,15 @@ const path = await icloudDocuments.fetch({ name: 'Export 2024.csv' })
 await icloudDocuments.remove('Export 2024.csv')
 ```
 
+## Names
+
+A name is a single file name inside the app's `Documents` folder. Empty, `.`, `..`, anything containing `/` or NUL, and the `.x.icloud` form iOS uses for download placeholders all reject with `ERR_INVALID_KEY` before touching the filesystem - so a name can't reach outside the user-visible folder.
+
 ## `save` means "handed to iCloud"
 
 Same distinction as [`icloudKVSync()`](icloud-kv.md#sync-does-not-mean-stored): iOS uploads the file in the background once it's in the container, whether or not your app is running - a resolved promise means the system has it, not the cloud, and no API waits for the actual upload.
+
+Saving a document back onto itself - `save` with the path `fetch` returned and the same `name` - is a no-op, so the fetch, edit in place, save flow is safe.
 
 ## `fetch` before you read
 
@@ -102,7 +117,7 @@ if (entry?.isDownloaded === false)
 
 `fetch` asks for the download and waits for it, so calling it unconditionally is fine - immediate return for a file that's already local.
 
-Pass `destinationUri` for anything you intend to keep - the system may evict a downloaded copy to reclaim space, turning it back into a placeholder, but a copy outside the container is yours:
+Pass `destinationUri` for anything you intend to keep - the system may evict a downloaded copy to reclaim space, turning it back into a placeholder, but a copy outside the container is yours. Missing parent folders are created:
 
 ```ts
 const path = await icloudDocuments.fetch({
@@ -111,7 +126,11 @@ const path = await icloudDocuments.fetch({
 })
 ```
 
+`destinationUri` must name a file: an existing file there is replaced, but a directory is never deleted, and the call rejects instead. A symlink is replaced as a link, its target is left alone. Naming the document's own path is a no-op.
+
 A `fetch` that times out raises `ERR_TIMEOUT` - **not** a failed transfer, since iOS keeps downloading in the background, and the retryable classification means "not yet": try again shortly rather than telling the user something broke.
+
+`timeoutMs` defaults to 60000 and is capped at one hour. `NaN`, a negative number or a non-number throws a `RangeError` before anything starts.
 
 ## Progress
 
@@ -128,7 +147,7 @@ const tick = setInterval(async () => {
 
 ## Deleting
 
-`remove` deletes from iCloud (every device, and Files.app) and resolves `false` when the file was already gone - the end state the caller asked for.
+`remove` deletes from iCloud (every device, and Files.app) and resolves `false` when the file was already gone - the end state the caller asked for. A file not yet downloaded to this device is removed too, through its placeholder.
 
 The user can delete these files themselves from Files.app at any time - that's what "visible" means, so treat a missing file as normal, not corruption.
 

@@ -1,4 +1,5 @@
 import { CloudSyncError, ErrorCode, isCancelled } from '../errors'
+import { clampRetryAfterMs } from './records'
 import { throwIfAborted, withTimeout, type AbortLike } from './timeout'
 
 /**
@@ -148,6 +149,95 @@ interface DriveFile {
 /** The `fields` mask every listing uses, so a read also learns modification time. */
 const FILE_FIELDS = 'id,name,modifiedTime,version'
 
+/**
+ * The next offset a resumable session expects, from a 308's `Range` header
+ * ("bytes=0-8388607" -> 8388608). Undefined when there is no usable header.
+ */
+function parsePersistedRange(range: string | null): number | undefined {
+  if (range == null) return undefined
+  const match = /bytes=0-(\d+)/.exec(range)
+  return match ? Number(match[1]) + 1 : undefined
+}
+
+/**
+ * `Retry-After` in milliseconds, or undefined when absent or not a number of
+ * seconds. Checked for absence first: `Number(null)` is 0, which would tell
+ * the backoff "retry immediately" whenever Drive simply sent no header.
+ */
+function retryAfterMs(res: Response): number | undefined {
+  const header = res.headers.get('Retry-After')
+  if (header == null || header.trim() === '') return undefined
+  const seconds = Number(header)
+  return Number.isFinite(seconds) ? clampRetryAfterMs(seconds * 1000) : undefined
+}
+
+/**
+ * The only origins the bearer token is ever sent to.
+ *
+ * Every Drive endpoint lives on `www.googleapis.com`. The one URL this client
+ * does not build itself - the resumable-session URI - comes from a `Location`
+ * header or, across restarts, from the host's `sessionStore`. Neither is a
+ * place to take a destination for an OAuth token on trust: a tampered store
+ * entry or a misbehaving proxy would otherwise receive `Authorization: Bearer`
+ * for the user's Drive. Upload sessions are allowed on any single-label
+ * `*.googleapis.com` host, but only under `/upload/`.
+ */
+const DRIVE_API_PREFIX = 'https://www.googleapis.com/'
+const DRIVE_UPLOAD_URL = /^https:\/\/[a-z0-9-]+\.googleapis\.com\/upload\//
+
+function isTrustedDriveUrl(url: string): boolean {
+  return url.startsWith(DRIVE_API_PREFIX) || DRIVE_UPLOAD_URL.test(url)
+}
+
+/** A path segment for a server-issued file id. */
+function idPath(id: string): string {
+  return encodeURIComponent(id)
+}
+
+/**
+ * A multipart boundary that does not occur in `value`.
+ *
+ * A boundary that does appear in the content ends the part early: whatever
+ * follows it is parsed as another part, so a value containing
+ * `--<boundary>` would be truncated (or reshaped) on the way to Drive.
+ * `Math.random` is predictable enough that a crafted value can aim for it, so
+ * the boundary comes from `crypto.getRandomValues` where available and is
+ * checked against the content either way.
+ */
+function multipartBoundary(value: string): string {
+  for (;;) {
+    const boundary = `rncs-${randomToken()}`
+    if (!value.includes(boundary)) return boundary
+  }
+}
+
+function randomToken(): string {
+  const cryptoImpl = (globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => Uint8Array } }).crypto
+  if (typeof cryptoImpl?.getRandomValues === 'function') {
+    const bytes = cryptoImpl.getRandomValues(new Uint8Array(16))
+    let out = ''
+    for (const b of bytes) out += b.toString(16).padStart(2, '0')
+    return out
+  }
+  let out = ''
+  for (let i = 0; i < 4; i += 1) out += Math.random().toString(36).slice(2)
+  return out
+}
+
+/**
+ * Names per `getItemsWithMeta` listing query. Drive caps the length of `q`;
+ * 50 quoted names stays well inside it even for long keys.
+ */
+const NAMES_PER_QUERY = 50
+
+/**
+ * Escapes a value for a single-quoted Drive query literal. Backslash FIRST, so
+ * it doesn't double-escape the backslash the quote-escaping just added.
+ */
+function escapeQueryLiteral(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, '\\\'')
+}
+
 /** True for the 404 the client tags when a file id no longer resolves. */
 function isNotFound(e: unknown): boolean {
   return e instanceof CloudSyncError && e.serverErrorCode === 'NOT_FOUND'
@@ -156,7 +246,13 @@ function isNotFound(e: unknown): boolean {
 /** True for a transfer failure worth retrying after re-querying the real offset. */
 function isRetryableTransfer(e: unknown): boolean {
   return e instanceof CloudSyncError
-    && (e.code === ErrorCode.NETWORK_UNAVAILABLE || e.code === ErrorCode.RATE_LIMITED)
+    && (
+      e.code === ErrorCode.NETWORK_UNAVAILABLE
+      || e.code === ErrorCode.RATE_LIMITED
+      // A chunk that ran out of time is the most common way a large upload on
+      // a slow link fails, and Drive may well have kept part of it.
+      || e.code === ErrorCode.TIMEOUT
+    )
 }
 
 export class GoogleDriveClient {
@@ -207,6 +303,15 @@ export class GoogleDriveClient {
    * caller inspects the response itself rather than getting a thrown rejection.
    */
   private async request(url: string, init: RequestInit, extraOkStatuses: number[] = []): Promise<Response> {
+    // Checked before the token is even fetched, so it can never be attached to
+    // a request bound anywhere else.
+    if (!isTrustedDriveUrl(url))
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] Refusing to send Google Drive credentials to a URL outside googleapis.com.',
+        { provider: 'googleDrive', serverErrorCode: 'UNTRUSTED_URL' }
+      )
+
     const token = await this.requireToken()
     const headers = new Headers(init.headers)
     headers.set('Authorization', `Bearer ${token}`)
@@ -268,19 +373,33 @@ export class GoogleDriveClient {
         { provider: 'googleDrive' }
       )
     }
-    if (res.status === 429) {
+    if (res.status === 429)
       // The request-frequency case, distinct from the per-user 403 variants
       // above - this one really is a plain 429, no reason string to parse.
-      const retryAfter = Number(res.headers.get('Retry-After'))
       throw new CloudSyncError(
         ErrorCode.RATE_LIMITED,
         '[RNCloudSync] Google Drive rate limited the request.',
         {
           provider: 'googleDrive',
-          retryAfterMs: Number.isFinite(retryAfter) ? retryAfter * 1000 : undefined,
+          retryAfterMs: retryAfterMs(res),
         }
       )
-    }
+
+    if (res.status === 500 || res.status === 502 || res.status === 503 || res.status === 504)
+      // Google documents every one of these as transient ("backend error") and
+      // asks clients to back off and retry - for a resumable upload, to query
+      // the offset and resume. Reporting them as a permanent UNKNOWN made the
+      // outbox drop writes and the chunk retry give up on a passing hiccup.
+      throw new CloudSyncError(
+        ErrorCode.RATE_LIMITED,
+        `[RNCloudSync] Google Drive returned HTTP ${res.status}; retry later.`,
+        {
+          provider: 'googleDrive',
+          serverErrorCode: `HTTP_${res.status}`,
+          retryAfterMs: retryAfterMs(res),
+        }
+      )
+
     // Tagged so callers can tell "this file id is gone" from a generic failure.
     // Without the tag a stale memoised id was indistinguishable from a real
     // error, so it could never be recovered from.
@@ -331,8 +450,7 @@ export class GoogleDriveClient {
     // would otherwise terminate the quoted literal and produce a malformed
     // query - and a literal backslash needs the same treatment, escaped FIRST
     // so it doesn't double-escape the backslash the quote-escaping just added.
-    const escaped = name.replace(/\\/g, '\\\\').replace(/'/g, '\\\'')
-    const q = encodeURIComponent(`name='${escaped}' and trashed=false`)
+    const q = encodeURIComponent(`name='${escapeQueryLiteral(name)}' and trashed=false`)
     const url = `${FILES_URL}?spaces=appDataFolder&q=${q}&fields=files(${FILE_FIELDS})&pageSize=10`
 
     const res = await this.request(url, { method: 'GET' })
@@ -389,11 +507,19 @@ export class GoogleDriveClient {
   }
 
   async getItem(name: string): Promise<string | null> {
-    const id = await this.findFileId(name)
+    return await this.readItem(name, false)
+  }
+
+  /**
+   * `refresh` skips the memoised id and lists the name again, which is also
+   * what refreshes the cached metadata.
+   */
+  private async readItem(name: string, refresh: boolean): Promise<string | null> {
+    const id = await this.findFileId(name, refresh)
     if (id == null) return null
 
     try {
-      const res = await this.request(`${FILES_URL}/${id}?alt=media`, { method: 'GET' })
+      const res = await this.request(`${FILES_URL}/${idPath(id)}?alt=media`, { method: 'GET' })
       return await res.text()
     }
     catch (e) {
@@ -406,7 +532,7 @@ export class GoogleDriveClient {
     const fresh = await this.findFileId(name, true)
     if (fresh == null) return null
 
-    const res = await this.request(`${FILES_URL}/${fresh}?alt=media`, { method: 'GET' })
+    const res = await this.request(`${FILES_URL}/${idPath(fresh)}?alt=media`, { method: 'GET' })
     return await res.text()
   }
 
@@ -421,10 +547,92 @@ export class GoogleDriveClient {
   async getItemWithMeta(
     name: string
   ): Promise<{ value: string; modifiedAt?: number; version?: string } | null> {
-    const value = await this.getItem(name)
+    // Always re-listed. The cached metadata is whatever the last listing saw,
+    // which can be arbitrarily old once another device has written - and a
+    // stale `modifiedAt` is exactly what makes a modified-time resolver rank
+    // a newer copy below an older one. One extra request is the price.
+    const value = await this.readItem(name, true)
     if (value == null) return null
     const meta = this.metaCache.get(name)
     return { value, modifiedAt: meta?.modifiedAt, version: meta?.version }
+  }
+
+  /**
+   * {@link getItemWithMeta} for many names, with the metadata from one listing
+   * per batch of names rather than one per name.
+   *
+   * Drive has no batch endpoint for content, so each value is still its own
+   * download - but the id lookup, which is also where `modifiedTime` comes
+   * from, collapses into `(name='a' or name='b' ...)` queries. Results line up
+   * with `names`; a name with no file is `null`.
+   */
+  async getItemsWithMeta(
+    names: string[]
+  ): Promise<({ value: string; modifiedAt?: number; version?: string } | null)[]> {
+    if (names.length === 0) return []
+
+    const wanted = [...new Set(names)]
+    const byName = new Map<string, DriveFile[]>()
+
+    for (let i = 0; i < wanted.length; i += NAMES_PER_QUERY) {
+      const batch = wanted.slice(i, i + NAMES_PER_QUERY)
+      const clause = batch.map(n => `name='${escapeQueryLiteral(n)}'`).join(' or ')
+      let pageToken: string | undefined
+      do {
+        const params = new URLSearchParams({
+          spaces: 'appDataFolder',
+          q: `(${clause}) and trashed=false`,
+          fields: `nextPageToken,files(${FILE_FIELDS})`,
+          pageSize: '1000',
+        })
+        if (pageToken != null) params.set('pageToken', pageToken)
+        const res = await this.request(`${FILES_URL}?${params.toString()}`, { method: 'GET' })
+        const json = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string }
+        for (const f of json.files ?? []) {
+          // `name=` is exact server-side, but filter anyway, as `findFileId` does.
+          if (!batch.includes(f.name)) continue
+          const group = byName.get(f.name)
+          if (group == null) byName.set(f.name, [f])
+          else group.push(f)
+        }
+        pageToken = json.nextPageToken
+      } while (pageToken != null)
+    }
+
+    const results = new Map<string, { value: string; modifiedAt?: number; version?: string } | null>()
+    for (const name of wanted) {
+      const files = byName.get(name)
+      if (files == null) {
+        this.idCache.delete(name)
+        this.metaCache.delete(name)
+        results.set(name, null)
+        continue
+      }
+
+      const file = files.length === 1 ? files[0] : this.pickAmongDuplicates(name, files)
+      this.remember(file)
+
+      let value: string | null
+      try {
+        const res = await this.request(`${FILES_URL}/${idPath(file.id)}?alt=media`, { method: 'GET' })
+        value = await res.text()
+      }
+      catch (e) {
+        // Deleted between the listing and the download: re-resolve this one
+        // name the slow way rather than failing the whole batch.
+        if (!isNotFound(e)) throw e
+        value = await this.readItem(name, true)
+      }
+
+      if (value == null) {
+        results.set(name, null)
+        continue
+      }
+      const meta = this.metaCache.get(name)
+      results.set(name, { value, modifiedAt: meta?.modifiedAt, version: meta?.version })
+    }
+
+    return names.map(n => results.get(n) ?? null)
   }
 
   /**
@@ -453,11 +661,18 @@ export class GoogleDriveClient {
 
     if (id != null)
       try {
-        await this.request(`${UPLOAD_URL}/${id}?uploadType=media`, {
+        const res = await this.request(`${UPLOAD_URL}/${idPath(id)}?uploadType=media&fields=${FILE_FIELDS}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: value,
         })
+        // The update bumped `modifiedTime`/`version`. Leaving the pre-write
+        // metadata cached made the next `getItemWithMeta` report this device's
+        // own fresh write with the old timestamp - which is exactly what a
+        // modified-time resolver then ranks below an older copy elsewhere.
+        const json = (await res.json().catch(() => null)) as Partial<DriveFile> | null
+        if (json?.id != null) this.remember({ ...json, id: json.id, name })
+        else this.metaCache.delete(name)
         return
       }
       catch (e) {
@@ -470,7 +685,7 @@ export class GoogleDriveClient {
 
     // Multipart create: metadata part pins the file into appDataFolder, second
     // part carries the content.
-    const boundary = `rncs-${Math.random().toString(36).slice(2)}`
+    const boundary = multipartBoundary(value)
     const metadata = JSON.stringify({ name, parents: ['appDataFolder'] })
     const body
       = `--${boundary}\r\n`
@@ -578,7 +793,12 @@ export class GoogleDriveClient {
   ): Promise<{ sessionUrl: string; offset: number; completed: boolean; id?: string }> {
     const persisted = await this.config.sessionStore?.get(name)
 
-    if (persisted != null && persisted.size === total)
+    if (
+      persisted != null
+      && persisted.size === total
+      && typeof persisted.sessionUrl === 'string'
+      && isTrustedDriveUrl(persisted.sessionUrl)
+    )
       try {
         const { offset, id } = await this.queryUploadOffset(persisted.sessionUrl, total)
         return { sessionUrl: persisted.sessionUrl, offset, completed: offset >= total, id }
@@ -588,14 +808,24 @@ export class GoogleDriveClient {
       }
 
     const existingId = await this.findFileId(name)
-    const sessionUrl = await this.startResumableSession(name, existingId)
+    let sessionUrl: string
+    try {
+      sessionUrl = await this.startResumableSession(name, existingId)
+    }
+    catch (e) {
+      // A memoised id for a file another device has since deleted. Look the
+      // name up again (and create it if it really is gone) rather than failing
+      // every later upload of this name off the stale memo.
+      if (existingId == null || !isNotFound(e)) throw e
+      sessionUrl = await this.startResumableSession(name, await this.findFileId(name, true))
+    }
     await this.config.sessionStore?.set(name, { sessionUrl, size: total })
     return { sessionUrl, offset: 0, completed: false }
   }
 
   private async startResumableSession(name: string, existingId: string | null): Promise<string> {
     const url = existingId != null
-      ? `${UPLOAD_URL}/${existingId}?uploadType=resumable`
+      ? `${UPLOAD_URL}/${idPath(existingId)}?uploadType=resumable`
       : `${UPLOAD_URL}?uploadType=resumable&fields=id`
     const metadata = existingId != null ? {} : { name, parents: ['appDataFolder'] }
 
@@ -611,6 +841,13 @@ export class GoogleDriveClient {
         ErrorCode.UNKNOWN,
         '[RNCloudSync] Google Drive did not return a resumable session URI.',
         { provider: 'googleDrive' }
+      )
+    // Persisted and later sent the bearer token, so it has to be a Drive URL.
+    if (!isTrustedDriveUrl(location))
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] Google Drive returned a resumable session URI outside googleapis.com.',
+        { provider: 'googleDrive', serverErrorCode: 'UNTRUSTED_URL' }
       )
 
     return location
@@ -652,6 +889,14 @@ export class GoogleDriveClient {
     onProgress?: (bytesTransferred: number, bytesTotal: number) => void
   ): Promise<{ nextOffset: number; id?: string }> {
     const bytes = await source.read(offset, length)
+    // A source that hands back nothing for a non-empty range would otherwise
+    // never advance the offset, and `uploadFile` would loop forever.
+    if (length > 0 && bytes.length === 0)
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        `[RNCloudSync] The upload source returned no bytes at offset ${offset} of ${total}.`,
+        { provider: 'googleDrive' }
+      )
     const range = total === 0 ? 'bytes */0' : `bytes ${offset}-${offset + bytes.length - 1}/${total}`
 
     const res = await this.request(sessionUrl, {
@@ -663,8 +908,13 @@ export class GoogleDriveClient {
       body: bytes as BodyInit,
     }, [308])
 
-    const nextOffset = offset + bytes.length
     if (res.status === 308) {
+      // Drive may persist fewer bytes than were sent, and says so in `Range`.
+      // Resuming from `offset + bytes.length` regardless would skip whatever it
+      // dropped and leave a hole in the uploaded file. Only fall back to the
+      // sent length when the header is missing entirely.
+      const persisted = parsePersistedRange(res.headers.get('Range'))
+      const nextOffset = persisted ?? offset + bytes.length
       onProgress?.(nextOffset, total)
       return { nextOffset }
     }
@@ -696,11 +946,7 @@ export class GoogleDriveClient {
       return { offset: total, id: json?.id ?? undefined }
     }
 
-    const range = res.headers.get('Range') // "bytes=0-8388607"
-    if (range == null) return { offset: 0 }
-
-    const match = /bytes=0-(\d+)/.exec(range)
-    return { offset: match ? Number(match[1]) + 1 : 0 }
+    return { offset: parsePersistedRange(res.headers.get('Range')) ?? 0 }
   }
 
   /**
@@ -716,10 +962,22 @@ export class GoogleDriveClient {
     signal?: AbortLike
   ): Promise<boolean> {
     throwIfAborted(signal, 'googleDrive')
-    const id = await this.findFileId(name)
+    let id = await this.findFileId(name)
     if (id == null) return false
 
-    const total = await this.fileSize(id)
+    let total: number
+    try {
+      total = await this.fileSize(id)
+    }
+    catch (e) {
+      // Same stale-memo case `getItem` recovers from: another device deleted
+      // (or replaced) the file. Without this every later download of the name
+      // failed off the cached id until the app restarted.
+      if (!isNotFound(e)) throw e
+      id = await this.findFileId(name, true)
+      if (id == null) return false
+      total = await this.fileSize(id)
+    }
 
     if (total === 0) {
       await sink.write(new Uint8Array(0), true)
@@ -732,11 +990,18 @@ export class GoogleDriveClient {
     while (offset < total) {
       throwIfAborted(signal, 'googleDrive')
       const end = Math.min(offset + this.chunkBytes, total) - 1
-      const res = await this.request(`${FILES_URL}/${id}?alt=media`, {
+      const res = await this.request(`${FILES_URL}/${idPath(id)}?alt=media`, {
         method: 'GET',
         headers: { Range: `bytes=${offset}-${end}` },
       })
       const bytes = new Uint8Array(await res.arrayBuffer())
+      // Same guard as the upload side: an empty body would never advance.
+      if (bytes.length === 0)
+        throw new CloudSyncError(
+          ErrorCode.UNKNOWN,
+          `[RNCloudSync] Google Drive returned no bytes at offset ${offset} of ${total}.`,
+          { provider: 'googleDrive' }
+        )
       await sink.write(bytes, isFirstChunk)
       isFirstChunk = false
       offset += bytes.length
@@ -747,9 +1012,20 @@ export class GoogleDriveClient {
   }
 
   private async fileSize(id: string): Promise<number> {
-    const res = await this.request(`${FILES_URL}/${id}?fields=size`, { method: 'GET' })
+    const res = await this.request(`${FILES_URL}/${idPath(id)}?fields=size`, { method: 'GET' })
     const json = (await res.json()) as { size?: string }
-    return json.size != null ? Number(json.size) : 0
+    if (json.size == null) return 0
+    const size = Number(json.size)
+    // A size that is not a non-negative integer would make the chunk loop
+    // either never run - reporting a download that wrote nothing as complete -
+    // or compute nonsense ranges.
+    if (!Number.isSafeInteger(size) || size < 0)
+      throw new CloudSyncError(
+        ErrorCode.UNKNOWN,
+        '[RNCloudSync] Google Drive reported an invalid file size.',
+        { provider: 'googleDrive' }
+      )
+    return size
   }
 
   async removeItem(name: string): Promise<void> {
@@ -758,7 +1034,7 @@ export class GoogleDriveClient {
     if (id == null) return
 
     try {
-      await this.request(`${FILES_URL}/${id}`, { method: 'DELETE' })
+      await this.request(`${FILES_URL}/${idPath(id)}`, { method: 'DELETE' })
     }
     catch (e) {
       // Deleted from under us: the end state the caller asked for already holds.
@@ -771,7 +1047,7 @@ export class GoogleDriveClient {
   }
 
   async getAllKeys(): Promise<string[]> {
-    const names: string[] = []
+    const byName = new Map<string, DriveFile[]>()
     let pageToken: string | undefined
 
     // Paginate rather than assuming one page holds everything.
@@ -788,13 +1064,31 @@ export class GoogleDriveClient {
       const json = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string }
 
       for (const f of json.files ?? []) {
-        names.push(f.name)
-        this.remember(f)
+        const group = byName.get(f.name)
+        if (group == null) byName.set(f.name, [f])
+        else group.push(f)
       }
       pageToken = json.nextPageToken
     } while (pageToken != null)
 
-    return names
+    // Drive names are not unique. Memoising whichever duplicate happened to be
+    // listed last bypassed `pickAmongDuplicates` entirely - the next `getItem`
+    // served that arbitrary file from the cache - and the same key came back
+    // once per copy.
+    for (const [name, files] of byName)
+      if (files.length === 1) {
+        this.remember(files[0])
+      }
+      else if (this.config.onDuplicateName !== 'error') {
+        this.remember(this.pickAmongDuplicates(name, files))
+      }
+      else {
+        // Leave it uncached so the next read raises the CONFLICT itself.
+        this.idCache.delete(name)
+        this.metaCache.delete(name)
+      }
+
+    return [...byName.keys()]
   }
 
   /**
@@ -805,7 +1099,10 @@ export class GoogleDriveClient {
    */
   async getStartPageToken(): Promise<string> {
     const res = await this.request(
-      `${CHANGES_URL}/startPageToken?spaces=appDataFolder`,
+      // No `spaces` here: `changes.getStartPageToken` takes only the shared
+      // drive parameters. The cursor covers every space; `changes.list` is
+      // where `spaces=appDataFolder` scopes the feed.
+      `${CHANGES_URL}/startPageToken`,
       { method: 'GET' }
     )
     const json = (await res.json()) as { startPageToken?: string }
@@ -863,10 +1160,14 @@ export class GoogleDriveClient {
           // A file that went away must not keep answering reads from the id
           // cache, and one that changed must be re-read rather than served
           // from a stale memo.
-          if (change.removed === true || change.file?.trashed === true) {
-            this.idCache.delete(name)
-            this.metaCache.delete(name)
-          }
+          // Dropped on every change, not only a removal. A changed file keeps
+          // its id but not its cached modification time, and a change to a
+          // *different* file under a cached name - another device created a
+          // same-named copy - has to go back through the listing or the
+          // duplicate resolution never runs and this device keeps reading its
+          // old copy forever. One listing on the next read is the cost.
+          this.idCache.delete(name)
+          this.metaCache.delete(name)
           continue
         }
 

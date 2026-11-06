@@ -49,7 +49,7 @@ Deploy that to Production too - without it `getAllKeys()` rejects, and since [`m
 
 ## Setup on Apple platforms
 
-Entitlements only, plus [the schema](#the-schema) above - the container identifier is read from entitlements at runtime, so it never needs repeating in JavaScript and can't drift out of sync. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
+Entitlements plus [the schema](#the-schema) above. The container identifier never needs repeating in JavaScript: the Expo config plugin writes it to `Info.plist` as `RNCloudSyncContainerIdentifier`, and a bare project adds that key by hand. Without it CloudKit is disabled - every call rejects with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` resolves false; nothing falls back to `iCloud.<bundle id>`. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
 
 ## Setup on Android and web
 
@@ -101,6 +101,16 @@ const names = await cloudKit.getAllKeys()
 
 Records are stored with the record name as the key, so both platforms fetch by name directly (no query, no index needed) except `getAllKeys()`, which queries and needs [the `recordName` index](#getallkeys-needs-an-index).
 
+Keys starting with `rncs-enc.` are reserved: that is [`cloudKitEncrypted`'s record-name prefix](../encryption.md#cloudkits-native-encryption), and CloudKit record names are unique across record types, so `cloudKit` rejects them with `ERR_INVALID_KEY` and leaves them out of `getAllKeys()`.
+
+Natively, identifiers CloudKit would crash on reject with `ERR_INVALID_KEY` instead:
+
+- record and zone names: 1 to 255 characters (UTF-16 units)
+- record types and field names: ASCII letters, digits and `_`, not starting with a digit, at most 255 characters (249 for an asset field, to leave room for `__size`)
+- field names CloudKit reserves for metadata (`recordID`, `recordType`, `creationDate`, `creatorUserRecordID`, `modificationDate`, `lastModifiedUserRecordID`, `recordChangeTag`)
+
+A read checks the record type too: a record under the requested name that is not a `KVBlob` (another type sharing the name) rejects with `ERR_INVALID_KEY`, on native and REST alike, rather than being read as this key's value.
+
 Concurrent writes resolve last-write-wins, identically on native (`.changedKeys`) and over REST (`forceUpdate`), so two devices cannot deadlock on a change-tag conflict.
 
 ## Custom zones
@@ -146,6 +156,13 @@ Progress is reported per record, so it can be attributed when several transfers 
 
 Assets are an explicit API, not something the [store facade](../store.md) routes to automatically - you pass a file path, not a string.
 
+A few rules:
+
+- `recordName` must not start with `rncs-enc.`, the same [reserved prefix](#records) as `cloudKit` keys; `save` and `fetch` reject it with `ERR_INVALID_KEY`.
+- Natively, `destinationUri` must name a file. An existing file there is replaced; a directory is never deleted, and the call rejects instead. A symlink is replaced as a link, its target is left alone.
+- Without `destinationUri` (native only), the file lands at `tmp/rncs-asset-<hash>`, one stable name per zone, record and field. iOS may clear it at any time, so copy it somewhere permanent before keeping it.
+- Over REST, asset upload and download URLs from CloudKit must be HTTPS. Anything else rejects with `ERR_UNKNOWN` and `serverErrorCode: 'UNTRUSTED_URL'`.
+
 ### On Android and web
 
 `save`/`fetch` go through CloudKit Web Services' own asset-upload protocol - request a single-use upload URL, POST the bytes, attach the returned descriptor to the record. Three things follow:
@@ -179,6 +196,32 @@ The download side reports real progress from the first callback, not just at com
 
 Same platform behavior as `cloudKitAssets` above, including the 15 MB cap on Android/web - a database export near that size needs [`googleDriveFiles`](google-drive.md#large-files) instead, and `restore()` without `destinationUri` needs a native module. [Recipes](../recipes.md#cross-platform-large-file-backup) pairs the two behind one function.
 
+## Availability and account state
+
+```ts
+// False when not signed in, restricted, or no container is declared.
+if (!(await cloudKit.isAvailable()))
+  return
+
+const status = await cloudKit.getAccountStatus()
+// 'available' | 'noAccount' | 'restricted'
+// 'temporarilyUnavailable' | 'couldNotDetermine'
+```
+
+Natively, all five states ([`CKAccountStatus`][ckstatus]), not a boolean: `temporarilyUnavailable` means retry silently, `noAccount` means prompt the user, `couldNotDetermine` means do nothing yet. Without a [declared container](#setup-on-apple-platforms), `getAccountStatus()` rejects with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` resolves false.
+
+Over REST there is no account-status endpoint, so `getAccountStatus()` reports `available` once `configureCloudKit` has been called and `noAccount` before.
+
+## Errors specific to CloudKit
+
+| Code | Cause |
+|---|---|
+| `ERR_AUTH_EXPIRED` | REST `AUTHENTICATION_REQUIRED` / `AUTHENTICATION_FAILED`; `onAuthExpired` fires |
+| `ERR_CONTAINER_MISCONFIGURED` | No declared container natively; REST `BAD_REQUEST` / `ZONE_NOT_FOUND`; or REST `ACCESS_DENIED` - the user lacks rights to the record type, zone or database (security roles in the Console). Not an auth failure, so `onAuthExpired` doesn't fire and nobody is signed out |
+| `ERR_ACCOUNT_UNAVAILABLE` | `CKError.accountTemporarilyUnavailable` |
+
+A single-record native write or fetch that fails inside a `partialFailure` reports the underlying record's error - quota, size limit, conflict - with its `retryAfterMs` and `serverValue`, not `ERR_UNKNOWN`. See [Error handling](../errors.md).
+
 ## Events
 
 ```ts
@@ -211,6 +254,7 @@ The REST path needs no crypto - two query parameters on a `fetch` - so it's unaf
 [ckauth]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/SettingUpWebServices.html
 [cklimits]: https://developer.apple.com/library/archive/documentation/DataManagement/Conceptual/CloudKitWebServicesReference/PropertyMetrics.html
 [console]: https://icloud.developer.apple.com/dashboard/
+[ckstatus]: https://developer.apple.com/documentation/cloudkit/ckaccountstatus
 
 ## Batching
 

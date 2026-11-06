@@ -6,6 +6,7 @@ import { byteLength } from './internal/bytes'
 import { assertKey } from './internal/keys'
 import { withTimeout } from './internal/timeout'
 import { attachAutoFlush } from './internal/autoFlush'
+import { clampRetryAfterMs, setOwn } from './internal/records'
 import { CloudSyncError, ErrorCode, isRetryable, normalizeError } from './errors'
 import {
   DEFAULT_TIERING,
@@ -20,6 +21,7 @@ import {
   type QuotaInfo,
   type RemoteChangeEvent,
   type ResolveCandidate,
+  type ResolveFn,
   type TieringConfig,
   type Unsubscribe,
   type ValueCodec,
@@ -45,20 +47,16 @@ export interface OutboxStorage {
 const OUTBOX_KEY = 'rncs.outbox.v1'
 
 /**
- * Identity of a queued write: one entry per (provider, key).
+ * Providers whose queued writes are never handed to `outboxStorage`.
  *
- * A single helper rather than a template literal at each site, because the two
- * places that build it have to agree exactly - when they did not, a flush
- * failed to recognise the entries it had just processed and wrote every one of
- * them straight back, so a drained queue never shrank.
- *
- * The separator is an escaped NUL, which cannot appear in a provider name or a
- * key, so the two halves can never run together and make two different pairs
- * collide.
+ * `cloudKitEncrypted` encrypts on device, inside the native layer, so the value
+ * the store hands it is the app's plaintext. Persisting a failed write to the
+ * durable outbox - typically an unencrypted MMKV or AsyncStorage file - would
+ * leave exactly the data the app chose end-to-end encryption for sitting on
+ * disk in the clear, for up to `outboxMaxAgeMs`. Those entries are queued in
+ * memory instead: retried for as long as the process lives, lost on restart.
  */
-function outboxId(provider: ProviderName, key: string): string {
-  return `${provider}\u0000${key}`
-}
+const MEMORY_ONLY_OUTBOX_PROVIDERS: ReadonlySet<string> = new Set(['cloudKitEncrypted'])
 
 const DEFAULT_OUTBOX_MAX_ENTRIES = 1000
 const DEFAULT_OUTBOX_MAX_ATTEMPTS = 12
@@ -306,20 +304,55 @@ export function createCloudStore(
 
   // ---------------------------------------------------------------- outbox
 
+  /** Queued writes that must not reach durable storage - see {@link MEMORY_ONLY_OUTBOX_PROVIDERS}. */
+  let volatileOutbox: OutboxEntry[] = []
+
   function readOutbox(): OutboxEntry[] {
+    return [...readDurableOutbox(), ...volatileOutbox]
+  }
+
+  function readDurableOutbox(): OutboxEntry[] {
     const raw = storage.getString(OUTBOX_KEY)
     if (raw == null) return []
     try {
       const parsed: unknown = JSON.parse(raw)
-      return Array.isArray(parsed) ? (parsed as OutboxEntry[]) : []
+      // Entry by entry: one malformed record in a shared storage file must not
+      // throw on every later write path that reads the queue.
+      return Array.isArray(parsed)
+        ? parsed.filter(isOutboxEntry).filter(e => !MEMORY_ONLY_OUTBOX_PROVIDERS.has(e.provider))
+        : []
     }
     catch {
       return []
     }
   }
 
+  /**
+   * Bumped on every rewrite, so a flush can tell cheaply whether the queue
+   * changed under it while it was awaiting the network.
+   */
+  let outboxVersion = 0
+
   function writeOutbox(entries: OutboxEntry[]): void {
-    storage.set(OUTBOX_KEY, JSON.stringify(entries))
+    outboxVersion += 1
+    volatileOutbox = entries.filter(e => MEMORY_ONLY_OUTBOX_PROVIDERS.has(e.provider))
+    storage.set(
+      OUTBOX_KEY,
+      JSON.stringify(entries.filter(e => !MEMORY_ONLY_OUTBOX_PROVIDERS.has(e.provider)))
+    )
+  }
+
+  // An earlier version persisted these entries like any other. Move them into
+  // memory and rewrite the durable copy without them, so plaintext a previous
+  // run left on disk does not outlive this one.
+  try {
+    const raw = storage.getString(OUTBOX_KEY)
+    const parsed: unknown = raw == null ? null : JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.some(e => isOutboxEntry(e) && MEMORY_ONLY_OUTBOX_PROVIDERS.has(e.provider)))
+      writeOutbox(parsed.filter(isOutboxEntry))
+  }
+  catch {
+    // Unreadable storage is handled - as an empty queue - by readOutbox.
   }
 
   function reportDropped(entry: OutboxEntry, reason: DropReason, error?: CloudSyncError): void {
@@ -378,6 +411,55 @@ export function createCloudStore(
     if (kept.length !== entries.length) writeOutbox(kept)
   }
 
+  // ------------------------------------------------------- per-key ordering
+
+  /**
+   * Serialises every operation on one (provider, key) pair.
+   *
+   * Without it a flush could be re-sending a queued v1 while a newer direct
+   * `setItem(k, v2)` ran alongside it, and whichever request the server saw
+   * last won - so v1 could land on top of v2. Holding the pair for the whole
+   * of "send, then update the outbox" makes the two strictly ordered: either
+   * the flush sends v1 first and v2 lands after it, or v2 lands first, drops
+   * the queued v1, and the flush finds nothing left to send.
+   *
+   * A batch takes every pair it touches at once. Waiters only ever wait on
+   * holders registered before them, so this cannot deadlock - but nothing
+   * holding a pair may try to take the same pair again.
+   *
+   * With `timeoutMs`, a timed-out request releases the pair while the request
+   * itself may still be in flight; a promise cannot be cancelled.
+   */
+  const keyLocks = new Map<string, Promise<void>>()
+
+  async function withKeys<T>(
+    provider: ProviderName,
+    keys: string[],
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const ids = [...new Set(keys)].map(k => `${provider}\u0000${k}`)
+    const before: Promise<void>[] = []
+    for (const id of ids) {
+      const held = keyLocks.get(id)
+      if (held != null) before.push(held)
+    }
+
+    let release!: () => void
+    const mine = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    for (const id of ids) keyLocks.set(id, mine)
+
+    try {
+      if (before.length > 0) await Promise.all(before)
+      return await fn()
+    }
+    finally {
+      release()
+      for (const id of ids) if (keyLocks.get(id) === mine) keyLocks.delete(id)
+    }
+  }
+
   // ------------------------------------------------------------ size rules
 
   /**
@@ -390,7 +472,9 @@ export function createCloudStore(
   function limitFor(provider: CloudProvider): number | null {
     if (tiering == null) return null
     if (provider.name === 'icloudKV') return tiering.kvMaxBytes
-    if (provider.name === 'cloudKit') return tiering.recordMaxBytes
+    // Encrypted records are still CKRecords, under the same 1 MB ceiling.
+    if (provider.name === 'cloudKit' || provider.name === 'cloudKitEncrypted')
+      return tiering.recordMaxBytes
     return null
   }
 
@@ -447,6 +531,29 @@ export function createCloudStore(
     return out
   }
 
+  /**
+   * A batched read for a resolver, with server timestamps when the resolver
+   * uses them - so `multiGet` resolves exactly as `getItem` does. Stays one
+   * request per provider when the resolver ignores timestamps, or when the
+   * provider can batch them.
+   */
+  async function readBatchForResolve(
+    p: CloudProvider,
+    keys: string[],
+    withMeta: boolean
+  ): Promise<(ItemWithMeta | null)[]> {
+    if (withMeta) {
+      if (p.multiGetWithMeta != null) return await run(p, () => p.multiGetWithMeta!(keys))
+      if (p.getItemWithMeta != null) {
+        const out: (ItemWithMeta | null)[] = []
+        for (const key of keys) out.push(await readOne(p, key))
+        return out
+      }
+    }
+    const values = await readBatch(p, keys)
+    return values.map(value => (value == null ? null : { value }))
+  }
+
   async function writeBatch(p: CloudProvider, entries: [string, string][]): Promise<void> {
     if (entries.length === 0) return
     if (p.multiSet != null) {
@@ -467,22 +574,57 @@ export function createCloudStore(
 
   // ---------------------------------------------------------------- writes
 
-  /** Single-destination write, queueing a retryable failure. */
-  async function writeOne(target: CloudProvider, key: string, value: string): Promise<void> {
-    try {
-      await run(target, () => target.setItem(key, value))
-      // This write supersedes anything queued for the same destination.
-      dequeue(key, target.name)
-    }
-    catch (e) {
-      const err = normalizeError(e, target.name)
-      if (useOutbox && isRetryable(err)) {
-        enqueue(key, value, target.name, err.code)
-        options.onError?.(err)
-        return
+  /**
+   * Single-destination write, queueing a retryable failure. Resolves true when
+   * the value landed, false when it was queued instead.
+   */
+  async function writeOne(target: CloudProvider, key: string, value: string): Promise<boolean> {
+    return await withKeys(target.name, [key], async () => {
+      try {
+        await run(target, () => target.setItem(key, value))
+        // This write supersedes anything queued for the same destination.
+        dequeue(key, target.name)
+        return true
       }
-      throw err
-    }
+      catch (e) {
+        const err = normalizeError(e, target.name)
+        if (useOutbox && isRetryable(err)) {
+          enqueue(key, value, target.name, err.code)
+          options.onError?.(err)
+          return false
+        }
+        throw err
+      }
+    })
+  }
+
+  /**
+   * One destination's share of a multi-destination operation, under that
+   * destination's lock. Resolves 'done' or 'queued', or the fatal error -
+   * already reported through `onError` - for the caller to weigh.
+   */
+  async function attempt(
+    target: CloudProvider,
+    keys: string[],
+    send: () => Promise<void>,
+    queued: (string | null)[]
+  ): Promise<'done' | 'queued' | CloudSyncError> {
+    return await withKeys(target.name, keys, async () => {
+      try {
+        await run(target, send)
+        dequeueMany(keys, target.name)
+        return 'done' as const
+      }
+      catch (e) {
+        const err = normalizeError(e, target.name)
+        options.onError?.(err)
+        if (useOutbox && isRetryable(err)) {
+          keys.forEach((key, i) => enqueue(key, queued[i], target.name, err.code))
+          return 'queued' as const
+        }
+        return err
+      }
+    })
   }
 
   /**
@@ -502,15 +644,17 @@ export function createCloudStore(
   ): Promise<void> {
     for (const target of targets) {
       if (canHold(target, value)) continue
-      try {
-        await run(target, () => target.removeItem(key))
-        dequeue(key, target.name)
-      }
-      catch (e) {
-        // Best effort. A stale copy left behind is reported, not fatal - the
-        // value itself did land somewhere.
-        options.onError?.(normalizeError(e, target.name))
-      }
+      await withKeys(target.name, [key], async () => {
+        try {
+          await run(target, () => target.removeItem(key))
+          dequeue(key, target.name)
+        }
+        catch (e) {
+          // Best effort. A stale copy left behind is reported, not fatal - the
+          // value itself did land somewhere.
+          options.onError?.(normalizeError(e, target.name))
+        }
+      })
     }
   }
 
@@ -547,22 +691,11 @@ export function createCloudStore(
     let stored = 0
     let fatal: CloudSyncError | null = null
 
-    for (const target of eligible)
-      try {
-        await run(target, () => target.setItem(key, value))
-        dequeue(key, target.name)
-        stored += 1
-      }
-      catch (e) {
-        const err = normalizeError(e, target.name)
-        if (useOutbox && isRetryable(err)) {
-          enqueue(key, value, target.name, err.code)
-          options.onError?.(err)
-          continue
-        }
-        fatal ??= err
-        options.onError?.(err)
-      }
+    for (const target of eligible) {
+      const outcome = await attempt(target, [key], () => target.setItem(key, value), [value])
+      if (outcome === 'done') stored += 1
+      else if (outcome !== 'queued') fatal ??= outcome
+    }
 
     // Only once the value has a home somewhere: dropping the old copy first
     // would open a window in which the key exists nowhere.
@@ -583,22 +716,11 @@ export function createCloudStore(
     let removed = 0
     let fatal: CloudSyncError | null = null
 
-    for (const target of targets)
-      try {
-        await run(target, () => target.removeItem(key))
-        dequeue(key, target.name)
-        removed += 1
-      }
-      catch (e) {
-        const err = normalizeError(e, target.name)
-        if (useOutbox && isRetryable(err)) {
-          enqueue(key, null, target.name, err.code)
-          options.onError?.(err)
-          continue
-        }
-        fatal ??= err
-        options.onError?.(err)
-      }
+    for (const target of targets) {
+      const outcome = await attempt(target, [key], () => target.removeItem(key), [null])
+      if (outcome === 'done') removed += 1
+      else if (outcome !== 'queued') fatal ??= outcome
+    }
 
     if (removed === 0 && fatal != null) throw fatal
   }
@@ -609,8 +731,21 @@ export function createCloudStore(
    *
    * A provider the winner no longer fits in has its stale copy removed instead
    * of being silently left holding it - see {@link evictWhereTooLarge}.
+   *
+   * The outbox is consulted per provider, under that provider's lock for the
+   * key. A queued write there is this device's own pending value, so it is
+   * weighed as one more candidate:
+   *
+   *   - if the resolver still prefers the winner, the queued write is older
+   *     news - it is dropped once the repair lands, or the next flush would
+   *     put it back on top of the repaired value;
+   *   - if the resolver prefers the queued value, that provider is left alone
+   *     and the outbox delivers it;
+   *   - a queued delete is left to land, since repairing would resurrect a
+   *     value the user removed.
    */
   async function repair(
+    resolve: ResolveFn,
     key: string,
     winner: string,
     candidates: ResolveCandidate[],
@@ -619,27 +754,55 @@ export function createCloudStore(
     const byProvider = new Map(candidates.map(c => [c.provider, c.value]))
     const stored = await encode(key, winner)
 
-    for (const [name, provider] of reachable) {
-      if (byProvider.get(name) === winner) continue
-
-      if (!canHold(provider, stored)) {
-        if (!byProvider.has(name)) continue
+    for (const [name, provider] of reachable)
+      await withKeys(name, [key], async () => {
         try {
-          await run(provider, () => provider.removeItem(key))
+          const queued = readOutbox().find(e => e.provider === name && e.key === key)
+          if (queued != null) {
+            if (queued.value == null) return
+            const pending = await decode(key, queued.value)
+            const pick = resolve([
+              ...candidates,
+              { provider: name, value: pending, modifiedAt: queued.enqueuedAt },
+            ])
+            if (pick !== winner) return
+          }
+
+          if (byProvider.get(name) !== winner)
+            if (canHold(provider, stored)) {
+              await run(provider, () => provider.setItem(key, stored))
+            }
+            else {
+              if (!byProvider.has(name)) return
+              await run(provider, () => provider.removeItem(key))
+            }
+
+          if (queued != null) dequeue(key, name)
         }
         catch (e) {
           options.onError?.(normalizeError(e, name))
         }
-        continue
-      }
+      })
+  }
 
-      try {
-        await run(provider, () => provider.setItem(key, stored))
-      }
-      catch (e) {
-        options.onError?.(normalizeError(e, name))
-      }
-    }
+  /** Resolves one key's candidates and, if configured, starts read repair. */
+  function settle(
+    resolve: ResolveFn,
+    key: string,
+    candidates: ResolveCandidate[],
+    reachable: Map<ProviderName, CloudProvider>
+  ): string | null {
+    const winner = resolve(candidates)
+    if (winner == null) return null
+
+    // Best-effort convergence. Never fails the read - the caller already has
+    // the right answer, and a failed repair only costs another resolve later.
+    if (repairOnRead)
+      void repair(resolve, key, winner, candidates, reachable).catch((e: unknown) => {
+        options.onError?.(normalizeError(e))
+      })
+
+    return winner
   }
 
   // ---------------------------------------------------------------- events
@@ -813,13 +976,8 @@ export function createCloudStore(
       return { found: false, value: null, reachedAny }
     }
 
-    const winner = resolveValue(candidates)
+    const winner = settle(resolveValue, key, candidates, reachable)
     if (winner == null) return { found: false, value: null, reachedAny }
-
-    // Best-effort convergence. Never fails the read - the caller already has
-    // the right answer, and a failed repair only costs another resolve later.
-    if (repairOnRead) void repair(key, winner, candidates, reachable)
-
     return { found: true, value: winner, reachedAny }
   }
 
@@ -841,8 +999,13 @@ export function createCloudStore(
       const stored = await encode(key, value)
 
       if (writeMode === 'failover') {
-        const target = await providerForSize(stored, await primary())
-        await writeOne(target, key, stored)
+        const preferred = await primary()
+        const target = await providerForSize(stored, preferred)
+        const landed = await writeOne(target, key, stored)
+        // Tiering routed the value past the preferred provider, which may still
+        // hold an older, smaller copy - and reads reach that one first. Without
+        // this, a value that grows past `kvMaxBytes` reads back stale forever.
+        if (landed && target !== preferred) await evictWhereTooLarge([preferred], key, stored)
         return
       }
       await writeMany(await allAvailable(), key, stored)
@@ -850,11 +1013,12 @@ export function createCloudStore(
 
     removeItem: async (key: string) => {
       checkKey(key)
-      // A mirrored write must be a mirrored delete. Removing from only the
-      // preferred provider would leave a copy behind that reads then fall
-      // through to and resurrect.
-      const targets = writeMode === 'mirror' ? await allAvailable() : [await primary()]
-      await removeMany(targets, key)
+      // A delete has to reach every provider reads fall through to, in both
+      // modes. Mirror wrote everywhere; failover may have written to a later
+      // provider too - because the preferred one was down at the time, or
+      // because tiering routed a large value past it. Removing from only the
+      // preferred provider leaves that copy behind for reads to resurrect.
+      await removeMany(await allAvailable(), key)
     },
 
     getAllKeys: async () => {
@@ -883,19 +1047,31 @@ export function createCloudStore(
       // batched request rather than one per key.
       if (resolveValue != null) {
         const perKey = new Map<string, ResolveCandidate[]>(keys.map(k => [k, []]))
+        const reachable = new Map<ProviderName, CloudProvider>()
+        // Same candidates `getItem` would build, timestamps included, so the
+        // two reads cannot resolve the same key differently.
+        const withMeta = resolveValue.usesModifiedAt !== false
         let reachedAny = false
 
         for (const name of options.providers) {
           const p = resolveProvider(name)
           try {
             if (!(await isAvailable(p))) continue
-            const values = await readBatch(p, keys)
-            reachedAny = true
+            const hits = await readBatchForResolve(p, keys, withMeta)
+            const found: [string, ResolveCandidate][] = []
             for (let i = 0; i < keys.length; i += 1) {
-              const raw = values[i]
-              if (raw == null) continue
-              perKey.get(keys[i])!.push({ provider: p.name, value: await decode(keys[i], raw) })
+              const hit = hits[i]
+              if (hit == null) continue
+              found.push([keys[i], {
+                provider: p.name,
+                value: await decode(keys[i], hit.value),
+                modifiedAt: hit.modifiedAt,
+              }])
             }
+            // Only a provider read in full is a repair target - see readAcross.
+            reachable.set(p.name, p)
+            reachedAny = true
+            for (const [key, candidate] of found) perKey.get(key)!.push(candidate)
           }
           catch {
             // Same rule as `getAllKeys`: one provider failing to answer must not
@@ -906,7 +1082,10 @@ export function createCloudStore(
         if (!reachedAny) throw noneAvailable()
         for (const key of keys) {
           const candidates = perKey.get(key)!
-          answers.set(key, candidates.length === 0 ? null : resolveValue(candidates))
+          answers.set(
+            key,
+            candidates.length === 0 ? null : settle(resolveValue, key, candidates, reachable)
+          )
         }
         return keys.map(k => [k, answers.get(k) ?? null] as [string, string | null])
       }
@@ -961,20 +1140,20 @@ export function createCloudStore(
           byTarget.set(target.name, bucket)
         }
 
-        for (const { provider, items } of byTarget.values())
-          try {
-            await writeBatch(provider, items)
-            dequeueMany(items.map(([k]) => k), provider.name)
-          }
-          catch (e) {
-            const err = normalizeError(e, provider.name)
-            if (useOutbox && isRetryable(err)) {
-              for (const [key, value] of items) enqueue(key, value, provider.name, err.code)
-              options.onError?.(err)
-              continue
-            }
-            throw err
-          }
+        for (const { provider, items } of byTarget.values()) {
+          const outcome = await attempt(
+            provider,
+            items.map(([k]) => k),
+            () => writeBatch(provider, items),
+            items.map(([, v]) => v)
+          )
+          if (outcome === 'queued') continue
+          if (outcome !== 'done') throw outcome
+          // Same stale-copy rule as `setItem`: values routed past the
+          // preferred provider must not leave an older copy there.
+          if (provider !== preferred)
+            for (const [key, value] of items) await evictWhereTooLarge([preferred], key, value)
+        }
         return
       }
 
@@ -987,21 +1166,14 @@ export function createCloudStore(
       for (const target of targets) {
         const fits = encoded.filter(([, value]) => canHold(target, value))
         if (fits.length === 0) continue
-        try {
-          await writeBatch(target, fits)
-          dequeueMany(fits.map(([k]) => k), target.name)
-          anyStored = true
-        }
-        catch (e) {
-          const err = normalizeError(e, target.name)
-          if (useOutbox && isRetryable(err)) {
-            for (const [key, value] of fits) enqueue(key, value, target.name, err.code)
-            options.onError?.(err)
-            continue
-          }
-          fatal ??= err
-          options.onError?.(err)
-        }
+        const outcome = await attempt(
+          target,
+          fits.map(([k]) => k),
+          () => writeBatch(target, fits),
+          fits.map(([, v]) => v)
+        )
+        if (outcome === 'done') anyStored = true
+        else if (outcome !== 'queued') fatal ??= outcome
       }
 
       if (anyStored)
@@ -1022,28 +1194,23 @@ export function createCloudStore(
       for (const key of keys) checkKey(key)
       if (keys.length === 0) return
 
-      const targets = writeMode === 'mirror' ? await allAvailable() : [await primary()]
+      // Every available provider, in both modes - see `removeItem`.
+      const targets = await allAvailable()
       if (targets.length === 0) throw noneAvailable()
 
       let removedAnywhere = false
       let fatal: CloudSyncError | null = null
 
-      for (const target of targets)
-        try {
-          await removeBatch(target, keys)
-          dequeueMany(keys, target.name)
-          removedAnywhere = true
-        }
-        catch (e) {
-          const err = normalizeError(e, target.name)
-          if (useOutbox && isRetryable(err)) {
-            for (const key of keys) enqueue(key, null, target.name, err.code)
-            options.onError?.(err)
-            continue
-          }
-          fatal ??= err
-          options.onError?.(err)
-        }
+      for (const target of targets) {
+        const outcome = await attempt(
+          target,
+          keys,
+          () => removeBatch(target, keys),
+          keys.map(() => null)
+        )
+        if (outcome === 'done') removedAnywhere = true
+        else if (outcome !== 'queued') fatal ??= outcome
+      }
 
       if (!removedAnywhere && fatal != null) throw fatal
     },
@@ -1060,8 +1227,10 @@ export function createCloudStore(
       if (keys.length === 0) return {}
 
       const out: Record<string, string> = {}
+      // Keys come from provider listings; a file named `__proto__` must land
+      // as an entry, not be swallowed by the prototype setter.
       for (const [key, value] of await store.multiGet(keys))
-        if (value != null) out[key] = value
+        if (value != null) setOwn(out, key, value)
 
       return out
     },
@@ -1097,18 +1266,21 @@ export function createCloudStore(
       // on the way out only to re-encode on the way in would be wasted work -
       // and, for a codec with a random nonce, would rewrite every byte.
       for (const key of keys) {
+        // Which end failed, so the error names the provider that raised it.
+        let side: ProviderName = from
         try {
           const value = await run(src, () => src.getItem(key))
           if (value == null) {
             skipped.push(key)
           }
           else {
-            await run(dst, () => dst.setItem(key, value))
+            side = to
+            await withKeys(to, [key], () => run(dst, () => dst.setItem(key, value)))
             copied.push(key)
           }
         }
         catch (e) {
-          const err = normalizeError(e, from)
+          const err = normalizeError(e, side)
           failed.push({ key, error: err })
           options.onError?.(err)
           // Aborting on the first bad key leaves the user half migrated with no
@@ -1199,25 +1371,52 @@ export function createCloudStore(
     if (entries.length === 0) return { drained: 0, remaining: 0, dropped: [] }
 
     const now = Date.now()
-    const keep: OutboxEntry[] = []
+    // Each kept entry alongside the snapshot entry it came from, so the final
+    // merge can check that the original is still the one queued.
+    const keep: { entry: OutboxEntry; from: OutboxEntry }[] = []
     const dropped: DroppedWrite[] = []
-    const handled = new Set<string>()
     let drained = 0
+
+    // The queue can change while this flush awaits the network: a newer write
+    // supersedes an entry (dequeue or replace), `discardPendingWrites` removes
+    // one, or an account switch empties it. An entry that is no longer queued
+    // must not be sent - after an account switch that would write the previous
+    // user's data into the new account - nor written back at the end.
+    let seenVersion = outboxVersion
+    let current = entries
+    function stillQueued(entry: OutboxEntry): boolean {
+      if (outboxVersion !== seenVersion) {
+        current = readOutbox()
+        seenVersion = outboxVersion
+      }
+      return current.some(e => sameEntry(e, entry))
+    }
 
     function drop(entry: OutboxEntry, reason: DropReason, error?: CloudSyncError): void {
       dropped.push({ entry, reason, error })
       reportDropped(entry, reason, error)
     }
 
+    /**
+     * Takes a delivered entry out of storage straight away, rather than at the
+     * final merge, so nothing consulting the outbox meanwhile - read repair,
+     * `pendingWrites()` - mistakes it for a write still waiting.
+     */
+    function removeExact(entry: OutboxEntry): void {
+      const queued = readOutbox()
+      const rest = queued.filter(e => !sameEntry(e, entry))
+      if (rest.length !== queued.length) writeOutbox(rest)
+    }
+
     for (const entry of entries) {
-      handled.add(outboxId(entry.provider, entry.key))
+      if (!stillQueued(entry)) continue
 
       if (now - entry.enqueuedAt > maxAgeMs) {
         drop(entry, 'expired')
         continue
       }
       if (entry.nextAttemptAt > now) {
-        keep.push(entry)
+        keep.push({ entry, from: entry })
         continue
       }
 
@@ -1231,52 +1430,96 @@ export function createCloudStore(
         continue
       }
 
-      try {
-        if (entry.value == null) await run(p, () => p.removeItem(entry.key))
-        else await run(p, () => p.setItem(entry.key, entry.value!))
-        drained += 1
+      const provider = p
+      // Under the pair's lock, so a direct write to the same key cannot run
+      // alongside this re-send - see `withKeys`. Checked again once the lock
+      // is held: a direct write that got there first has dropped this entry.
+      await withKeys(entry.provider, [entry.key], async () => {
+        if (!stillQueued(entry)) return
+        try {
+          if (entry.value == null) await run(provider, () => provider.removeItem(entry.key))
+          else await run(provider, () => provider.setItem(entry.key, entry.value!))
+          drained += 1
+          removeExact(entry)
+        }
+        catch (e) {
+          retryLater(entry, normalizeError(e, entry.provider))
+        }
+      })
+    }
+
+    function retryLater(entry: OutboxEntry, err: CloudSyncError): void {
+      options.onError?.(err)
+
+      // A write only enters the queue for a retryable reason. If retrying it
+      // now fails for one the user must act on - quota, signed out, a payload
+      // the store will never accept - re-queueing turns it into a poison
+      // entry that retries forever, never drains, and never surfaces.
+      if (!isRetryable(err)) {
+        drop(entry, 'notRetryable', err)
+        return
       }
-      catch (e) {
-        const err = normalizeError(e, entry.provider)
-        options.onError?.(err)
 
-        // A write only enters the queue for a retryable reason. If retrying it
-        // now fails for one the user must act on - quota, signed out, a payload
-        // the store will never accept - re-queueing turns it into a poison
-        // entry that retries forever, never drains, and never surfaces.
-        if (!isRetryable(err)) {
-          drop(entry, 'notRetryable', err)
-          continue
-        }
+      const attempts = entry.attempts + 1
+      if (attempts >= maxAttempts) {
+        drop({ ...entry, attempts, lastErrorCode: err.code }, 'tooManyAttempts', err)
+        return
+      }
 
-        const attempts = entry.attempts + 1
-        if (attempts >= maxAttempts) {
-          drop({ ...entry, attempts, lastErrorCode: err.code }, 'tooManyAttempts', err)
-          continue
-        }
-
-        // Exponential backoff, honouring a server-supplied retry hint when
-        // there is one (CloudKit sends `retryAfter`, Drive `Retry-After`).
-        const backoff = err.retryAfterMs ?? Math.min(2 ** attempts * 1000, 5 * 60_000)
-        keep.push({
+      // Exponential backoff, honouring a server-supplied retry hint when
+      // there is one (CloudKit sends `retryAfter`, Drive `Retry-After`).
+      // Clamped again here: a third-party provider can set any number.
+      const backoff = clampRetryAfterMs(err.retryAfterMs) ?? Math.min(2 ** attempts * 1000, 5 * 60_000)
+      keep.push({
+        entry: {
           ...entry,
           attempts,
           nextAttemptAt: Date.now() + backoff,
           lastErrorCode: err.code,
-        })
-      }
+        },
+        from: entry,
+      })
     }
 
     // Merge rather than overwrite. A `setItem` that failed while this flush was
-    // awaiting the network enqueued itself into storage; writing the snapshot
-    // back wholesale would silently discard it.
-    const arrived = readOutbox().filter(e => !handled.has(outboxId(e.provider, e.key)))
-    writeOutbox([...keep, ...arrived])
+    // awaiting the network enqueued itself into storage - possibly replacing
+    // an entry for the same key with a newer value - and writing the snapshot
+    // back wholesale would silently discard it. Equally, a kept entry whose
+    // original was removed meanwhile (superseded, discarded, account switch)
+    // must stay removed.
+    const latest = readOutbox()
+    const kept = keep
+      .filter(({ from }) => latest.some(e => sameEntry(e, from)))
+      .map(({ entry }) => entry)
+    const arrived = latest.filter(e => !entries.some(s => sameEntry(s, e)))
+    writeOutbox([...kept, ...arrived])
 
-    return { drained, remaining: keep.length + arrived.length, dropped }
+    return { drained, remaining: kept.length + arrived.length, dropped }
   }
 
   return store
+}
+
+/**
+ * The same queued write, not merely one for the same key: a newer write to the
+ * key replaces the entry with a fresh `enqueuedAt` and value.
+ */
+function sameEntry(a: OutboxEntry, b: OutboxEntry): boolean {
+  return a.provider === b.provider
+    && a.key === b.key
+    && a.enqueuedAt === b.enqueuedAt
+    && a.value === b.value
+}
+
+function isOutboxEntry(e: unknown): e is OutboxEntry {
+  if (e == null || typeof e !== 'object') return false
+  const o = e as Record<string, unknown>
+  return typeof o.key === 'string'
+    && typeof o.provider === 'string'
+    && (o.value === null || typeof o.value === 'string')
+    && typeof o.attempts === 'number'
+    && typeof o.nextAttemptAt === 'number'
+    && typeof o.enqueuedAt === 'number'
 }
 
 function createMemoryOutboxStorage(): OutboxStorage {

@@ -27,7 +27,7 @@ describe('cloudKitEncrypted on Apple platforms', () => {
     // The final argument is what routes the value into
     // `CKRecord.encryptedValues`, where Apple cannot read it.
     expect(harness.module.ckSaveRecord).toHaveBeenCalledWith(
-      'EncryptedKVBlob', 'token', 'sensitive', null, true
+      'EncryptedKVBlob', 'rncs-enc.token', 'sensitive', null, true
     )
   })
 
@@ -38,7 +38,7 @@ describe('cloudKitEncrypted on Apple platforms', () => {
     // Reading the plain side of an encrypted field returns null, which is
     // indistinguishable from a missing record - so the flag has to match.
     expect(harness.module.ckGetRecord).toHaveBeenCalledWith(
-      'EncryptedKVBlob', 'token', null, true
+      'EncryptedKVBlob', 'rncs-enc.token', null, true
     )
   })
 
@@ -60,7 +60,7 @@ describe('cloudKitEncrypted on Apple platforms', () => {
   })
 
   it('lists keys, because record names are not encrypted', async () => {
-    harness.module.ckQueryRecordNames.mockResolvedValueOnce(['a', 'b'])
+    harness.module.ckQueryRecordNames.mockResolvedValueOnce(['rncs-enc.a', 'rncs-enc.b'])
     await expect(cloudKitEncrypted.getAllKeys()).resolves.toEqual(['a', 'b'])
     expect(harness.module.ckQueryRecordNames).toHaveBeenCalledWith('EncryptedKVBlob', null)
   })

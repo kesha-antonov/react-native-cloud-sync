@@ -210,6 +210,14 @@ export function createMemoryProvider(options: MemoryProviderOptions = {}): Memor
       return keys.map(k => data.get(k)?.value ?? null)
     },
 
+    multiGetWithMeta: async (keys: string[]) => {
+      await gate('getItem', keys)
+      return keys.map((k) => {
+        const entry = data.get(k)
+        return entry == null ? null : { value: entry.value, modifiedAt: entry.modifiedAt }
+      })
+    },
+
     multiSet: async (entries: [string, string][]) => {
       await gate('setItem', entries.map(([k]) => k))
       const now = Date.now()

@@ -19,6 +19,7 @@ const mockModule = {
   getAccountStatus: jest.fn(() => Promise.resolve('available')),
   isAvailable: jest.fn(() => Promise.resolve(true)),
 
+  kvGetAccountStatus: jest.fn(() => Promise.resolve('available')),
   kvGetItem: jest.fn(() => Promise.resolve(null)),
   kvSetItem: jest.fn(() => Promise.resolve()),
   kvRemoveItem: jest.fn(() => Promise.resolve()),

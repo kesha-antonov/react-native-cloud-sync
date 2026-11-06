@@ -160,6 +160,8 @@ configureGoogleDrive({
 
 Without it, a killed process restarts `save` from byte 0; with it, `save` persists the session first, and the next call for the same `name` - even a fresh process - finds it, asks Drive for the real offset, and resumes. A session is trusted only if the source size still matches (a changed size starts fresh, since a byte-range upload into different content would corrupt it), and one Drive no longer recognizes (past its ~1 week lifetime) is handled the same way, transparently. It's a tiny JSON record, not file I/O, so `sessionStore` is a much lighter ask than `GoogleDriveFileAdapter` - one row in whatever key-value storage the host app already has. Cancelling via `signal` drops the session too, since a deliberate stop isn't a crash to recover from.
 
+The stored `sessionUrl` must be on `https://www.googleapis.com/` or a `https://<host>.googleapis.com/upload/` URL. Anything else (a tampered entry, say) is ignored and a fresh session starts, so the access token is never sent elsewhere.
+
 If losing a transfer to backgrounding or an OS kill is the failure you care about, [`@kesha-antonov/react-native-background-downloader`][rnbd] is built for it: `createUploadTask`/`createDownloadTask` hand the whole transfer to `NSURLSession`/a foreground service, re-attachable via `getExistingUploadTasks`/`getExistingDownloadTasks`. It doesn't implement `GoogleDriveFileAdapter` (whole-file HTTP tasks, not byte-range), so using it means driving Drive's plain, non-resumable `uploadType=media`/`alt=media` endpoints directly - trading Drive's resumable protocol for the OS's background-session resilience.
 
 CloudKit-native equivalent on iOS/macOS: [assets](cloudkit.md#assets), [backup/restore](cloudkit.md#backuprestore-helper); [Recipes](../recipes.md#cross-platform-large-file-backup) pairs the two behind one function.
@@ -186,14 +188,20 @@ The [Drive `files` API][drivefiles] has no "get by name" endpoint, so a read mus
 
 The naive approach - listing every file and filtering client-side - is what makes other implementations take minutes on accounts with many files; if you switch accounts, drop the cache by reconfiguring.
 
+`getItemWithMeta` - what [`resolveByModifiedAt`](../store.md#resolve) reads - always lists the name again rather than trusting the cache, since a cached `modifiedTime` goes stale the moment another device writes. That is one more request than `getItem`.
+
+There is deliberately no `multiGet`: Drive has no batch endpoint for file content, and a batch API that secretly loops hides N round trips behind a call that looks like one. `multiGetWithMeta` is the exception, because it really does save requests - one listing per 50 keys instead of one per key, plus one download per key - so a resolving `multiGet` doesn't pay a fresh listing for every key.
+
 ## Errors specific to Drive
 
 | Code | Cause |
 |---|---|
 | `ERR_NOT_SIGNED_IN` | `getAccessToken` returned null |
 | `ERR_AUTH_EXPIRED` | HTTP 401, or a 403 whose body doesn't match one of the reasons below; `onAuthExpired` fires |
-| `ERR_RATE_LIMITED` | HTTP 429, or a 403 with `reason: userRateLimitExceeded`/`rateLimitExceeded`; `retryAfterMs` set from `Retry-After` when present (only the plain-429 case carries it) |
+| `ERR_RATE_LIMITED` | HTTP 429, or a 403 with `reason: userRateLimitExceeded`/`rateLimitExceeded`; `retryAfterMs` set from `Retry-After` when present, at most 1 hour (the 403 variants never carry it) |
+| `ERR_RATE_LIMITED` | HTTP 500/502/503/504 - Google documents these as transient; `serverErrorCode` is `HTTP_503` and so on, and `retryAfterMs` comes from `Retry-After` when sent |
 | `ERR_QUOTA_EXCEEDED` | A 403 with `reason: storageQuotaExceeded` - the user's Drive is full, never the 507 a WebDAV-style API would use |
+| `ERR_UNKNOWN` | `serverErrorCode: 'UNTRUSTED_URL'` - a request or resumable session URI outside `https://www.googleapis.com` (or `https://<host>.googleapis.com/upload/`); refused before the token is attached |
 
 See [Error handling](../errors.md).
 
@@ -211,9 +219,9 @@ const off = googleDrive.onRemoteChange(({ keys }) => reload(keys))
 
 Polling starts with the first subscriber and stops with the last, so an app that never subscribes never makes the request - default interval is 30s (`changePollIntervalMs` on `createGoogleDriveProvider`), and an empty poll is still just one request.
 
-Deletions are included too - the client drops its memoised file id for anything the feed reports removed, so a stale id can't keep answering reads.
+Deletions are included too. The client drops its memoised file id for every name the feed reports - removed, changed, or a same-named copy from another device - so the next read lists it again rather than serving a stale id.
 
-The first tick only establishes the starting cursor, so a new subscriber isn't told everything that ever happened just changed.
+The starting cursor is taken as soon as the first listener subscribes, not one interval later, so a write in between isn't missed; that first poll reports nothing, so a new subscriber isn't told everything that ever happened just changed. After an account switch (`clearCaches()`), polling restarts on a fresh cursor for the listeners already subscribed.
 
 ## Storage usage
 

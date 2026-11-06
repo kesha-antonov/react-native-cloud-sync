@@ -1,5 +1,6 @@
 import { CloudSyncError, ErrorCode, timedOut } from '../errors'
 import { byteLength } from './bytes'
+import { clampRetryAfterMs } from './records'
 import { withTimeout } from './timeout'
 
 /** Default request timeout. Generous, because a large record on a slow link is normal. */
@@ -105,6 +106,17 @@ export interface CloudKitAssetDescriptor {
 const MAX_BATCH = 200
 
 export const RECORD_TYPE_DEFAULT = 'KVBlob'
+
+/**
+ * Record-name prefix for `cloudKitEncrypted`.
+ *
+ * CloudKit record names are unique per zone regardless of record type, so
+ * without it the encrypted and plain providers addressed the same record for
+ * the same key: a write to one collided with the other's schema, and a delete
+ * through one removed the other's data. The plain `cloudKit` provider rejects
+ * keys that start with it, so the two namespaces cannot overlap.
+ */
+export const ENCRYPTED_RECORD_PREFIX = 'rncs-enc.'
 export const VALUE_FIELD = 'value'
 
 /** CloudKit's documented per-record ceiling, excluding assets. */
@@ -112,6 +124,7 @@ export const MAX_RECORD_BYTES = 1024 * 1024
 
 interface CloudKitRecordResult {
   recordName?: string
+  recordType?: string
   fields?: Record<string, { value?: unknown }>
   serverErrorCode?: string
   reason?: string
@@ -177,7 +190,8 @@ export class CloudKitRestClient {
 
   private baseUrl(): string {
     const { containerIdentifier, environment } = this.config
-    return `https://api.apple-cloudkit.com/database/1/${containerIdentifier}/${environment}/private`
+    return `https://api.apple-cloudkit.com/database/1/${encodeURIComponent(containerIdentifier)}/`
+      + `${encodeURIComponent(environment)}/private`
   }
 
   private get fetch(): typeof fetch {
@@ -229,15 +243,18 @@ export class CloudKitRestClient {
         await this.handleAuthExpired()
         return new CloudSyncError(ErrorCode.AUTH_EXPIRED, message, base)
       case 'ACCESS_DENIED':
-        await this.handleAuthExpired()
-        return new CloudSyncError(ErrorCode.AUTH_EXPIRED, message, base)
+        // A permission failure, not a dead token: CloudKit sends it when the
+        // authenticated user lacks rights to the record type, zone or database
+        // (security roles set up wrong in the CloudKit Console). Treating it as
+        // expired auth signed the user out, and re-signing in changes nothing.
+        return new CloudSyncError(ErrorCode.CONTAINER_MISCONFIGURED, message, base)
       case 'QUOTA_EXCEEDED':
         return new CloudSyncError(ErrorCode.QUOTA_EXCEEDED, message, base)
       case 'THROTTLED':
       case 'TRY_AGAIN_LATER':
         return new CloudSyncError(ErrorCode.RATE_LIMITED, message, {
           ...base,
-          retryAfterMs: retryAfter != null ? retryAfter * 1000 : undefined,
+          retryAfterMs: typeof retryAfter === 'number' ? clampRetryAfterMs(retryAfter * 1000) : undefined,
         })
       case 'CONFLICT':
         return new CloudSyncError(ErrorCode.CONFLICT, message, { ...base, serverValue })
@@ -338,12 +355,11 @@ export class CloudKitRestClient {
     recordName: string,
     recordType = RECORD_TYPE_DEFAULT
   ): Promise<{ value: string; modifiedAt?: number; recordChangeTag?: string } | null> {
-    void recordType
     const json = await this.post('/records/lookup', {
       records: [{ recordName }],
     })
 
-    const record = json.records?.find(r => r.recordName === recordName) ?? json.records?.[0]
+    const record = lookupResult(json, recordName)
     if (record == null) return null
 
     if (record.serverErrorCode != null) {
@@ -354,6 +370,7 @@ export class CloudKitRestClient {
       if (record.serverErrorCode === 'NOT_FOUND') return null
       throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
     }
+    assertRecordType(record, recordType)
 
     const value = record.fields?.[VALUE_FIELD]?.value
     if (typeof value !== 'string') return null
@@ -380,10 +397,21 @@ export class CloudKitRestClient {
     recordNames: string[],
     recordType = RECORD_TYPE_DEFAULT
   ): Promise<(string | null)[]> {
-    void recordType
+    return (await this.getRecordsWithMeta(recordNames, recordType)).map(r => r?.value ?? null)
+  }
+
+  /**
+   * {@link getRecords} plus each record's server modification time and change
+   * tag - the batch form of {@link getRecordWithMeta}. Free for the same
+   * reason: `/records/lookup` returns both whether or not anyone asks.
+   */
+  async getRecordsWithMeta(
+    recordNames: string[],
+    recordType = RECORD_TYPE_DEFAULT
+  ): Promise<({ value: string; modifiedAt?: number; recordChangeTag?: string } | null)[]> {
     if (recordNames.length === 0) return []
 
-    const found = new Map<string, string>()
+    const found = new Map<string, { value: string; modifiedAt?: number; recordChangeTag?: string }>()
 
     for (const batch of chunk(recordNames, MAX_BATCH)) {
       const json = await this.post('/records/lookup', {
@@ -398,8 +426,16 @@ export class CloudKitRestClient {
           if (record.serverErrorCode === 'NOT_FOUND') continue
           throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
         }
+        assertRecordType(record, recordType)
         const value = record.fields?.[VALUE_FIELD]?.value
-        if (typeof value === 'string') found.set(record.recordName, value)
+        if (typeof value === 'string')
+          found.set(record.recordName, {
+            value,
+            modifiedAt: typeof record.modified?.timestamp === 'number'
+              ? record.modified.timestamp
+              : undefined,
+            recordChangeTag: record.recordChangeTag,
+          })
       }
     }
 
@@ -603,20 +639,26 @@ export class CloudKitRestClient {
     onProgress?: (bytesTransferred: number, bytesTotal: number) => void,
     recordType = RECORD_TYPE_DEFAULT
   ): Promise<Uint8Array | null> {
-    void recordType
     const json = await this.post('/records/lookup', { records: [{ recordName }] })
-    const record = json.records?.find(r => r.recordName === recordName) ?? json.records?.[0]
+    const record = lookupResult(json, recordName)
     if (record == null) return null
 
     if (record.serverErrorCode != null) {
       if (record.serverErrorCode === 'NOT_FOUND') return null
       throw await this.toError(record.serverErrorCode, record.reason, record.retryAfter)
     }
+    assertRecordType(record, recordType)
 
     const asset = record.fields?.[fieldName]?.value as CloudKitAssetDescriptor | undefined
     if (asset?.downloadURL == null) return null
 
-    return await this.fetchAssetBytes(asset.downloadURL, onProgress)
+    // CloudKit Web Services hands back the download URL as a template with a
+    // literal `${f}` where the file name goes; the client is expected to fill
+    // it in. Requesting the template verbatim asks for a path that does not
+    // exist.
+    if (typeof asset.downloadURL !== 'string') return null
+    const downloadUrl = asset.downloadURL.replace('${f}', encodeURIComponent(fieldName))
+    return await this.fetchAssetBytes(assertHttpsUrl(downloadUrl, 'download'), onProgress)
   }
 
   private async requestAssetUploadUrl(
@@ -627,14 +669,14 @@ export class CloudKitRestClient {
     })
 
     const url = json.tokens?.[0]?.url
-    if (url == null)
+    if (typeof url !== 'string')
       throw new CloudSyncError(
         ErrorCode.UNKNOWN,
         '[RNCloudSync] CloudKit did not return an asset upload URL.',
         { provider: 'cloudKit' }
       )
 
-    return url
+    return assertHttpsUrl(url, 'upload')
   }
 
   private get xhr(): () => XMLHttpRequest {
@@ -826,6 +868,9 @@ export class CloudKitRestClient {
     do {
       const json: CloudKitResponse = await this.post('/records/query', {
         query: { recordType },
+        // Names only. Without this every page carries every record's full
+        // value - up to 200 records of up to 1 MB each - just to read names.
+        desiredKeys: [],
         ...(continuationMarker != null ? { continuationMarker } : {}),
       })
 
@@ -881,6 +926,50 @@ export class CloudKitRestClient {
   clearCache(): void {
     this.reachability = null
   }
+}
+
+/**
+ * The lookup result for `recordName`.
+ *
+ * A result naming a *different* record is never taken as this one's: serving
+ * it would hand key B's value back as key A's. Only an entry with no
+ * `recordName` at all - the shape of a per-record error - may stand in for the
+ * requested one.
+ */
+function lookupResult(json: CloudKitResponse, recordName: string): CloudKitRecordResult | undefined {
+  const records = json.records ?? []
+  return records.find(r => r.recordName === recordName)
+    ?? records.find(r => r.recordName == null)
+}
+
+/**
+ * Record names are unique across record types, so a lookup by name can return
+ * a record of another type - one another provider (or another app sharing the
+ * container) wrote. Reading it as this type would serve foreign data under
+ * this key, so a mismatch is an error, as it is on the native path.
+ */
+function assertRecordType(record: CloudKitRecordResult, recordType: string): void {
+  if (record.recordType != null && record.recordType !== recordType)
+    throw new CloudSyncError(
+      ErrorCode.INVALID_KEY,
+      `[RNCloudSync] Record "${record.recordName ?? ''}" is a ${record.recordType}, not a ${recordType}.`,
+      { provider: 'cloudKit' }
+    )
+}
+
+/**
+ * Asset bytes travel to and from URLs the server hands out, not ones this
+ * client builds. Plain HTTP would put the user's file on the wire unencrypted
+ * (and let anything on-path substitute the download), so only HTTPS is used.
+ */
+function assertHttpsUrl(url: string, kind: 'upload' | 'download'): string {
+  if (!/^https:\/\/[^/?#]+/i.test(url))
+    throw new CloudSyncError(
+      ErrorCode.UNKNOWN,
+      `[RNCloudSync] CloudKit returned a non-HTTPS asset ${kind} URL; refusing to use it.`,
+      { provider: 'cloudKit', serverErrorCode: 'UNTRUSTED_URL' }
+    )
+  return url
 }
 
 /** Splits `items` into runs of at most `size`. */

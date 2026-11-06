@@ -47,11 +47,12 @@ if (!(await icloudKV.isAvailable()))
   return
 
 const status = await icloudKV.getAccountStatus()
-// 'available' | 'noAccount' | 'restricted'
-// 'temporarilyUnavailable' | 'couldNotDetermine'
+// 'available' | 'noAccount'
 ```
 
-Five states ([`CKAccountStatus`][ckstatus]), not a boolean: `temporarilyUnavailable` means retry silently, `noAccount` means prompt the user, `couldNotDetermine` means do nothing yet.
+On Apple platforms the status comes from `ubiquityIdentityToken`, not CloudKit - so it is safe in an app with only the key-value-store entitlement, but it reports only `available` or `noAccount` (restricted reads as `noAccount`). The five-state [`CKAccountStatus`][ckstatus] belongs to [`cloudKit`](cloudkit.md#availability-and-account-state).
+
+Off Apple platforms `getAccountStatus()` resolves `couldNotDetermine` rather than throwing - a status question has a truthful answer everywhere.
 
 ## Reacting to other devices
 
@@ -89,13 +90,13 @@ Maps to `NSUbiquitousKeyValueStore.synchronize()`: flushes pending changes to di
 
 ## Limits are enforced, not discovered
 
-A value above 1 MB rejects locally with `ERR_PAYLOAD_TOO_LARGE`, carrying `limitBytes` and `actualBytes`, rather than being handed to the OS and silently dropped.
+A value above 1 MB rejects locally with `ERR_PAYLOAD_TOO_LARGE`, carrying `limitBytes` and `actualBytes`, rather than being handed to the OS and silently dropped. The same goes for a write that would push the store past its 1 MB total, which rejects with `ERR_QUOTA_EXCEEDED` - counting keys as well as values, as Apple does.
 
 Hitting the limit is the signal to move that key to `cloudKit`/`googleDrive` - or let the [facade](../store.md) route it for you.
 
 ## On Android and web
 
-Every operation rejects with `ERR_UNSUPPORTED_PLATFORM` - no polyfill, no fallback, since `NSUbiquitousKeyValueStore` has no network API to reach. Use `cloudKit` for the same account's data elsewhere, or `googleDrive`.
+Every data operation rejects with `ERR_UNSUPPORTED_PLATFORM` - a rejected promise, so `.catch` handles it, not a synchronous throw - with no polyfill and no fallback, since `NSUbiquitousKeyValueStore` has no network API to reach. `isAvailable()` resolves false and `getAccountStatus()` resolves `couldNotDetermine`. Use `cloudKit` for the same account's data elsewhere, or `googleDrive`.
 
 [kvs]: https://developer.apple.com/documentation/foundation/nsubiquitouskeyvaluestore
 [ckstatus]: https://developer.apple.com/documentation/cloudkit/ckaccountstatus

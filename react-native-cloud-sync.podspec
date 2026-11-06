@@ -25,9 +25,6 @@ Pod::Spec.new do |s|
   # NSUbiquitousKeyValueStore. Both are available under Mac Catalyst.
   s.frameworks = 'CloudKit', 'Foundation'
 
-  # React Native core dependency, codegen wiring and the new-arch flags.
-  install_modules_dependencies(s)
-
   # Built up locally and assigned once: `pod_target_xcconfig` is a writer on
   # Pod::Specification with no matching reader, so it cannot be read back and
   # merged into.
@@ -45,4 +42,14 @@ Pod::Spec.new do |s|
   end
 
   s.pod_target_xcconfig = xcconfig
+
+  # React Native core dependency, codegen wiring and the new-arch flags.
+  #
+  # Must come LAST. It reads the spec's current `compiler_flags` and
+  # `pod_target_xcconfig` back out of `spec.to_hash` and merges React Native's
+  # header search paths, C++ standard and folly flags into them. Called before
+  # the assignments above, it had all of that overwritten - leaving the pod on
+  # c++17 with none of React Native's header paths, which breaks the
+  # new-architecture build on any React Native that requires C++20 (0.73+).
+  install_modules_dependencies(s)
 end

@@ -42,17 +42,20 @@ export function bytesToBase64(bytes: Uint8Array): string {
 export function base64ToBytes(base64: string): Uint8Array {
   // Strip whitespace some fs libraries insert into long base64 strings, and
   // any padding - length is derived from the real character count instead.
-  const clean = base64.replace(/[\r\n\s]/g, '').replace(/=+$/, '')
+  const clean = base64.replace(/\s/g, '').replace(/={1,2}$/, '')
   const len = clean.length
+  // One leftover character carries 6 bits - not a byte. Real base64 never
+  // ends that way, so it is truncated or not base64 at all.
+  if (len % 4 === 1) throw invalidBase64()
   const outLen = Math.floor((len * 3) / 4)
   const bytes = new Uint8Array(outLen)
 
   let p = 0
   for (let i = 0; i < len; i += 4) {
-    const e0 = DECODE_TABLE[clean.charCodeAt(i)] ?? -1
-    const e1 = i + 1 < len ? DECODE_TABLE[clean.charCodeAt(i + 1)] ?? -1 : -1
-    const e2 = i + 2 < len ? DECODE_TABLE[clean.charCodeAt(i + 2)] ?? -1 : -1
-    const e3 = i + 3 < len ? DECODE_TABLE[clean.charCodeAt(i + 3)] ?? -1 : -1
+    const e0 = sextet(clean, i)
+    const e1 = i + 1 < len ? sextet(clean, i + 1) : 0
+    const e2 = i + 2 < len ? sextet(clean, i + 2) : 0
+    const e3 = i + 3 < len ? sextet(clean, i + 3) : 0
 
     if (p < outLen) bytes[p++] = (e0 << 2) | (e1 >> 4)
     if (p < outLen) bytes[p++] = ((e1 & 0x0f) << 4) | (e2 >> 2)
@@ -60,4 +63,22 @@ export function base64ToBytes(base64: string): Uint8Array {
   }
 
   return bytes
+}
+
+/**
+ * The 6-bit value at `i`, rejecting anything outside the alphabet.
+ *
+ * Silently mapping an invalid character to -1 used to write `0xFC`-style
+ * garbage into the output, so a corrupted or non-base64 chunk from a file
+ * adapter became a corrupted upload or restore with no error anywhere.
+ */
+function sextet(s: string, i: number): number {
+  const code = s.charCodeAt(i)
+  const v = code < 128 ? DECODE_TABLE[code] : -1
+  if (v < 0) throw invalidBase64()
+  return v
+}
+
+function invalidBase64(): TypeError {
+  return new TypeError('[RNCloudSync] base64ToBytes: input is not valid base64.')
 }

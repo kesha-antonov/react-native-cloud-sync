@@ -100,7 +100,7 @@ describe('uploadFile', () => {
   it('creates a new file in one chunk when it fits, and caches the returned id', async () => {
     const { client, calls } = makeClient([
       { json: { files: [] } }, // findFileId: not found
-      { headers: { Location: 'https://upload.example/session-1' } }, // initiate
+      { headers: { Location: 'https://www.googleapis.com/upload/s/session-1' } }, // initiate
       { status: 200, json: { id: 'new-id' } }, // single PUT, complete
     ])
 
@@ -117,7 +117,7 @@ describe('uploadFile', () => {
   it('splits a file larger than the chunk size across multiple PUTs', async () => {
     const { client, calls } = makeClient([
       { json: { files: [] } },
-      { headers: { Location: 'https://upload.example/session-2' } },
+      { headers: { Location: 'https://www.googleapis.com/upload/s/session-2' } },
       { status: 308, headers: { Range: 'bytes=0-3' } }, // chunk 1 of 4 bytes: incomplete
       { status: 200, json: { id: 'new-id' } }, // chunk 2: complete
     ], 4 /* chunkBytes */)
@@ -137,7 +137,7 @@ describe('uploadFile', () => {
   it('updates an existing file with PATCH, not POST', async () => {
     const { client, calls } = makeClient([
       { json: { files: [{ id: 'existing-id', name: 'backup.db' }] } },
-      { headers: { Location: 'https://upload.example/session-3' } },
+      { headers: { Location: 'https://www.googleapis.com/upload/s/session-3' } },
       { status: 200, json: {} },
     ])
 
@@ -150,7 +150,7 @@ describe('uploadFile', () => {
   it('recovers a chunk that drops mid-flight by querying the real offset and resuming', async () => {
     const { client, calls } = makeClient([
       { json: { files: [] } },
-      { headers: { Location: 'https://upload.example/session-4' } },
+      { headers: { Location: 'https://www.googleapis.com/upload/s/session-4' } },
       { networkError: true }, // chunk 1 PUT: connection drops
       { status: 308, headers: { Range: 'bytes=0-3' } }, // offset query: server actually got 4 bytes
       { status: 200, json: { id: 'new-id' } }, // resumed PUT from byte 4: complete
@@ -169,7 +169,7 @@ describe('uploadFile', () => {
   it('propagates a non-retryable failure (e.g. quota) without masking it as a network drop', async () => {
     const { client } = makeClient([
       { json: { files: [] } },
-      { headers: { Location: 'https://upload.example/session-5' } },
+      { headers: { Location: 'https://www.googleapis.com/upload/s/session-5' } },
       // Drive signals quota-exceeded as 403 with this reason - never a 507.
       { status: 403, json: { error: { errors: [{ reason: 'storageQuotaExceeded' }] } } },
     ])
@@ -189,7 +189,7 @@ describe('uploadFile session persistence', () => {
     // process dies mid-transfer (modelled here as an unrecoverable failure).
     const before = makeClient([
       { json: { files: [] } }, // findFileId: not found
-      { headers: { Location: 'https://upload.example/session-restart' } }, // initiate
+      { headers: { Location: 'https://www.googleapis.com/upload/s/session-restart' } }, // initiate
       { status: 308, headers: { Range: 'bytes=0-3' } }, // chunk 1 of 4 bytes: accepted
       // simulated crash - never sent, never resolved cleanly. Quota-exceeded
       // (a real 403 + reason, never a 507) stands in for "some unrecoverable
@@ -204,7 +204,7 @@ describe('uploadFile session persistence', () => {
     // The session was persisted before the first chunk went out, and a crash
     // is not a cancel, so it is still there for the next attempt.
     expect(store.data.get('resumable.db')).toEqual({
-      sessionUrl: 'https://upload.example/session-restart',
+      sessionUrl: 'https://www.googleapis.com/upload/s/session-restart',
       size: 7,
     })
 
@@ -229,7 +229,7 @@ describe('uploadFile session persistence', () => {
 
   it('discards a persisted session once the upload it describes has finished', async () => {
     const store = memorySessionStore()
-    store.data.set('small.db', { sessionUrl: 'https://upload.example/stale', size: 3 })
+    store.data.set('small.db', { sessionUrl: 'https://www.googleapis.com/upload/s/stale', size: 3 })
 
     // Only one request: the offset query itself reports completion (a 200,
     // not a 308) - the completing chunk's own response is what got lost, not
@@ -248,11 +248,11 @@ describe('uploadFile session persistence', () => {
 
   it('ignores a persisted session for a file that has since changed size', async () => {
     const store = memorySessionStore()
-    store.data.set('changed.db', { sessionUrl: 'https://upload.example/old-size', size: 5 })
+    store.data.set('changed.db', { sessionUrl: 'https://www.googleapis.com/upload/s/old-size', size: 5 })
 
     const { client, calls } = makeClient([
       { json: { files: [] } }, // findFileId
-      { headers: { Location: 'https://upload.example/new-size' } }, // fresh session
+      { headers: { Location: 'https://www.googleapis.com/upload/s/new-size' } }, // fresh session
       { status: 200, json: { id: 'new-id' } }, // single PUT, complete
     ], undefined, store)
 
@@ -266,18 +266,18 @@ describe('uploadFile session persistence', () => {
 
   it('discards a persisted session Drive no longer recognises, and starts fresh transparently', async () => {
     const store = memorySessionStore()
-    store.data.set('expired.db', { sessionUrl: 'https://upload.example/expired', size: 3 })
+    store.data.set('expired.db', { sessionUrl: 'https://www.googleapis.com/upload/s/expired', size: 3 })
 
     const { client, calls } = makeClient([
       { status: 404 }, // offset query against the expired session
       { json: { files: [] } }, // findFileId
-      { headers: { Location: 'https://upload.example/fresh' } }, // fresh session
+      { headers: { Location: 'https://www.googleapis.com/upload/s/fresh' } }, // fresh session
       { status: 200, json: { id: 'new-id' } }, // single PUT, complete
     ], undefined, store)
 
     await client.uploadFile('expired.db', memorySource(Uint8Array.from([1, 2, 3])))
 
-    expect(calls[0].url).toBe('https://upload.example/expired')
+    expect(calls[0].url).toBe('https://www.googleapis.com/upload/s/expired')
     expect(calls[2].url).toContain('uploadType=resumable')
     expect(store.data.has('expired.db')).toBe(false)
   })
@@ -288,7 +288,7 @@ describe('uploadFile session persistence', () => {
 
     const { client } = makeClient([
       { json: { files: [] } },
-      { headers: { Location: 'https://upload.example/cancel-me' } },
+      { headers: { Location: 'https://www.googleapis.com/upload/s/cancel-me' } },
       { status: 308, headers: { Range: 'bytes=0-3' } }, // chunk 1: accepted
     ], 4, store)
 

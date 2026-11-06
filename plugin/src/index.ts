@@ -51,6 +51,29 @@ export interface CloudSyncPluginOptions {
 }
 
 /**
+ * What an iCloud container identifier looks like: `iCloud.` followed by a
+ * reverse-DNS name. Checked because the value is written verbatim into the
+ * signed entitlements and Info.plist - a typo, a wildcard (`iCloud.*`) or a
+ * build-setting reference there produces a binary that either fails signing
+ * late or asks for a container it should not have.
+ */
+const CONTAINER_IDENTIFIER = /^iCloud\.[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/
+
+function resolveContainerIdentifier(
+  explicit: string | undefined,
+  bundleId: string | undefined
+): string | undefined {
+  const containerIdentifier = explicit ?? (bundleId != null ? `iCloud.${bundleId}` : undefined)
+  if (containerIdentifier != null && !CONTAINER_IDENTIFIER.test(containerIdentifier))
+    throw new Error(
+      `[react-native-cloud-sync] Invalid iCloud container identifier ${JSON.stringify(containerIdentifier)}. `
+      + 'Expected iCloud.<reverse-dns>, e.g. iCloud.com.example.app: '
+      + 'letters, digits, - and _ separated by dots, no wildcards.'
+    )
+  return containerIdentifier
+}
+
+/**
  * Adds the iCloud entitlements this package needs.
  *
  * Entirely optional: the entitlements are four plist keys, and plenty of
@@ -66,8 +89,7 @@ const withCloudSync: ConfigPlugin<CloudSyncPluginOptions | void> = (config, opti
 
   const withEntitlements = withEntitlementsPlist(config, (mod) => {
     const bundleId = mod.ios?.bundleIdentifier ?? config.ios?.bundleIdentifier
-    const containerIdentifier
-      = opts.containerIdentifier ?? (bundleId != null ? `iCloud.${bundleId}` : undefined)
+    const containerIdentifier = resolveContainerIdentifier(opts.containerIdentifier, bundleId)
 
     if (containerIdentifier == null)
       throw new Error(
@@ -122,7 +144,7 @@ const withCloudSync: ConfigPlugin<CloudSyncPluginOptions | void> = (config, opti
     return mod
   })
 
-  if (!iCloudDocuments) return withEntitlements
+  if (!cloudKit && !iCloudDocuments) return withEntitlements
 
   // Entitlements alone get the folder syncing but leave it invisible. Files.app
   // only shows a container that declares `NSUbiquitousContainers` with
@@ -131,9 +153,23 @@ const withCloudSync: ConfigPlugin<CloudSyncPluginOptions | void> = (config, opti
   // the other would ship a feature that silently does not do its job.
   return withInfoPlist(withEntitlements, (mod) => {
     const bundleId = mod.ios?.bundleIdentifier ?? config.ios?.bundleIdentifier
-    const containerIdentifier
-      = opts.containerIdentifier ?? (bundleId != null ? `iCloud.${bundleId}` : undefined)
+    const containerIdentifier = resolveContainerIdentifier(opts.containerIdentifier, bundleId)
     if (containerIdentifier == null) return mod
+
+    // Entitlements live in the code signature and cannot be read back at
+    // runtime, so the native side looks the container up here. Without it a
+    // `containerIdentifier` passed to this plugin never reached native code,
+    // which fell back to `iCloud.<bundle id>` - a different container from the
+    // one entitled above whenever the two differ.
+    //
+    // Only with CloudKit on. Native code builds a CKContainer from this key,
+    // and doing that without the CloudKit service traps inside CloudKit. The
+    // documents container has its own key for that reason.
+    if (cloudKit) mod.modResults.RNCloudSyncContainerIdentifier = containerIdentifier
+
+    if (!iCloudDocuments) return mod
+
+    mod.modResults.RNCloudSyncDocumentsContainerIdentifier = containerIdentifier
 
     // Merged, not replaced: an app may already declare a second container here
     // for an unrelated document feature, and overwriting the map would break it

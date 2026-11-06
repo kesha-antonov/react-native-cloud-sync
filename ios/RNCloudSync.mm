@@ -10,7 +10,15 @@
     // Events that arrived before JS was ready to receive them.
     NSMutableArray<NSDictionary *> *_pendingEvents;
     BOOL _jsReady;
+    // Legacy architecture only: JS had listeners and then removed them all.
+    // Events in that state are dropped rather than buffered - buffering them
+    // replayed arbitrarily old changes to whoever subscribed next.
+    BOOL _unobserved;
 }
+
+// Hard ceiling on buffered events. Coalescing below keeps the buffer small in
+// practice; this is the backstop so it can never grow without limit.
+static const NSUInteger kMaxPendingEvents = 64;
 
 // Called unconditionally. Even on the New Architecture the module must remain
 // reachable through NativeModules so NativeEventEmitter interop keeps working.
@@ -69,11 +77,61 @@ RCT_EXPORT_MODULE(RNCloudSync)
 {
     @synchronized(self) {
         if (!_jsReady) {
-            [_pendingEvents addObject:@{@"name": name, @"value": payload}];
+            if (!_unobserved) {
+                [self bufferEvent:name value:payload];
+            }
             return;
         }
     }
     [self dispatchEvent:name value:payload];
+}
+
+// What makes two pending events interchangeable, so only the newest is kept:
+// an account change per provider (only the current status matters), a
+// transfer's progress per record+field (only the latest figure matters), and
+// a remote change per provider+reason (whose key lists are merged).
+static NSString *RNCloudSyncCoalesceKey(NSString *name, NSDictionary *payload)
+{
+    if ([name isEqualToString:@"assetProgress"]) {
+        return [NSString stringWithFormat:@"%@|%@|%@", name,
+                payload[@"recordName"] ?: @"", payload[@"fieldName"] ?: @""];
+    }
+    if ([name isEqualToString:@"remoteChange"]) {
+        return [NSString stringWithFormat:@"%@|%@|%@", name,
+                payload[@"provider"] ?: @"", payload[@"reason"] ?: @""];
+    }
+    return [NSString stringWithFormat:@"%@|%@", name, payload[@"provider"] ?: @""];
+}
+
+// Caller holds @synchronized(self).
+- (void)bufferEvent:(NSString *)name value:(NSDictionary *)payload
+{
+    NSString *key = RNCloudSyncCoalesceKey(name, payload);
+    NSDictionary *value = payload;
+
+    for (NSUInteger i = 0; i < _pendingEvents.count; i++) {
+        NSDictionary *existing = _pendingEvents[i];
+        if (![existing[@"key"] isEqualToString:key]) continue;
+
+        if ([name isEqualToString:@"remoteChange"]) {
+            // Both changes happened; the listener needs every key either named.
+            NSMutableOrderedSet *keys = [NSMutableOrderedSet orderedSet];
+            NSArray *previousKeys = existing[@"value"][@"keys"];
+            NSArray *newKeys = payload[@"keys"];
+            if ([previousKeys isKindOfClass:[NSArray class]]) [keys addObjectsFromArray:previousKeys];
+            if ([newKeys isKindOfClass:[NSArray class]]) [keys addObjectsFromArray:newKeys];
+            NSMutableDictionary *merged = [payload mutableCopy];
+            merged[@"keys"] = keys.array;
+            value = merged;
+        }
+        [_pendingEvents removeObjectAtIndex:i];
+        break;
+    }
+
+    [_pendingEvents addObject:@{@"name": name, @"value": value, @"key": key}];
+    while (_pendingEvents.count > kMaxPendingEvents) {
+        [_pendingEvents removeObjectAtIndex:0];
+    }
 }
 
 - (void)dispatchEvent:(NSString *)name value:(NSDictionary *)payload
@@ -98,6 +156,7 @@ RCT_EXPORT_MODULE(RNCloudSync)
     NSArray<NSDictionary *> *pending;
     @synchronized(self) {
         _jsReady = YES;
+        _unobserved = NO;
         pending = [_pendingEvents copy];
         [_pendingEvents removeAllObjects];
     }
@@ -127,6 +186,7 @@ RCT_EXPORT_MODULE(RNCloudSync)
 {
     @synchronized(self) {
         _jsReady = NO;
+        _unobserved = YES;
     }
 }
 #endif
@@ -174,6 +234,18 @@ RCT_EXPORT_METHOD(getAccountStatus:(RCTPromiseResolveBlock)resolve rejecter:(RCT
 RCT_EXPORT_METHOD(isAvailable:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
     [self isAvailable:resolve reject:reject];
+}
+#endif
+
+- (void)kvGetAccountStatus:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    [CloudSyncImpl.shared kvGetAccountStatusWithResolve:resolve reject:reject];
+}
+
+#ifndef RCT_NEW_ARCH_ENABLED
+RCT_EXPORT_METHOD(kvGetAccountStatus:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self kvGetAccountStatus:resolve reject:reject];
 }
 #endif
 

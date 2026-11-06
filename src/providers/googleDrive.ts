@@ -64,6 +64,22 @@ function makeDriveProvider(
       }
     },
 
+    /**
+     * Values plus `modifiedTime` for many keys. The name lookups - which is
+     * where the timestamps come from - collapse into one listing per 50 keys;
+     * each value is still its own download, since Drive has no batch endpoint
+     * for content. Lets the store resolve a batch read without one fresh
+     * `getItemWithMeta` listing per key.
+     */
+    multiGetWithMeta: async (keys: string[]) => {
+      try {
+        return await getClient().getItemsWithMeta(keys)
+      }
+      catch (e) {
+        throw normalizeError(e, name)
+      }
+    },
+
     setItem: async (key: string, value: string) => {
       try {
         await getClient().setItem(key, value)
@@ -112,13 +128,19 @@ function makeDriveProvider(
     // 2020 and never carried media bodies). Advertising a batch API that
     // secretly looped would hide N round trips behind a call that looks like
     // one, so the store's own sequential fallback is used - same cost, honest
-    // about it.
+    // about it. `multiGetWithMeta` above is the exception because it really
+    // does save requests: the per-key listing, not the download.
 
     clearCaches: () => {
       // Memoised file ids belong to the account that was signed in when they
       // were recorded. Handing them to the next user is a cross-account leak.
       if (isConfigured()) getClient().clearCache()
       stopWatching()
+      // The cursor belonged to the previous account, but the subscribers did
+      // not: stopping here without restarting left every existing
+      // `onRemoteChange` listener silently subscribed to nothing after an
+      // account switch.
+      if (changeListeners.size > 0) startWatching()
     },
 
     /**
@@ -149,10 +171,20 @@ function makeDriveProvider(
   let timer: ReturnType<typeof setInterval> | null = null
   let cursor: string | null = null
   let polling = false
+  /**
+   * Bumped on every stop, so a poll that was already in flight when watching
+   * stopped (an unsubscribe, an account switch) cannot write the previous
+   * session's cursor - or report its changes - into the next one.
+   */
+  let generation = 0
 
   function startWatching(): void {
     if (timer != null || !isConfigured()) return
 
+    // Take the starting cursor now, not one interval later: anything another
+    // device wrote between subscribing and the first tick would otherwise land
+    // before the cursor and never be reported.
+    void poll()
     timer = setInterval(() => {
       void poll()
     }, pollIntervalMs)
@@ -165,6 +197,7 @@ function makeDriveProvider(
     if (timer != null) clearInterval(timer)
     timer = null
     cursor = null
+    generation += 1
   }
 
   async function poll(): Promise<void> {
@@ -172,6 +205,7 @@ function makeDriveProvider(
     // would otherwise pile up requests behind it.
     if (polling || !isConfigured()) return
     polling = true
+    const started = generation
 
     try {
       const client = getClient()
@@ -179,11 +213,13 @@ function makeDriveProvider(
         // First tick only establishes the starting cursor. Reporting everything
         // that ever happened as "just changed" would make every subscriber
         // re-read the whole store on launch.
-        cursor = await client.getStartPageToken()
+        const start = await client.getStartPageToken()
+        if (started === generation) cursor = start
         return
       }
 
       const { names, nextToken } = await client.pollChanges(cursor)
+      if (started !== generation) return
       cursor = nextToken
       if (names.length === 0) return
 

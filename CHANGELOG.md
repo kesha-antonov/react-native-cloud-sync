@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- iOS: no `iCloud.<bundle id>` fallback. The CloudKit container comes from `RNCloudSyncContainerIdentifier` in Info.plist (the plugin writes it when `cloudKit` is on). Without it CloudKit calls reject with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` is false, instead of crashing a KV-only app.
+- `cloudKitEncrypted` stores records as `rncs-enc.<key>`, so it no longer collides with `cloudKit`. Old encrypted records are not migrated. `cloudKit` rejects keys with that prefix.
+- `sanitizeKey` appends a hash to every rewritten key, so distinct keys never collide. Previously sanitized keys get new names.
+- In `failover` mode, deletes remove the key from every provider.
+- `icloudKV.getAccountStatus()` reports only `available` or `noAccount` on iOS, and `couldNotDetermine` elsewhere instead of rejecting.
+- CloudKit `ACCESS_DENIED` is `ERR_CONTAINER_MISCONFIGURED` and no longer calls `onAuthExpired`. Drive 5xx errors are retryable.
+- `ResolveFn` has an optional `usesModifiedAt`. Batch reads resolve with server timestamps and run read repair, like `getItem`.
+- `autoFlush` only flushes while the app is active. On the Legacy Architecture, events with no JS listener are dropped.
+- `cloudKitEncrypted` failed writes are queued in memory only, never in `outboxStorage`, so they are lost on restart. Entries an older version persisted are moved to memory and removed from storage.
+- CloudKit reads reject with `ERR_INVALID_KEY` when the record under that name has a different record type.
+- `cloudKitAssets.save`/`fetch` reject record names starting with `rncs-enc.`.
+- The default native asset download path is `tmp/rncs-asset-<hash>`, no longer derived from the record name.
+- `base64ToBytes` throws a `TypeError` on invalid input.
+- The config plugin rejects a `containerIdentifier` that is not `iCloud.<reverse-dns>`.
+
+### Security
+
+- Google Drive: the token is only sent to `https://www.googleapis.com` or `https://<host>.googleapis.com/upload/`. Other URLs (a tampered `sessionStore` entry, a `Location` header) are refused with `serverErrorCode: 'UNTRUSTED_URL'`; an untrusted stored session starts fresh. Multipart boundaries are random and never occur in the body.
+- CloudKit REST: a lookup never returns a differently named record, and asset URLs must be HTTPS (`UNTRUSTED_URL`).
+- Server `Retry-After` / `retryAfter` is clamped to 0 to 1 hour.
+- `__proto__` and `constructor` are ordinary keys in `getAllItems` and `useCloudItems`.
+- iOS: invalid CloudKit record names, zone names, record types and field names reject with `ERR_INVALID_KEY` instead of crashing the app.
+- iOS: asset and iCloud Drive fetches refuse a directory as destination (a symlink replaces only the link), and saving or fetching a document onto itself is a no-op instead of deleting it. `icloudDocuments.fetch` rejects a NaN or negative `timeoutMs` and caps it at 1 hour.
+- Release: build and publish are separate jobs; the publish job only publishes the packed tarball, so no install scripts run while the OIDC token exists. The release tag must match `package.json`.
+- Dev dependency advisories fixed via yarn `resolutions`; `deepmerge` (low) has no patched release.
+
+### Fixes
+
+- Store: no lost or resurrected writes in `flushOutbox()`, same-key writes are serialised, read repair respects queued writes, tiering removes stale copies.
+- Hooks: race fixes in `useCloudItem`, `useCloudItems`, `useCloudCollection` and `useAccountStatus`.
+- Google Drive: resumable uploads resume from the right offset and retry timeouts; stale cached ids, duplicate names and change polling are handled.
+- CloudKit: asset download URLs, `partialFailure` error codes, and the asset fetch promise settling twice.
+- iOS: the plugin's `containerIdentifier` reaches native code; notifications no longer repeat after a JS reload; the podspec keeps React Native's C++20 settings.
+- iCloud Drive: names are validated, and not-yet-downloaded files are reported and removed correctly.
+- The TurboModule spec typechecks on React Native 0.88 with unchanged codegen output.
+
+### Other
+
+- Example app on Expo SDK 58 and React Native 0.88, which the iOS 27 SDK needs.
+
 ## 0.4.0 - 2026-09-15
 
 - **`useCloudItems` and `useCloudCollection`** - a screen backed by many keys

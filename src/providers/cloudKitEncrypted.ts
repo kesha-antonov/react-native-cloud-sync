@@ -1,7 +1,8 @@
 import { Platform } from 'react-native'
 
 import { getNativeModule, hasNativeModule, requireNativeModule } from '../internal/nativeModule'
-import { normalizeError, unsupportedPlatform } from '../errors'
+import { CloudSyncError, ErrorCode, normalizeError, unsupportedPlatform } from '../errors'
+import { ENCRYPTED_RECORD_PREFIX } from '../internal/cloudKitRest'
 import { toAccountStatus } from '../internal/enums'
 import type { AccountStatus, CloudProvider } from '../types'
 
@@ -16,6 +17,28 @@ const NAME = 'cloudKitEncrypted' as const
  * so the two providers must not share a record type.
  */
 const RECORD_TYPE = 'EncryptedKVBlob'
+
+/** CloudKit's ceiling on a record name, which the prefix eats into. */
+const CK_MAX_RECORD_NAME = 255
+
+/**
+ * The CloudKit record name for `key`.
+ *
+ * Prefixed because record names are unique per zone *across* record types: a
+ * separate record type alone did not keep this provider's `token` apart from
+ * `cloudKit`'s `token`, so one provider's delete removed the other's record.
+ */
+function toRecordName(key: string): string {
+  const recordName = `${ENCRYPTED_RECORD_PREFIX}${key}`
+  if (recordName.length > CK_MAX_RECORD_NAME)
+    throw new CloudSyncError(
+      ErrorCode.INVALID_KEY,
+      `[RNCloudSync] '${key}' is too long for ${NAME}: with its '${ENCRYPTED_RECORD_PREFIX}' `
+      + `record-name prefix it exceeds CloudKit's ${CK_MAX_RECORD_NAME}-character limit.`,
+      { provider: NAME }
+    )
+  return recordName
+}
 
 function isNative(): boolean {
   const os: string | undefined = Platform?.OS
@@ -98,7 +121,7 @@ export const cloudKitEncrypted: CloudProvider = {
   getItem: async (key: string) => {
     assertNative()
     try {
-      return await requireNativeModule().ckGetRecord(RECORD_TYPE, key, null, true)
+      return await requireNativeModule().ckGetRecord(RECORD_TYPE, toRecordName(key), null, true)
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -108,7 +131,7 @@ export const cloudKitEncrypted: CloudProvider = {
   setItem: async (key: string, value: string) => {
     assertNative()
     try {
-      await requireNativeModule().ckSaveRecord(RECORD_TYPE, key, value, null, true)
+      await requireNativeModule().ckSaveRecord(RECORD_TYPE, toRecordName(key), value, null, true)
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -118,7 +141,7 @@ export const cloudKitEncrypted: CloudProvider = {
   removeItem: async (key: string) => {
     assertNative()
     try {
-      await requireNativeModule().ckDeleteRecord(key, null)
+      await requireNativeModule().ckDeleteRecord(toRecordName(key), null)
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -132,7 +155,13 @@ export const cloudKitEncrypted: CloudProvider = {
   getAllKeys: async () => {
     assertNative()
     try {
-      return await requireNativeModule().ckQueryRecordNames(RECORD_TYPE, null)
+      const names = await requireNativeModule().ckQueryRecordNames(RECORD_TYPE, null)
+      // Only prefixed names are this provider's keys. An unprefixed record of
+      // this type predates the prefix and is not readable through it, so it is
+      // not listed as though it were.
+      return names
+        .filter(n => n.startsWith(ENCRYPTED_RECORD_PREFIX))
+        .map(n => n.slice(ENCRYPTED_RECORD_PREFIX.length))
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -144,7 +173,7 @@ export const cloudKitEncrypted: CloudProvider = {
     try {
       const out: (string | null)[] = []
       for (const key of keys)
-        out.push(await requireNativeModule().ckGetRecord(RECORD_TYPE, key, null, true))
+        out.push(await requireNativeModule().ckGetRecord(RECORD_TYPE, toRecordName(key), null, true))
       return out
     }
     catch (e) {
@@ -156,7 +185,7 @@ export const cloudKitEncrypted: CloudProvider = {
     assertNative()
     try {
       for (const [key, value] of entries)
-        await requireNativeModule().ckSaveRecord(RECORD_TYPE, key, value, null, true)
+        await requireNativeModule().ckSaveRecord(RECORD_TYPE, toRecordName(key), value, null, true)
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -166,7 +195,7 @@ export const cloudKitEncrypted: CloudProvider = {
   multiRemove: async (keys: string[]) => {
     assertNative()
     try {
-      for (const key of keys) await requireNativeModule().ckDeleteRecord(key, null)
+      for (const key of keys) await requireNativeModule().ckDeleteRecord(toRecordName(key), null)
     }
     catch (e) {
       throw normalizeError(e, NAME)

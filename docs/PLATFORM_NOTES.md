@@ -23,7 +23,18 @@ Three keys are needed. The Expo config plugin writes them; in a bare project add
 <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
 ```
 
-Read from entitlements at runtime, so it never needs repeating in JavaScript.
+Entitlements can't be read back at runtime, so the native side looks the CloudKit container up in `Info.plist` under `RNCloudSyncContainerIdentifier`. The Expo config plugin writes it when `cloudKit` is on; in a bare project add it next to the entitlements:
+
+```xml
+<key>RNCloudSyncContainerIdentifier</key>
+<string>iCloud.com.your.app</string>
+```
+
+There is no `iCloud.<bundle id>` guess. Without the key CloudKit is off for the build: every `cloudKit` / `cloudKitEncrypted` call rejects with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` resolves false. That is what keeps a key-value-store-only app safe - building a `CKContainer` the app isn't entitled to traps inside CloudKit, which is how such an app used to crash.
+
+The plugin's `containerIdentifier` (default `iCloud.<bundle id>`) must be `iCloud.` plus a reverse-DNS name: letters, digits, `-` and `_` separated by dots. Anything else, such as a wildcard or a `$(...)` build setting, fails the prebuild.
+
+iCloud Drive has its own optional key, `RNCloudSyncDocumentsContainerIdentifier` - see [iCloud Drive setup](providers/icloud-drive.md#setup).
 
 ### `synchronize()` is not a round trip
 
@@ -85,6 +96,8 @@ Both are supported, from React Native 0.71.
 - **Legacy Architecture**: an `RCTEventEmitter` bridge module.
 
 One Swift implementation sits behind both; the `.mm` file picks a base class with `#ifdef RCT_NEW_ARCH_ENABLED` and forwards. Event names differ per architecture (`onRemoteChange` vs `remoteChange`); the JS layer handles that, so it never reaches your code.
+
+Native events that fire before JavaScript's first listener are buffered and delivered once it subscribes - coalesced (only the latest account status and transfer progress, remote-change key lists merged) and capped at 64. On the Legacy Architecture, events that fire after JavaScript has removed every listener are dropped rather than replayed to whoever subscribes next.
 
 React Native 0.82 removed the Legacy Architecture, so that path matters only on 0.81 and below.
 

@@ -122,7 +122,9 @@ describe('an id that another device deleted', () => {
   })
 
   it('does not mistake a real failure for a stale id', async () => {
-    const { client } = makeClient([found('id-1', 'k'), { status: 500 }])
+    // 400, not 500: a 5xx is transient and classified as retryable now, so
+    // it no longer stands in for "a real, non-retryable failure".
+    const { client } = makeClient([found('id-1', 'k'), { status: 400 }])
 
     await expect(client.getItem('k')).rejects.toMatchObject({
       code: ErrorCode.UNKNOWN,

@@ -17,7 +17,7 @@ import type { ResolveCandidate, ResolveFn } from './types'
  * ```
  */
 export function resolveByTimestamp(field = 'updatedAt'): ResolveFn {
-  return (candidates: ResolveCandidate[]): string | null => {
+  return declare(false, (candidates: ResolveCandidate[]): string | null => {
     if (candidates.length === 0) return null
 
     let best: ResolveCandidate | null = null
@@ -36,7 +36,19 @@ export function resolveByTimestamp(field = 'updatedAt'): ResolveFn {
     // Nothing was datable: fall back to preference order rather than guessing.
     if (best == null) return candidates[0].value
     return best.value
-  }
+  })
+}
+
+/** Tags a resolver with whether it reads `modifiedAt` - see {@link ResolveFn.usesModifiedAt}. */
+function declare(usesModifiedAt: boolean, fn: (c: ResolveCandidate[]) => string | null): ResolveFn {
+  const resolver: ResolveFn = fn
+  resolver.usesModifiedAt = usesModifiedAt
+  return resolver
+}
+
+/** Unknown counts as "uses it": over-fetching is slower, under-fetching is wrong. */
+function needsModifiedAt(resolver: ResolveFn): boolean {
+  return resolver.usesModifiedAt !== false
 }
 
 function timestampOf(value: string, field: string): number {
@@ -58,8 +70,8 @@ function timestampOf(value: string, field: string): number {
 }
 
 /** Always takes the first provider that has a value. The default behaviour. */
-export const resolveByPreferenceOrder: ResolveFn = candidates =>
-  candidates.length > 0 ? candidates[0].value : null
+export const resolveByPreferenceOrder: ResolveFn = declare(false, candidates =>
+  candidates.length > 0 ? candidates[0].value : null)
 
 /**
  * Resolves by the *server's* last-modified time rather than a timestamp inside
@@ -91,7 +103,7 @@ export function resolveByModifiedAt(
 ): ResolveFn {
   const fallback = options.fallback ?? resolveByPreferenceOrder
 
-  return (candidates: ResolveCandidate[]): string | null => {
+  return declare(true, (candidates: ResolveCandidate[]): string | null => {
     if (candidates.length === 0) return null
 
     const dated = candidates.filter(
@@ -109,7 +121,7 @@ export function resolveByModifiedAt(
     for (const candidate of dated) if (candidate.modifiedAt > best.modifiedAt) best = candidate
 
     return best.value
-  }
+  })
 }
 
 /**
@@ -153,7 +165,7 @@ export function resolveByUnion<T = unknown>(
 ): ResolveFn {
   const keyOf = options.key ?? ((item: T) => JSON.stringify(item))
 
-  return (candidates: ResolveCandidate[]): string | null => {
+  return declare(false, (candidates: ResolveCandidate[]): string | null => {
     if (candidates.length === 0) return null
 
     const merged = new Map<string | number, T>()
@@ -174,7 +186,7 @@ export function resolveByUnion<T = unknown>(
     if (!sawArray) return candidates[0].value
 
     return JSON.stringify([...merged.values()])
-  }
+  })
 }
 
 function arrayOf<T>(value: string): T[] | null {
@@ -190,19 +202,22 @@ function arrayOf<T>(value: string): T[] | null {
 /**
  * Tries each resolver in turn and takes the first non-null answer.
  *
- * The practical combination for a mixed fleet: server time where the provider
- * reports it, an embedded timestamp where it does not.
+ * Only resolvers that can return `null` for a non-empty candidate list let a
+ * later one run. {@link resolveByModifiedAt} never does - with nothing dated it
+ * defers to its own `fallback` - so for "server time where the provider
+ * reports it, an embedded timestamp where it does not", pass the second one as
+ * that fallback instead:
  *
  * ```ts
- * resolveFirstOf(resolveByModifiedAt(), resolveByTimestamp('updatedAt'))
+ * resolveByModifiedAt({ fallback: resolveByTimestamp('updatedAt') })
  * ```
  */
 export function resolveFirstOf(...resolvers: ResolveFn[]): ResolveFn {
-  return (candidates: ResolveCandidate[]): string | null => {
+  return declare(resolvers.some(needsModifiedAt), (candidates: ResolveCandidate[]): string | null => {
     for (const resolve of resolvers) {
       const answer = resolve(candidates)
       if (answer != null) return answer
     }
     return null
-  }
+  })
 }

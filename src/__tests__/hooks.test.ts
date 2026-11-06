@@ -29,9 +29,14 @@ describe('useCloudItem', () => {
     const mem = createMemoryProvider({ initial: { settings: '"dark"' } })
     const store = setup(mem)
 
-    const { result } = renderHook(() => useCloudItem<string>(store, 'settings'))
+    const loadingSeen: boolean[] = []
+    const { result } = await renderHook(() => {
+      const r = useCloudItem<string>(store, 'settings')
+      loadingSeen.push(r.loading)
+      return r
+    })
 
-    expect(result.current.loading).toBe(true)
+    expect(loadingSeen[0]).toBe(true)
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     expect(result.current.value).toBe('dark')
@@ -41,7 +46,7 @@ describe('useCloudItem', () => {
   it('resolves to the default initialValue for a missing key', async () => {
     const store = setup(createMemoryProvider())
 
-    const { result } = renderHook(() => useCloudItem<string>(store, 'nope', { initialValue: 'fallback' }))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'nope', { initialValue: 'fallback' }))
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.value).toBeNull()
@@ -50,11 +55,11 @@ describe('useCloudItem', () => {
   it('setValue writes optimistically and persists', async () => {
     const mem = createMemoryProvider()
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     let write!: Promise<void>
-    act(() => {
+    await act(() => {
       write = result.current.setValue('v')
     })
     // The optimistic update lands before the write settles.
@@ -67,7 +72,7 @@ describe('useCloudItem', () => {
   it('remove clears the value and deletes the key', async () => {
     const mem = createMemoryProvider({ initial: { k: '"v"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(() => result.current.remove())
@@ -81,7 +86,7 @@ describe('useCloudItem', () => {
       faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },
     })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(async () => {
@@ -98,7 +103,7 @@ describe('useCloudItem', () => {
       faults: { removeItem: { code: ErrorCode.QUOTA_EXCEEDED } },
     })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(async () => {
@@ -114,7 +119,7 @@ describe('useCloudItem', () => {
       faults: { setItem: { code: ErrorCode.NETWORK_UNAVAILABLE } },
     })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(() => result.current.setValue('v'))
@@ -127,7 +132,7 @@ describe('useCloudItem', () => {
   it('a failed read keeps the last known value instead of blanking it', async () => {
     const mem = createMemoryProvider({ initial: { k: '"v"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.value).toBe('v')
 
@@ -141,11 +146,11 @@ describe('useCloudItem', () => {
   it('re-reads when another device changes the same key', async () => {
     const mem = createMemoryProvider({ initial: { k: '"v1"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mem.seed({ k: '"v2"' })
-    act(() => mem.emitRemoteChange({ keys: ['k'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['k'] }))
 
     await waitFor(() => expect(result.current.value).toBe('v2'))
   })
@@ -153,12 +158,12 @@ describe('useCloudItem', () => {
   it('ignores a remote change naming a different key', async () => {
     const mem = createMemoryProvider({ initial: { k: '"v1"', other: '"x"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
     const readsBefore = mem.calls.getItem
 
     mem.seed({ k: '"v1"', other: '"y"' })
-    act(() => mem.emitRemoteChange({ keys: ['other'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['other'] }))
 
     // Nothing to await: assert no extra read was ever issued.
     await new Promise(r => setTimeout(r, 0))
@@ -169,11 +174,11 @@ describe('useCloudItem', () => {
   it('re-reads on an opaque event naming no keys', async () => {
     const mem = createMemoryProvider({ initial: { k: '"v1"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mem.seed({ k: '"v2"' })
-    act(() => mem.emitRemoteChange({ keys: [], reason: 'accountChange' }))
+    await act(() => mem.emitRemoteChange({ keys: [], reason: 'accountChange' }))
 
     await waitFor(() => expect(result.current.value).toBe('v2'))
   })
@@ -181,11 +186,11 @@ describe('useCloudItem', () => {
   it('does not watch when watch is false', async () => {
     const mem = createMemoryProvider({ initial: { k: '"v1"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k', { watch: false }))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k', { watch: false }))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mem.seed({ k: '"v2"' })
-    act(() => mem.emitRemoteChange({ keys: ['k'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['k'] }))
 
     await new Promise(r => setTimeout(r, 0))
     expect(result.current.value).toBe('v1')
@@ -194,7 +199,7 @@ describe('useCloudItem', () => {
   it('supports a plain-string codec via identity parse/serialize', async () => {
     const mem = createMemoryProvider({ initial: { theme: 'dark' } })
     const store = setup(mem)
-    const { result } = renderHook(() =>
+    const { result } = await renderHook(() =>
       useCloudItem<string>(store, 'theme', { parse: raw => raw, serialize: value => value })
     )
     await waitFor(() => expect(result.current.loading).toBe(false))
@@ -207,11 +212,11 @@ describe('useCloudItem', () => {
   it('a slow response from before a write cannot land on top of it', async () => {
     const mem = createMemoryProvider({ initial: { k: '"server"' }, latencyMs: 30 })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItem<string>(store, 'k'))
+    const { result } = await renderHook(() => useCloudItem<string>(store, 'k'))
 
     // The initial read is still in flight (30ms latency) when the write lands.
     let write!: Promise<void>
-    act(() => {
+    await act(() => {
       write = result.current.setValue('optimistic')
     })
     await act(() => write)
@@ -228,8 +233,13 @@ describe('useCloudItems', () => {
     const store = setup(mem)
     const readsBefore = mem.calls.getItem
 
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a', 'b']))
-    expect(result.current.loading).toBe(true)
+    const loadingSeen: boolean[] = []
+    const { result } = await renderHook(() => {
+      const r = useCloudItems<string>(store, ['a', 'b'])
+      loadingSeen.push(r.loading)
+      return r
+    })
+    expect(loadingSeen[0]).toBe(true)
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     expect(result.current.values).toEqual({ a: '1', b: '2' })
@@ -238,7 +248,7 @@ describe('useCloudItems', () => {
 
   it('a key that was never written resolves to null, not missing', async () => {
     const store = setup(createMemoryProvider({ initial: { a: '"1"' } }))
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a', 'missing']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a', 'missing']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     expect(result.current.values).toEqual({ a: '1', missing: null })
@@ -246,7 +256,7 @@ describe('useCloudItems', () => {
 
   it('resolves loading immediately for an empty key list', async () => {
     const store = setup(createMemoryProvider())
-    const { result } = renderHook(() => useCloudItems<string>(store, []))
+    const { result } = await renderHook(() => useCloudItems<string>(store, []))
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.values).toEqual({})
   })
@@ -254,7 +264,7 @@ describe('useCloudItems', () => {
   it('setValue updates only the written key', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a', 'b']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a', 'b']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(() => result.current.setValue('a', '9'))
@@ -266,7 +276,7 @@ describe('useCloudItems', () => {
   it('remove sets the key to null and deletes it from the provider', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a', 'b']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a', 'b']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(() => result.current.remove('a'))
@@ -281,7 +291,7 @@ describe('useCloudItems', () => {
       faults: { setItem: { code: ErrorCode.QUOTA_EXCEEDED } },
     })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(async () => {
@@ -298,7 +308,7 @@ describe('useCloudItems', () => {
       faults: { removeItem: { code: ErrorCode.QUOTA_EXCEEDED } },
     })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     await act(async () => {
@@ -312,7 +322,7 @@ describe('useCloudItems', () => {
   it('a still-current failed fetch surfaces an error', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mem.setFault('getItem', { code: ErrorCode.NETWORK_UNAVAILABLE })
@@ -329,7 +339,7 @@ describe('useCloudItems', () => {
   it('refresh re-fetches every tracked key, picking up an out-of-band change', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mem.seed({ a: '"2"' })
@@ -341,13 +351,13 @@ describe('useCloudItems', () => {
   it('a remote change naming one tracked key only re-fetches that key', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a', 'b']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a', 'b']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     // If the whole batch were re-fetched, this would fail and set `error`.
     mem.setFault('getItem', { code: ErrorCode.NETWORK_UNAVAILABLE, only: k => k === 'b' })
     mem.seed({ a: '"9"', b: '"2"' })
-    act(() => mem.emitRemoteChange({ keys: ['a'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['a'] }))
 
     await waitFor(() => expect(result.current.values.a).toBe('9'))
     expect(result.current.error).toBeNull()
@@ -356,11 +366,11 @@ describe('useCloudItems', () => {
   it('ignores a remote change naming no tracked key', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a']))
     await waitFor(() => expect(result.current.loading).toBe(false))
     const readsBefore = mem.calls.getItem
 
-    act(() => mem.emitRemoteChange({ keys: ['unrelated'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['unrelated'] }))
     await new Promise(r => setTimeout(r, 0))
 
     expect(mem.calls.getItem).toBe(readsBefore)
@@ -369,11 +379,11 @@ describe('useCloudItems', () => {
   it('an opaque remote change re-fetches every tracked key', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a', 'b']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a', 'b']))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
     mem.seed({ a: '"9"', b: '"9"' })
-    act(() => mem.emitRemoteChange({ keys: [], reason: 'accountChange' }))
+    await act(() => mem.emitRemoteChange({ keys: [], reason: 'accountChange' }))
 
     await waitFor(() => expect(result.current.values).toEqual({ a: '9', b: '9' }))
   })
@@ -381,7 +391,7 @@ describe('useCloudItems', () => {
   it('a key newly added to the list is fetched without re-fetching known keys', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' } })
     const store = setup(mem)
-    const { result, rerender } = renderHook(
+    const { result, rerender } = await renderHook(
       ({ keys }: { keys: string[] }) => useCloudItems<string>(store, keys),
       { initialProps: { keys: ['a'] } }
     )
@@ -389,7 +399,7 @@ describe('useCloudItems', () => {
 
     // If `b` joining the list re-fetched `a` too, this fault would trip it.
     mem.setFault('getItem', { code: ErrorCode.NETWORK_UNAVAILABLE, only: k => k === 'a' })
-    rerender({ keys: ['a', 'b'] })
+    await rerender({ keys: ['a', 'b'] })
 
     await waitFor(() => expect(result.current.values.b).toBe('2'))
     expect(result.current.error).toBeNull()
@@ -399,13 +409,13 @@ describe('useCloudItems', () => {
   it('drops a value for a key removed from the list', async () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' } })
     const store = setup(mem)
-    const { result, rerender } = renderHook(
+    const { result, rerender } = await renderHook(
       ({ keys }: { keys: string[] }) => useCloudItems<string>(store, keys),
       { initialProps: { keys: ['a', 'b'] } }
     )
     await waitFor(() => expect(result.current.loading).toBe(false))
 
-    rerender({ keys: ['a'] })
+    await rerender({ keys: ['a'] })
 
     await waitFor(() => expect(Object.keys(result.current.values)).toEqual(['a']))
   })
@@ -414,10 +424,10 @@ describe('useCloudItems', () => {
     const mem = createMemoryProvider({ initial: { a: '"server"' }, latencyMs: 30 })
     const store = setup(mem)
     // Mounting starts the initial (slow) fetch for `a`.
-    const { result } = renderHook(() => useCloudItems<string>(store, ['a']))
+    const { result } = await renderHook(() => useCloudItems<string>(store, ['a']))
 
     let write!: Promise<void>
-    act(() => {
+    await act(() => {
       write = result.current.setValue('a', 'optimistic')
     })
     await act(() => write)
@@ -430,14 +440,14 @@ describe('useCloudItems', () => {
     const mem = createMemoryProvider({ initial: { a: '"1"', b: '"2"' }, latencyMs: 30 })
     const store = setup(mem)
     // The initial batched fetch for [a, b] is now in flight (30ms).
-    const { result, rerender } = renderHook(
+    const { result, rerender } = await renderHook(
       ({ keys }: { keys: string[] }) => useCloudItems<string>(store, keys),
       { initialProps: { keys: ['a', 'b'] } }
     )
 
     // A third key joins mid-flight and starts its own fetch.
     mem.seed({ a: '"1"', b: '"2"', c: '"3"' })
-    rerender({ keys: ['a', 'b', 'c'] })
+    await rerender({ keys: ['a', 'b', 'c'] })
 
     await waitFor(() => expect(result.current.values).toEqual({ a: '1', b: '2', c: '3' }), {
       timeout: 2000,
@@ -448,7 +458,7 @@ describe('useCloudItems', () => {
 describe('useCloudCollection', () => {
   it('lists every key starting with the prefix', async () => {
     const store = setup(createMemoryProvider({ initial: { 'note:1': '"a"', 'note:2': '"b"', 'other': '"c"' } }))
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
 
     await waitFor(() => expect(result.current.keys.sort()).toEqual(['note:1', 'note:2']))
     await waitFor(() => expect(result.current.values).toEqual({ 'note:1': 'a', 'note:2': 'b' }))
@@ -456,10 +466,10 @@ describe('useCloudCollection', () => {
 
   it('setValue for a new key joins the collection immediately', async () => {
     const store = setup(createMemoryProvider())
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
     await waitFor(() => expect(result.current.keys).toEqual([]))
 
-    act(() => {
+    await act(() => {
       void result.current.setValue('note:1', 'hello')
     })
 
@@ -473,7 +483,7 @@ describe('useCloudCollection', () => {
 
   it('a key outside the prefix does not join the collection', async () => {
     const store = setup(createMemoryProvider())
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
     await waitFor(() => expect(result.current.keys).toEqual([]))
 
     await act(() => result.current.setValue('other:1', 'x'))
@@ -483,7 +493,7 @@ describe('useCloudCollection', () => {
 
   it('remove drops the key from the collection', async () => {
     const store = setup(createMemoryProvider({ initial: { 'note:1': '"a"' } }))
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
     await waitFor(() => expect(result.current.keys).toEqual(['note:1']))
 
     await act(() => result.current.remove('note:1'))
@@ -494,11 +504,11 @@ describe('useCloudCollection', () => {
   it('re-lists after a remote change under the prefix', async () => {
     const mem = createMemoryProvider({ initial: { 'note:1': '"a"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
     await waitFor(() => expect(result.current.keys).toEqual(['note:1']))
 
     mem.seed({ 'note:1': '"a"', 'note:2': '"b"' })
-    act(() => mem.emitRemoteChange({ keys: ['note:2'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['note:2'] }))
 
     await waitFor(() => expect(result.current.keys.sort()).toEqual(['note:1', 'note:2']))
     await waitFor(() => expect(result.current.values['note:2']).toBe('b'))
@@ -507,11 +517,11 @@ describe('useCloudCollection', () => {
   it('does not re-list for a remote change outside the prefix', async () => {
     const mem = createMemoryProvider({ initial: { 'note:1': '"a"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
     await waitFor(() => expect(result.current.keys).toEqual(['note:1']))
     const listsBefore = mem.calls.getAllKeys
 
-    act(() => mem.emitRemoteChange({ keys: ['other:1'] }))
+    await act(() => mem.emitRemoteChange({ keys: ['other:1'] }))
     await new Promise(r => setTimeout(r, 0))
 
     expect(mem.calls.getAllKeys).toBe(listsBefore)
@@ -520,7 +530,7 @@ describe('useCloudCollection', () => {
   it('refresh picks up a member that appeared out of band', async () => {
     const mem = createMemoryProvider({ initial: { 'note:1': '"a"' } })
     const store = setup(mem)
-    const { result } = renderHook(() => useCloudCollection<string>(store, 'note:'))
+    const { result } = await renderHook(() => useCloudCollection<string>(store, 'note:'))
     await waitFor(() => expect(result.current.keys).toEqual(['note:1']))
 
     mem.seed({ 'note:1': '"a"', 'note:2': '"b"' })
@@ -534,7 +544,7 @@ describe('useCloudCollection', () => {
 describe('useAccountStatus', () => {
   it('reads the initial status', async () => {
     const mem = createMemoryProvider({ accountStatus: 'available' })
-    const { result } = renderHook(() => useAccountStatus(mem))
+    const { result } = await renderHook(() => useAccountStatus(mem))
 
     await waitFor(() => expect(result.current.status).toBe('available'))
     expect(result.current.identityChanged).toBe(false)
@@ -542,30 +552,30 @@ describe('useAccountStatus', () => {
 
   it('updates status from an account-change event', async () => {
     const mem = createMemoryProvider({ accountStatus: 'available' })
-    const { result } = renderHook(() => useAccountStatus(mem))
+    const { result } = await renderHook(() => useAccountStatus(mem))
     await waitFor(() => expect(result.current.status).toBe('available'))
 
-    act(() => mem.emitAccountChange({ status: 'noAccount' }))
+    await act(() => mem.emitAccountChange({ status: 'noAccount' }))
 
     await waitFor(() => expect(result.current.status).toBe('noAccount'))
   })
 
   it('latches identityChanged and keeps it true after a later unrelated event', async () => {
     const mem = createMemoryProvider({ accountStatus: 'available' })
-    const { result } = renderHook(() => useAccountStatus(mem))
+    const { result } = await renderHook(() => useAccountStatus(mem))
     await waitFor(() => expect(result.current.status).toBe('available'))
 
-    act(() => mem.emitAccountChange({ status: 'available', identityChanged: true }))
+    await act(() => mem.emitAccountChange({ status: 'available', identityChanged: true }))
     await waitFor(() => expect(result.current.identityChanged).toBe(true))
 
-    act(() => mem.emitAccountChange({ status: 'available', identityChanged: false }))
+    await act(() => mem.emitAccountChange({ status: 'available', identityChanged: false }))
     await new Promise(r => setTimeout(r, 0))
     expect(result.current.identityChanged).toBe(true)
   })
 
   it('surfaces a failed refresh without crashing', async () => {
     const mem = createMemoryProvider()
-    const { result } = renderHook(() => useAccountStatus(mem))
+    const { result } = await renderHook(() => useAccountStatus(mem))
     await waitFor(() => expect(result.current.status).not.toBeNull())
 
     mem.setFault('getAccountStatus', { code: ErrorCode.NETWORK_UNAVAILABLE })
@@ -586,7 +596,7 @@ describe('useAccountStatus', () => {
       getAllKeys: mem.getAllKeys,
     }
 
-    const { result } = renderHook(() => useAccountStatus(minimal))
+    const { result } = await renderHook(() => useAccountStatus(minimal))
     await waitFor(() => expect(result.current.status).toBe('available'))
   })
 })
@@ -600,7 +610,7 @@ describe('usePendingWrites', () => {
     await store.setItem('k', 'v')
     expect(store.pendingWrites()).toHaveLength(1)
 
-    const { result } = renderHook(() => usePendingWrites(store))
+    const { result } = await renderHook(() => usePendingWrites(store))
     await waitFor(() => expect(result.current.pending).toHaveLength(1))
 
     await act(() => result.current.flush())
@@ -617,10 +627,10 @@ describe('usePendingWrites', () => {
     await store.setItem('a', '1')
     await store.setItem('b', '2')
 
-    const { result } = renderHook(() => usePendingWrites(store))
+    const { result } = await renderHook(() => usePendingWrites(store))
     await waitFor(() => expect(result.current.pending).toHaveLength(2))
 
-    act(() => result.current.discard(e => e.key === 'a'))
+    await act(() => result.current.discard(e => e.key === 'a'))
 
     expect(result.current.pending).toHaveLength(1)
     expect(result.current.pending[0]).toMatchObject({ key: 'b' })
@@ -634,14 +644,14 @@ describe('usePendingWrites', () => {
       })
       const store = setup(mem)
 
-      const { result } = renderHook(() => usePendingWrites(store, 1000))
+      const { result } = await renderHook(() => usePendingWrites(store, 1000))
       expect(result.current.pending).toHaveLength(0)
 
       // Queued directly against the store, bypassing the hook's own actions.
       await store.setItem('k', 'v')
       expect(result.current.pending).toHaveLength(0)
 
-      act(() => {
+      await act(() => {
         jest.advanceTimersByTime(1000)
       })
 
@@ -654,13 +664,13 @@ describe('usePendingWrites', () => {
 })
 
 describe('useRemoteChange', () => {
-  it('invokes the listener with the event', () => {
+  it('invokes the listener with the event', async () => {
     const mem = createMemoryProvider()
     const store = setup(mem)
     const listener = jest.fn()
-    renderHook(() => useRemoteChange(store, listener))
+    await renderHook(() => useRemoteChange(store, listener))
 
-    act(() => mem.emitRemoteChange({ keys: ['k'], reason: 'serverChange' }))
+    await act(() => mem.emitRemoteChange({ keys: ['k'], reason: 'serverChange' }))
 
     expect(listener).toHaveBeenCalledTimes(1)
     expect(listener).toHaveBeenCalledWith(
@@ -668,40 +678,40 @@ describe('useRemoteChange', () => {
     )
   })
 
-  it('a new inline listener on rerender does not create a second subscription', () => {
+  it('a new inline listener on rerender does not create a second subscription', async () => {
     const mem = createMemoryProvider()
     const store = setup(mem)
     const calls: number[] = []
-    const { rerender } = renderHook(
+    const { rerender } = await renderHook(
       ({ tag }: { tag: number }) => useRemoteChange(store, () => calls.push(tag)),
       { initialProps: { tag: 1 } }
     )
-    rerender({ tag: 2 })
-    rerender({ tag: 3 })
+    await rerender({ tag: 2 })
+    await rerender({ tag: 3 })
 
-    act(() => mem.emitRemoteChange({ keys: [] }))
+    await act(() => mem.emitRemoteChange({ keys: [] }))
 
     // Only the latest listener should have fired, and only once.
     expect(calls).toEqual([3])
   })
 
-  it('stops listening after unmount', () => {
+  it('stops listening after unmount', async () => {
     const mem = createMemoryProvider()
     const store = setup(mem)
     const listener = jest.fn()
-    const { unmount } = renderHook(() => useRemoteChange(store, listener))
-    unmount()
+    const { unmount } = await renderHook(() => useRemoteChange(store, listener))
+    await unmount()
 
-    act(() => mem.emitRemoteChange({ keys: [] }))
+    await act(() => mem.emitRemoteChange({ keys: [] }))
 
     expect(listener).not.toHaveBeenCalled()
   })
 })
 
 describe('useQuota', () => {
-  it('is not fetched until refresh is called', () => {
+  it('is not fetched until refresh is called', async () => {
     const store = setup(createMemoryProvider({ quota: { usedBytes: 10, totalBytes: 100 } }))
-    const { result } = renderHook(() => useQuota(store))
+    const { result } = await renderHook(() => useQuota(store))
 
     expect(result.current.loading).toBe(false)
     expect(result.current.quota).toEqual([])
@@ -709,7 +719,7 @@ describe('useQuota', () => {
 
   it('refresh populates per-provider quota', async () => {
     const store = setup(createMemoryProvider({ quota: { usedBytes: 10, totalBytes: 100 } }))
-    const { result } = renderHook(() => useQuota(store))
+    const { result } = await renderHook(() => useQuota(store))
 
     await act(() => result.current.refresh())
 

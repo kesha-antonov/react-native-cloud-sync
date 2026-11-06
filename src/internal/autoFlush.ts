@@ -62,7 +62,16 @@ export function attachAutoFlush(
   let appStateSub: { remove: () => void } | null = null
 
   if (intervalMs > 0) {
-    timer = setInterval(safeFlush, intervalMs)
+    // "While the app is in the foreground": a timer can still fire in the
+    // background (headless JS, a background fetch window), and a flush there
+    // spends the user's background budget on network nobody is waiting for.
+    // An unknown state is treated as foreground so the interval never
+    // silently stops working.
+    timer = setInterval(() => {
+      const state = AppState.currentState
+      if (state != null && state !== 'active' && state !== 'unknown') return
+      safeFlush()
+    }, intervalMs)
     // A pending retry must never be the reason a process stays alive.
     timer.unref?.()
   }

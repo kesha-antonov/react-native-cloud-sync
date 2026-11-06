@@ -69,6 +69,21 @@ enum CloudSyncError: Error {
     /// (or into `nil`) is what makes a signed-out user indistinguishable from an
     /// empty backup, which is the defect this whole package exists to avoid.
     static func fromCKError(_ error: CKError) -> CloudSyncError {
+        // A single-item CKModifyRecordsOperation / CKFetchRecordsOperation
+        // reports a per-record failure at the operation level wrapped in
+        // `.partialFailure`. Mapping the wrapper fell through to ERR_UNKNOWN,
+        // so a quota, size-limit, permission or conflict failure on a write
+        // lost its code (and its retryAfter / serverValue) on the way to JS.
+        if error.code == .partialFailure,
+           let underlying = error.partialErrorsByItemID?.values
+               .compactMap({ $0 as? CKError })
+               // Batch siblings fail with .batchRequestFailed; the real cause
+               // is the other one.
+               .first(where: { $0.code != .batchRequestFailed })
+               ?? error.partialErrorsByItemID?.values.compactMap({ $0 as? CKError }).first {
+            return fromCKError(underlying)
+        }
+
         var info: [String: Any] = [:]
         if let retryAfter = error.userInfo[CKErrorRetryAfterKey] as? Double {
             info["retryAfterMs"] = retryAfter * 1000
@@ -79,6 +94,12 @@ enum CloudSyncError: Error {
             return .coded(
                 code: CloudSyncErrorCode.notSignedIn,
                 message: "No iCloud account is signed in on this device.",
+                info: info
+            )
+        case .accountTemporarilyUnavailable:
+            return .coded(
+                code: CloudSyncErrorCode.accountUnavailable,
+                message: "The iCloud account is temporarily unavailable.",
                 info: info
             )
         case .managedAccountRestricted, .permissionFailure:

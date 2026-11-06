@@ -2,7 +2,9 @@ import { Platform } from 'react-native'
 
 import { getNativeModule, hasNativeModule, requireNativeModule, subscribeNativeEvent } from '../internal/nativeModule'
 import { getCloudKitClient, getSharedFileAdapter, isCloudKitConfigured } from '../config'
-import { CloudKitRestClient, type CloudKitRestConfig, MAX_ASSET_UPLOAD_BYTES } from '../internal/cloudKitRest'
+import {
+  CloudKitRestClient, type CloudKitRestConfig, ENCRYPTED_RECORD_PREFIX, MAX_ASSET_UPLOAD_BYTES,
+} from '../internal/cloudKitRest'
 import { CloudSyncError, ErrorCode, normalizeError, unsupportedPlatform } from '../errors'
 import { toAccountStatus } from '../internal/enums'
 import { base64ToBytes, bytesToBase64 } from '../internal/base64'
@@ -46,6 +48,28 @@ function isNative(): boolean {
   return (os === 'ios' || os === 'macos') && hasNativeModule()
 }
 
+/**
+ * Rejects a key in `cloudKitEncrypted`'s record-name namespace.
+ *
+ * Both providers share one zone, and CloudKit record names are unique across
+ * record types, so a plain key spelled like an encrypted record name would
+ * address - and could delete - the encrypted provider's record.
+ */
+function assertPlainKey(key: string, provider: string): void {
+  if (key.startsWith(ENCRYPTED_RECORD_PREFIX))
+    throw new CloudSyncError(
+      ErrorCode.INVALID_KEY,
+      `[RNCloudSync] '${key}' starts with '${ENCRYPTED_RECORD_PREFIX}', which is reserved for `
+      + `cloudKitEncrypted's record names.`,
+      { provider }
+    )
+}
+
+/** Drops record names in `cloudKitEncrypted`'s namespace from a listing. */
+function plainKeys(names: string[]): string[] {
+  return names.filter(n => !n.startsWith(ENCRYPTED_RECORD_PREFIX))
+}
+
 export const cloudKit: CloudProvider = {
   name: NAME,
 
@@ -84,6 +108,7 @@ export const cloudKit: CloudProvider = {
   },
 
   getItem: async (key: string) => {
+    assertPlainKey(key, NAME)
     try {
       if (isNative()) return await requireNativeModule().ckGetRecord('KVBlob', key, null, false)
       return await getCloudKitClient().getRecord(key)
@@ -103,6 +128,7 @@ export const cloudKit: CloudProvider = {
    * {@link resolveByModifiedAt} is built to handle.
    */
   getItemWithMeta: async (key: string) => {
+    assertPlainKey(key, NAME)
     if (isNative()) {
       const value = await cloudKit.getItem(key)
       return value == null ? null : { value }
@@ -122,13 +148,14 @@ export const cloudKit: CloudProvider = {
    * round trip and N - and between one rate-limit budget and N.
    */
   multiGet: async (keys: string[]) => {
-    if (isNative()) {
-      const out: (string | null)[] = []
-      for (const key of keys)
-        out.push(await requireNativeModule().ckGetRecord('KVBlob', key, null, false))
-      return out
-    }
+    for (const key of keys) assertPlainKey(key, NAME)
     try {
+      if (isNative()) {
+        const out: (string | null)[] = []
+        for (const key of keys)
+          out.push(await requireNativeModule().ckGetRecord('KVBlob', key, null, false))
+        return out
+      }
       return await getCloudKitClient().getRecords(keys)
     }
     catch (e) {
@@ -136,13 +163,38 @@ export const cloudKit: CloudProvider = {
     }
   },
 
-  multiSet: async (entries: [string, string][]) => {
-    if (isNative()) {
-      for (const [key, value] of entries)
-        await requireNativeModule().ckSaveRecord('KVBlob', key, value, null, false)
-      return
-    }
+  /**
+   * Values plus server modification times, in one `/records/lookup` per 200
+   * keys over REST. Natively there is no timestamp to report (the bridge
+   * returns values only - see {@link getItemWithMeta}), so this is `multiGet`
+   * with `modifiedAt` left undefined, which the resolver handles.
+   */
+  multiGetWithMeta: async (keys: string[]) => {
+    for (const key of keys) assertPlainKey(key, NAME)
     try {
+      if (isNative()) {
+        const out: ({ value: string } | null)[] = []
+        for (const key of keys) {
+          const value = await requireNativeModule().ckGetRecord('KVBlob', key, null, false)
+          out.push(value == null ? null : { value })
+        }
+        return out
+      }
+      return await getCloudKitClient().getRecordsWithMeta(keys)
+    }
+    catch (e) {
+      throw normalizeError(e, NAME)
+    }
+  },
+
+  multiSet: async (entries: [string, string][]) => {
+    for (const [key] of entries) assertPlainKey(key, NAME)
+    try {
+      if (isNative()) {
+        for (const [key, value] of entries)
+          await requireNativeModule().ckSaveRecord('KVBlob', key, value, null, false)
+        return
+      }
       await getCloudKitClient().saveRecords(entries)
     }
     catch (e) {
@@ -151,11 +203,12 @@ export const cloudKit: CloudProvider = {
   },
 
   multiRemove: async (keys: string[]) => {
-    if (isNative()) {
-      for (const key of keys) await requireNativeModule().ckDeleteRecord(key, null)
-      return
-    }
+    for (const key of keys) assertPlainKey(key, NAME)
     try {
+      if (isNative()) {
+        for (const key of keys) await requireNativeModule().ckDeleteRecord(key, null)
+        return
+      }
       await getCloudKitClient().deleteRecords(keys)
     }
     catch (e) {
@@ -170,6 +223,7 @@ export const cloudKit: CloudProvider = {
   },
 
   setItem: async (key: string, value: string) => {
+    assertPlainKey(key, NAME)
     try {
       if (isNative()) {
         await requireNativeModule().ckSaveRecord('KVBlob', key, value, null, false)
@@ -183,6 +237,7 @@ export const cloudKit: CloudProvider = {
   },
 
   removeItem: async (key: string) => {
+    assertPlainKey(key, NAME)
     try {
       if (isNative()) {
         await requireNativeModule().ckDeleteRecord(key, null)
@@ -197,8 +252,8 @@ export const cloudKit: CloudProvider = {
 
   getAllKeys: async () => {
     try {
-      if (isNative()) return await requireNativeModule().ckQueryRecordNames('KVBlob', null)
-      return await getCloudKitClient().queryRecordNames()
+      if (isNative()) return plainKeys(await requireNativeModule().ckQueryRecordNames('KVBlob', null))
+      return plainKeys(await getCloudKitClient().queryRecordNames())
     }
     catch (e) {
       throw normalizeError(e, NAME)
@@ -278,6 +333,7 @@ export function createCloudKitProvider(
     getAccountStatus: () => Promise.resolve<AccountStatus>('available'),
 
     getItem: async (key: string) => {
+      assertPlainKey(key, name)
       try {
         return await client.getRecord(key)
       }
@@ -287,6 +343,7 @@ export function createCloudKitProvider(
     },
 
     getItemWithMeta: async (key: string) => {
+      assertPlainKey(key, name)
       try {
         return await client.getRecordWithMeta(key)
       }
@@ -296,6 +353,7 @@ export function createCloudKitProvider(
     },
 
     setItem: async (key: string, value: string) => {
+      assertPlainKey(key, name)
       try {
         await client.saveRecord(key, value)
       }
@@ -305,6 +363,7 @@ export function createCloudKitProvider(
     },
 
     removeItem: async (key: string) => {
+      assertPlainKey(key, name)
       try {
         await client.deleteRecord(key)
       }
@@ -315,7 +374,7 @@ export function createCloudKitProvider(
 
     getAllKeys: async () => {
       try {
-        return await client.queryRecordNames()
+        return plainKeys(await client.queryRecordNames())
       }
       catch (e) {
         throw normalizeError(e, name)
@@ -323,6 +382,7 @@ export function createCloudKitProvider(
     },
 
     multiGet: async (keys: string[]) => {
+      for (const key of keys) assertPlainKey(key, name)
       try {
         return await client.getRecords(keys)
       }
@@ -331,7 +391,18 @@ export function createCloudKitProvider(
       }
     },
 
+    multiGetWithMeta: async (keys: string[]) => {
+      for (const key of keys) assertPlainKey(key, name)
+      try {
+        return await client.getRecordsWithMeta(keys)
+      }
+      catch (e) {
+        throw normalizeError(e, name)
+      }
+    },
+
     multiSet: async (entries: [string, string][]) => {
+      for (const [key] of entries) assertPlainKey(key, name)
       try {
         await client.saveRecords(entries)
       }
@@ -341,6 +412,7 @@ export function createCloudKitProvider(
     },
 
     multiRemove: async (keys: string[]) => {
+      for (const key of keys) assertPlainKey(key, name)
       try {
         await client.deleteRecords(keys)
       }
@@ -430,6 +502,9 @@ export const assets = {
       zoneName?: string | null
     }
   ): Promise<void> => {
+    // Same namespace rule as the key-value methods: an asset write must not be
+    // able to address - and overwrite - a cloudKitEncrypted record.
+    assertPlainKey(options.recordName, NAME)
     if (isNative()) {
       try {
         await requireNativeModule().ckSaveAsset(
@@ -493,7 +568,7 @@ export const assets = {
    *
    * Pass `destinationUri` for anything the user is going to keep or hand to a
    * share sheet. Natively, without it the file lands in the app's temporary
-   * directory under a name derived from the record, and iOS may reclaim that
+   * directory as `rncs-asset-<hash of zone, record and field>`, and iOS may reclaim that
    * at any time - fine for restoring straight back into the app, wrong for an
    * export. Parent directories are created if they do not exist. Over REST,
    * `destinationUri` is required: there is no OS-managed temporary directory
@@ -507,6 +582,7 @@ export const assets = {
       destinationUri?: string
     }
   ): Promise<string | null> => {
+    assertPlainKey(options.recordName, NAME)
     if (isNative())
       try {
         return await requireNativeModule().ckFetchAsset(

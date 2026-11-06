@@ -83,7 +83,7 @@ describe('googleDriveFiles', () => {
   it('save reads the source file through the adapter and reports progress', async () => {
     const { adapter } = setUp([
       { json: { files: [] } }, // findFileId
-      { headers: { Location: 'https://upload.example/s' } }, // initiate
+      { headers: { Location: 'https://www.googleapis.com/upload/s/s' } }, // initiate
       { status: 308, headers: { Range: 'bytes=0-3' } }, // chunk 1/2 of a 7-byte file
       { status: 200, json: { id: 'new-id' } }, // chunk 2/2
     ])

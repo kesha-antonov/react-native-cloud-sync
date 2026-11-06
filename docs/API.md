@@ -129,7 +129,7 @@ import { cloudKitEncrypted } from 'react-native-cloud-sync'
 await cloudKitEncrypted.setItem('auth.refreshToken', token)
 ```
 
-Encrypted on device with a key from the user's iCloud Keychain. Apple platforms only (`ERR_UNSUPPORTED_PLATFORM` elsewhere), not queryable, record names unencrypted, own record type (`EncryptedKVBlob`). Full guide: [Encryption](encryption.md#cloudkits-native-encryption).
+Encrypted on device with a key from the user's iCloud Keychain. Apple platforms only (`ERR_UNSUPPORTED_PLATFORM` elsewhere), not queryable, record names unencrypted, own record type (`EncryptedKVBlob`). Records are named `rncs-enc.<key>`, since CloudKit record names are unique across record types - so keys max out at 246 characters, and plain `cloudKit` rejects keys with that prefix. Full guide: [Encryption](encryption.md#cloudkits-native-encryption).
 
 ## `icloudDocuments`
 
@@ -287,7 +287,10 @@ interface CloudStoreOptions {
   onDropped?: (d: DroppedWrite) => void
 }
 
-type ResolveFn = (candidates: ResolveCandidate[]) => string | null
+interface ResolveFn {
+  (candidates: ResolveCandidate[]): string | null
+  usesModifiedAt?: boolean                // false keeps multiGet one request per provider
+}
 
 interface ResolveCandidate {
   provider: ProviderName
@@ -329,6 +332,8 @@ interface CloudStore {
 ### Batch operations
 
 `multiGet`/`multiSet`/`multiRemove` batch **per provider** where possible - CloudKit's array-taking endpoints turn 200 keys into one request; Drive has none, so it loops, same cost as calling `getItem` yourself.
+
+With `resolve` set, `multiGet` (and `getAllItems`, and `useCloudItems`) resolves each key exactly as `getItem` would - server timestamps included, read repair included. Timestamps come from a provider's `multiGetWithMeta`, else one `getItemWithMeta` per key, else plain `multiGet`. A resolver with `usesModifiedAt: false` skips them, keeping the read one request per provider; the built-in resolvers set it, and a custom one that leaves it undefined is assumed to read `modifiedAt`.
 
 `multiGet` results are positional, so you can zip them against your input, and a missing key is `[key, null]` rather than an omitted entry.
 
@@ -427,7 +432,7 @@ A key has to work as an `NSUbiquitousKeyValueStore` key, a CloudKit `recordName`
 
 So `auth/anonymousUserId/v1` is fine key-value-store-only, but rejected once `cloudKit` joins, since it must also serve as a record name.
 
-`checkKey` returns `null` when fine, or `{ reason, provider }` naming the broken rule. `sanitizeKey` rewrites an uncontrolled string into a legal key, truncating and hashing over-long ones (truncation alone would collapse same-prefix keys onto one).
+`checkKey` returns `null` when fine, or `{ reason, provider }` naming the broken rule. `sanitizeKey` rewrites an uncontrolled string into a legal key. A key that is already legal and fits `maxBytes` (default 64) comes back unchanged; any other is cleaned, truncated, and suffixed with `--` plus a 14-character hash of the original, so distinct inputs stay distinct (`"a b"` and `"a-b"` no longer collide). `maxBytes` below 16 throws a `RangeError`, since the suffix alone needs that much.
 
 Set `validateKeys: false` if your keys are known good and you would rather not pay for the check.
 
@@ -480,10 +485,10 @@ resolveFirstOf(...resolvers: ResolveFn[]): ResolveFn
 
 `resolveByUnion` is for JSON arrays where two devices adding *different* elements should both survive - favorited item ids, dismissed-tip ids - merging every candidate's array, deduplicated and ordered by first appearance (`key` dedupes objects). Deletions don't propagate (no tombstones), and a non-array candidate is dropped, falling back to preference order if none qualify.
 
-`resolveFirstOf` tries resolvers in turn and takes the first non-null answer - the practical combination for a mixed fleet:
+`resolveFirstOf` tries resolvers in turn and takes the first non-null answer. Only a resolver that can return `null` lets the next one run - `resolveByModifiedAt` never does, so for a mixed fleet (server time where the provider reports it, an embedded timestamp where it doesn't) pass the second one as its `fallback`:
 
 ```ts
-resolveFirstOf(resolveByModifiedAt(), resolveByTimestamp('updatedAt'))
+resolveByModifiedAt({ fallback: resolveByTimestamp('updatedAt') })
 ```
 
 ## Errors
@@ -527,7 +532,7 @@ bytesToBase64(bytes: Uint8Array): string
 base64ToBytes(base64: string): Uint8Array
 ```
 
-Bridges `GoogleDriveFileAdapter`'s base64 contract with byte-oriented filesystem APIs - dependency-free and Hermes-safe, unlike `Buffer` or `atob`/`btoa`. See [the adapter](providers/google-drive.md#large-files).
+Bridges `GoogleDriveFileAdapter`'s base64 contract with byte-oriented filesystem APIs - dependency-free and Hermes-safe, unlike `Buffer` or `atob`/`btoa`. `base64ToBytes` ignores whitespace and throws a `TypeError` on anything that is not valid base64, rather than decoding it to garbage. See [the adapter](providers/google-drive.md#large-files).
 
 ## Types
 
@@ -558,7 +563,7 @@ type Unsubscribe = () => void
 
 `ProviderName` is an **open** union, so `registerProvider`'s custom-provider support (a `'dropbox'` provider) needs no cast at every call site. `string & {}` keeps autocomplete for built-ins while accepting any string; `BuiltInProviderName` is the closed set.
 
-`ItemWithMeta` is what an optional `CloudProvider.getItemWithMeta` returns, feeding `ResolveCandidate.modifiedAt`. `QuotaInfo` is what `getQuota()` reports; `totalBytes` absent means unlimited or unreported, not zero.
+`ItemWithMeta` is what the optional `CloudProvider.getItemWithMeta` / `multiGetWithMeta` return, feeding `ResolveCandidate.modifiedAt`. `QuotaInfo` is what `getQuota()` reports; `totalBytes` absent means unlimited or unreported, not zero.
 
 `AbortLike` is the abort-signal shape the cancellable APIs accept:
 
@@ -587,6 +592,7 @@ interface CloudProvider {
   // All optional. The store falls back to the required methods above.
   getItemWithMeta?: (key: string) => Promise<ItemWithMeta | null>
   multiGet?: (keys: string[]) => Promise<(string | null)[]>
+  multiGetWithMeta?: (keys: string[]) => Promise<(ItemWithMeta | null)[]>
   multiSet?: (entries: [string, string][]) => Promise<void>
   multiRemove?: (keys: string[]) => Promise<void>
   getQuota?: () => Promise<QuotaInfo | null>
@@ -597,6 +603,8 @@ interface CloudProvider {
 ```
 
 Everything optional has a working fallback - a minimal provider is six methods. Implement `multiGet`/`multiSet`/`multiRemove` only when your backend genuinely batches; a fake one just hides N round trips behind one call.
+
+`multiGetWithMeta` is what a resolving `multiGet` uses when the resolver reads `modifiedAt`. `cloudKit` implements it (timestamps over REST; natively the bridge returns values only, so `modifiedAt` is absent), and so does `googleDrive` (one listing per 50 keys plus one download per key).
 
 `clearCaches` matters: the store calls it on an identity change, since anything memoised belongs to the account that just left.
 
@@ -667,7 +675,7 @@ function SettingsScreen () {
 
 Every app writes the same ones, with the same two bugs - a stale response overwriting a newer one, and `setState` after unmount - handled once here. `useCloudItem` writes optimistically and doesn't revert on error, since the outbox will still deliver it; a failed read likewise keeps the last known value rather than blanking the screen.
 
-`useCloudItems` is the multi-key form: one batched `multiGet` instead of one `useCloudItem` per row in a list. `useCloudCollection` adds the membership index on top - every key starting with `prefix`, kept live - for the common case of a collection stored as one key per record.
+`useCloudItems` is the multi-key form: one batched `multiGet` instead of one `useCloudItem` per row in a list - resolving the same way `getItem` does when the store has `resolve`. `useCloudCollection` adds the membership index on top - every key starting with `prefix`, kept live - for the common case of a collection stored as one key per record.
 
 `useAccountStatus`'s `identityChanged` is **latched**, not momentary: it stays true once a different identity has signed in, so a screen that mounts just after the event still sees it.
 

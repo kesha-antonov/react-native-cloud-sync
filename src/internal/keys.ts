@@ -128,33 +128,59 @@ export function assertKey(key: string, providers: readonly ProviderName[]): void
  * Rewrites an arbitrary string into a key that passes {@link checkKey}.
  *
  * For callers whose keys come from somewhere they do not control - a file name,
- * a user-entered label, an id from another system. Illegal characters become
- * `-`, and anything too long is truncated and suffixed with a short hash of the
- * original so two different long keys cannot collide.
+ * a user-entered label, an id from another system.
+ *
+ * A key that is already legal and fits in `maxBytes` comes back unchanged.
+ * Anything else has its illegal characters replaced with `-`, is truncated to
+ * leave room, and gets a 64-bit hash of the *original* string appended as
+ * `--<14 base36 chars>`. The hash is what keeps distinct inputs distinct:
+ * replacement alone maps `"a b"` and `"a-b"` onto the same key, and truncation
+ * alone maps every long key with a shared prefix onto one.
+ *
+ * A legal input that happens to end in that suffix shape is hashed too, so a
+ * passed-through key can never equal a rewritten one. The mapping is therefore
+ * injective up to a 64-bit hash collision.
+ *
+ * Throws a `RangeError` when `maxBytes` is smaller than the suffix itself
+ * ({@link SANITIZED_SUFFIX_BYTES}), since no output could then both fit and
+ * stay distinct.
  */
 export function sanitizeKey(raw: string, maxBytes = KV_MAX_KEY_BYTES): string {
+  if (!Number.isFinite(maxBytes) || maxBytes < SANITIZED_SUFFIX_BYTES)
+    throw new RangeError(
+      `[RNCloudSync] sanitizeKey needs maxBytes >= ${SANITIZED_SUFFIX_BYTES} (got ${maxBytes}).`
+    )
+
+  const legal = raw.length > 0
+    && SAFE_KEY.test(raw)
+    && !raw.startsWith(RESERVED_PREFIX)
+    && byteLength(raw) <= maxBytes
+    && !HASHED_SUFFIX.test(raw)
+  if (legal) return raw
+
+  const suffix = `--${hash64(raw)}`
+  // Only ASCII survives the replacement, so characters and bytes agree here.
   const cleaned = raw
     .replace(/[^A-Za-z0-9._-]/g, '-')
     .replace(/^_+/, '')
-
-  const base = cleaned.length > 0 ? cleaned : 'key'
-  if (byteLength(base) <= maxBytes) return base
-
-  // Truncating alone would map every long key with a shared prefix onto the
-  // same short key, silently merging unrelated values.
-  const suffix = `-${hash(raw)}`
-  const room = Math.max(1, maxBytes - suffix.length)
-  let head = base.slice(0, room)
-  while (byteLength(head) > room) head = head.slice(0, -1)
-  return head + suffix
+  return cleaned.slice(0, maxBytes - suffix.length) + suffix
 }
 
-/** FNV-1a, base36. Not cryptographic - only needs to separate collisions. */
-function hash(s: string): string {
-  let h = 0x811c9dc5
+/** `--` plus two zero-padded 7-character base36 halves. */
+export const SANITIZED_SUFFIX_BYTES = 16
+
+const HASHED_SUFFIX = /--[0-9a-z]{14}$/
+
+/** Two independently seeded FNV-1a passes. Not cryptographic - only separates inputs. */
+function hash64(s: string): string {
+  return fnv(s, 0x811c9dc5) + fnv(s, 0x050c5d1f)
+}
+
+function fnv(s: string, seed: number): string {
+  let h = seed
   for (let i = 0; i < s.length; i += 1) {
     h ^= s.charCodeAt(i)
     h = Math.imul(h, 0x01000193) >>> 0
   }
-  return h.toString(36)
+  return h.toString(36).padStart(7, '0')
 }

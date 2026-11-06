@@ -1,6 +1,10 @@
-import type { TurboModule } from 'react-native'
+import type { EventSubscription, TurboModule } from 'react-native'
 import { TurboModuleRegistry } from 'react-native'
-import type { EventEmitter } from 'react-native/Libraries/Types/CodegenTypes'
+
+// Same shape as React Native's own codegen `EventEmitter`. Declared here so the
+// spec neither deep-imports a path newer type packages drop nor needs the
+// `CodegenTypes` namespace older codegen cannot parse.
+type EventEmitter<T> = (handler: (arg: T) => void | Promise<void>) => EventSubscription
 
 /**
  * Codegen cannot express an index signature, so dynamic dictionaries cross the
@@ -52,6 +56,16 @@ export interface Spec extends TurboModule {
   isAvailable: () => Promise<boolean>
 
   // ------------------------------------------- iCloud key-value store (KVS)
+
+  /**
+   * Account status for the key-value store, from `ubiquityIdentityToken`.
+   *
+   * Unlike `getAccountStatus` this never touches CloudKit, so it is safe in an
+   * app with only the key-value-store entitlement - constructing a
+   * `CKContainer` there raises an uncatchable `CKException`. Reports only
+   * `available` or `noAccount`.
+   */
+  kvGetAccountStatus: () => Promise<string>
 
   kvGetItem: (key: string) => Promise<string | null>
   kvSetItem: (key: string, value: string) => Promise<void>

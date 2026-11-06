@@ -1,4 +1,5 @@
 import CloudKit
+import CryptoKit
 import Foundation
 
 /// All CloudKit and NSUbiquitousKeyValueStore logic.
@@ -30,7 +31,27 @@ import Foundation
     /// automatically just because the class is `@objc` and inherits NSObject,
     /// so without it the bridge fails to compile with "property 'emit' not
     /// found on object of type 'CloudSyncImpl *'".
-    @objc public var emit: ((String, [String: Any]) -> Void)?
+    ///
+    /// Lock-guarded: the bridge sets this from the JS/module thread (and clears
+    /// it from `dealloc` on whatever thread releases the module) while CloudKit
+    /// callbacks and notification observers read it on their own queues. An
+    /// unsynchronised Swift closure property is a data race on its retain
+    /// count, which can crash across a reload.
+    @objc public var emit: ((String, [String: Any]) -> Void)? {
+        get {
+            emitLock.lock()
+            defer { emitLock.unlock() }
+            return _emit
+        }
+        set {
+            emitLock.lock()
+            _emit = newValue
+            emitLock.unlock()
+        }
+    }
+
+    private var _emit: ((String, [String: Any]) -> Void)?
+    private let emitLock = NSLock()
 
     /// Opaque identity of the bridge instance that installed `emit`.
     ///
@@ -51,12 +72,44 @@ import Foundation
 
     /// Resolved once. `CKContainer(identifier:)` is not free, and the previous
     /// in-app implementation this replaces rebuilt it on every single call.
-    private lazy var container: CKContainer? = {
-        guard let identifier = Self.resolveContainerIdentifier() else { return nil }
+    ///
+    /// Only ever built from a DECLARED identifier - never guessed.
+    /// `CKContainer(identifier:)` with an identifier the app is not entitled to
+    /// traps inside CloudKit (EXC_BREAKPOINT, uncatchable from Swift or ObjC).
+    /// The old `iCloud.<bundle id>` fallback did exactly that in every app
+    /// without a CloudKit container - a key-value-store-only app crashed the
+    /// moment anything called `cloudKit.isAvailable()`. `nil` here means "no
+    /// container declared"; every CloudKit path checks it and fails typed.
+    ///
+    /// A `static let`, not a `lazy var`: lazy initialisation is not thread-safe
+    /// in Swift, and this is first touched from whichever queue gets there
+    /// first - a JS call, or the `CKAccountChanged` observer. `static let` is
+    /// initialised exactly once under `dispatch_once`.
+    private static let sharedContainer: CKContainer? = {
+        guard let identifier = declaredContainerIdentifier() else { return nil }
         return CKContainer(identifier: identifier)
     }()
 
-    private var database: CKDatabase? { container?.privateCloudDatabase }
+    private var container: CKContainer? { Self.sharedContainer }
+
+    private static let containerNotDeclaredMessage =
+        "No CloudKit container is declared, so CloudKit is unavailable. Use the Expo config "
+        + "plugin (cloudKit: true, the default), or in a bare project add the container id to "
+        + "Info.plist as RNCloudSyncContainerIdentifier (a String, e.g. iCloud.com.your.app) "
+        + "alongside the iCloud/CloudKit entitlements."
+
+    private static func containerNotDeclaredError() -> CloudSyncError {
+        return .coded(
+            code: CloudSyncErrorCode.containerMisconfigured,
+            message: containerNotDeclaredMessage,
+            info: [:]
+        )
+    }
+
+    private func requireContainer() throws -> CKContainer {
+        guard let container = container else { throw Self.containerNotDeclaredError() }
+        return container
+    }
 
     // MARK: - Configuration
 
@@ -65,33 +118,30 @@ import Foundation
     /// absent" - entitlements live in the code signature, and the API that reads
     /// those (`SecTaskCopyValueForEntitlement`) is not public on iOS.
     static func declaredContainerIdentifier() -> String? {
+        // Written by the Expo config plugin. Entitlements are not readable from
+        // the bundle at runtime, so without this a `containerIdentifier` passed
+        // to the plugin never reached native code: every call silently used the
+        // `iCloud.<bundle id>` fallback instead, i.e. a different container
+        // from the one the app is actually entitled to.
+        if let configured = Bundle.main.object(
+            forInfoDictionaryKey: "RNCloudSyncContainerIdentifier"
+        ) as? String, !configured.isEmpty {
+            return configured
+        }
         guard let ids = Bundle.main.object(
             forInfoDictionaryKey: "com.apple.developer.icloud-container-identifiers"
         ) as? [String] else { return nil }
         return ids.first
     }
 
-    /// Reads the container id straight out of the app's entitlements, so apps do
-    /// not have to repeat it in JavaScript and cannot get the two out of sync.
-    static func resolveContainerIdentifier() -> String? {
-        if let declared = declaredContainerIdentifier() { return declared }
-        // Entitlements are not in Info.plist on a device build; fall back to the
-        // conventional `iCloud.<bundle id>` form.
-        guard let bundleId = Bundle.main.bundleIdentifier else { return nil }
-        return "iCloud.\(bundleId)"
-    }
-
     @objc public func getConstants() -> [String: Any] {
         return [
-            "containerIdentifier": Self.resolveContainerIdentifier() ?? "",
-            // Derived from the DECLARED identifier, not the resolved one.
-            // `resolveContainerIdentifier` falls back to `iCloud.<bundle id>`
-            // whenever the declaration is unreadable, so deriving this from it
-            // made the constant `true` for every app that has a bundle id -
-            // including one with no iCloud capability at all, which is exactly
-            // the case a caller reads this to detect. It is a confirmation, not
-            // a guarantee: false means "not confirmed here", and the async
-            // account-status path is the authoritative check.
+            // '' when nothing is declared - there is no guessed fallback any
+            // more, since using a guessed container crashes inside CloudKit.
+            "containerIdentifier": Self.declaredContainerIdentifier() ?? "",
+            // A declaration, not proof of the entitlement itself: false means
+            // CloudKit is off for this build (every CloudKit call rejects
+            // ERR_CONTAINER_MISCONFIGURED), true means it was configured.
             "hasICloudEntitlement": Self.declaredContainerIdentifier() != nil,
         ]
     }
@@ -110,6 +160,12 @@ import Foundation
     /// Starts observing the two notifications that every library in this space
     /// either ignores or crashes on.
     @objc public func startObserving() {
+        // Idempotent. Each bridge instance calls this from its init, and across
+        // a reload the outgoing instance deliberately does NOT stop observing
+        // (see `emitOwner`). Without this removal the singleton was registered
+        // once per reload, so every KV change and account change reached JS
+        // two, three, N times.
+        NotificationCenter.default.removeObserver(self)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(kvStoreDidChange(_:)),
@@ -158,16 +214,20 @@ import Foundation
         // The event nobody handles. A different Apple ID is now signed in, so
         // any user-scoped state the app cached belongs to the previous user.
         log("iCloud identity changed")
-        accountStatusString { status in
-            self.emit?("accountChange", [
-                "status": status,
-                "identityChanged": true,
-                "provider": "icloudKV",
-            ])
-        }
+        // Key-value status, not CloudKit's: this fires in KV-only apps too,
+        // and asking CloudKit there would construct a container the app is not
+        // entitled to.
+        emit?("accountChange", [
+            "status": kvAccountStatusString(),
+            "identityChanged": true,
+            "provider": "icloudKV",
+        ])
     }
 
     @objc private func ckAccountDidChange(_ note: Notification) {
+        // Posted by the system regardless of entitlements; asking CloudKit
+        // about it in an app without a declared container would trap.
+        guard container != nil else { return }
         accountStatusString { status in
             self.emit?("accountChange", [
                 "status": status,
@@ -200,14 +260,44 @@ import Foundation
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
+        guard container != nil else {
+            let error = Self.containerNotDeclaredError()
+            reject(error.code, error.message, error.asNSError)
+            return
+        }
         accountStatusString { resolve($0) }
     }
 
+    /// False, never a throw, when no container is declared - `isAvailable` is
+    /// documented as safe to call on a render path.
     @objc public func isAvailable(
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
+        guard container != nil else {
+            resolve(false)
+            return
+        }
         accountStatusString { resolve($0 == "available") }
+    }
+
+    /// Account status as the key-value store sees it, without CloudKit.
+    ///
+    /// `ubiquityIdentityToken` is non-nil exactly when an iCloud account is
+    /// signed in with iCloud Drive/KV available to this app. It needs no
+    /// CloudKit entitlement, so a KV-only app can call this safely - unlike
+    /// `getAccountStatus`, which goes through `CKContainer` and raises a
+    /// `CKException` when that entitlement is missing. It cannot tell
+    /// "restricted" from "signed out"; both read as `noAccount`.
+    private func kvAccountStatusString() -> String {
+        return FileManager.default.ubiquityIdentityToken != nil ? "available" : "noAccount"
+    }
+
+    @objc public func kvGetAccountStatus(
+        resolve: @escaping (Any?) -> Void,
+        reject: @escaping (String, String, NSError?) -> Void
+    ) {
+        resolve(kvAccountStatusString())
     }
 
     // MARK: - Key-value store
@@ -245,6 +335,8 @@ import Foundation
         let all = kvStore.dictionaryRepresentation
         for (existingKey, existingValue) in all {
             if existingKey == key { continue }
+            // Apple's 1 MB total covers keys as well as values.
+            bytes += existingKey.lengthOfBytes(using: .utf8)
             if let text = existingValue as? String {
                 bytes += text.lengthOfBytes(using: .utf8)
             } else if let data = existingValue as? Data {
@@ -281,7 +373,7 @@ import Foundation
         // values silently starves every other key, and the only signal is a
         // quota-violation notification that arrives long after the write was
         // reported as successful.
-        let projected = usage.bytes + bytes
+        let projected = usage.bytes + key.lengthOfBytes(using: .utf8) + bytes
         if projected > Self.kvMaxTotalBytes {
             let error = CloudSyncError.coded(
                 code: CloudSyncErrorCode.quotaExceeded,
@@ -376,21 +468,100 @@ import Foundation
     // MARK: - CloudKit records
 
     private func requireDatabase() throws -> CKDatabase {
-        guard let database = database else {
-            throw CloudSyncError.coded(
-                code: CloudSyncErrorCode.containerMisconfigured,
-                message: "No iCloud container is configured. Add the iCloud capability and a "
-                    + "CloudKit container to the app target's entitlements.",
-                info: [:]
-            )
-        }
-        return database
+        return try requireContainer().privateCloudDatabase
     }
 
-    private func recordID(_ recordName: String, _ zoneName: String?) -> CKRecord.ID {
+    private func recordID(_ recordName: String, _ zoneName: String?) throws -> CKRecord.ID {
+        try Self.validateRecordName(recordName)
         guard let zoneName = zoneName else { return CKRecord.ID(recordName: recordName) }
-        let zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
-        return CKRecord.ID(recordName: recordName, zoneID: zoneID)
+        return CKRecord.ID(recordName: recordName, zoneID: try zoneID(zoneName))
+    }
+
+    private func zoneID(_ zoneName: String) throws -> CKRecordZone.ID {
+        try Self.validateZoneName(zoneName)
+        return CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
+    }
+
+    // MARK: - Identifier validation
+    //
+    // CloudKit validates record types, record names, zone names and field names
+    // by raising an Objective-C exception (`CKException` /
+    // `NSInvalidArgumentException`) from the initialiser or subscript - not by
+    // returning an error. Swift cannot catch those, so an empty key, a
+    // 256-character name or a field called `creationDate` coming from JS
+    // terminated the app. Every one of those strings is caller- or data-supplied
+    // (keys synced from another device, migrated from the key-value store), so
+    // they are checked here first and rejected as ERR_INVALID_KEY.
+    //
+    // The rules below were established empirically against CloudKit itself:
+    // lengths are counted in UTF-16 units, and the character rules apply to
+    // record types and field names only.
+
+    static let maxIdentifierLength = 255
+
+    /// Field names CloudKit reserves for record metadata.
+    static let reservedFieldNames: Set<String> = [
+        "recordID", "recordType", "creationDate", "creatorUserRecordID",
+        "modificationDate", "lastModifiedUserRecordID", "recordChangeTag",
+    ]
+
+    private static func isSchemaIdentifier(_ value: String, maxLength: Int) -> Bool {
+        guard !value.isEmpty, value.utf16.count <= maxLength else { return false }
+        for (index, scalar) in value.unicodeScalars.enumerated() {
+            let isLetter = ("a"..."z").contains(scalar) || ("A"..."Z").contains(scalar)
+            let isDigit = ("0"..."9").contains(scalar)
+            let ok = index == 0 ? (isLetter || scalar == "_") : (isLetter || isDigit || scalar == "_")
+            if !ok { return false }
+        }
+        return true
+    }
+
+    private static func invalidIdentifier(_ kind: String, _ value: String, _ rule: String) -> CloudSyncError {
+        let shown = value.count > 64 ? "\(value.prefix(64))..." : value
+        return .coded(
+            code: CloudSyncErrorCode.invalidKey,
+            message: "Invalid CloudKit \(kind) '\(shown)': \(rule).",
+            info: [:]
+        )
+    }
+
+    static func validateRecordType(_ recordType: String) throws {
+        guard isSchemaIdentifier(recordType, maxLength: maxIdentifierLength) else {
+            throw invalidIdentifier(
+                "record type", recordType,
+                "use 1-\(maxIdentifierLength) ASCII letters, digits or '_', not starting with a digit"
+            )
+        }
+    }
+
+    static func validateRecordName(_ recordName: String) throws {
+        guard !recordName.isEmpty, recordName.utf16.count <= maxIdentifierLength else {
+            throw invalidIdentifier(
+                "record name", recordName, "must be 1-\(maxIdentifierLength) characters"
+            )
+        }
+    }
+
+    static func validateZoneName(_ zoneName: String) throws {
+        guard !zoneName.isEmpty, zoneName.utf16.count <= maxIdentifierLength else {
+            throw invalidIdentifier(
+                "zone name", zoneName, "must be 1-\(maxIdentifierLength) characters"
+            )
+        }
+    }
+
+    /// Asset field names also carry a `__size` sibling (see `sizeField`), so
+    /// they must leave room for that suffix under CloudKit's 255 limit.
+    static func validateFieldName(_ fieldName: String) throws {
+        let maxLength = maxIdentifierLength - "__size".utf16.count
+        guard isSchemaIdentifier(fieldName, maxLength: maxLength),
+              !reservedFieldNames.contains(fieldName) else {
+            throw invalidIdentifier(
+                "field name", fieldName,
+                "use 1-\(maxLength) ASCII letters, digits or '_', not starting with a digit, "
+                    + "and not a reserved name such as 'creationDate'"
+            )
+        }
     }
 
     /// Reads the value field, from the encrypted or the plain side of the record.
@@ -417,7 +588,8 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            database.fetch(withRecordID: recordID(recordName, zoneName)) { record, error in
+            try Self.validateRecordType(recordType)
+            database.fetch(withRecordID: try recordID(recordName, zoneName)) { record, error in
                 if let error = error {
                     // A missing record is a normal outcome, not a failure - but
                     // it must be distinguished from every other error, which is
@@ -428,6 +600,21 @@ import Foundation
                     }
                     let mapped = CloudSyncError.from(error)
                     reject(mapped.code, mapped.message, mapped.asNSError)
+                    return
+                }
+                // The record type is part of the read contract, not just the
+                // write. A record name is shared across types, so without this
+                // a `KVBlob` (or any other type) occupying an encrypted
+                // provider's `rncs-enc.<key>` name was read as if it were an
+                // `EncryptedKVBlob` - a downgrade the caller cannot see.
+                if let record = record, record.recordType != recordType {
+                    let error = CloudSyncError.coded(
+                        code: CloudSyncErrorCode.invalidKey,
+                        message: "Record '\(recordName)' has type '\(record.recordType)', not the "
+                            + "expected '\(recordType)'. It was not read.",
+                        info: [:]
+                    )
+                    reject(error.code, error.message, error.asNSError)
                     return
                 }
                 resolve(Self.readValue(record, encrypted: encrypted))
@@ -466,7 +653,8 @@ import Foundation
 
         do {
             let database = try requireDatabase()
-            let id = recordID(recordName, zoneName)
+            try Self.validateRecordType(recordType)
+            let id = try recordID(recordName, zoneName)
             let record = CKRecord(recordType: recordType, recordID: id)
             if encrypted {
                 record.encryptedValues[Self.valueField] = value as CKRecordValue
@@ -507,7 +695,7 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            database.delete(withRecordID: recordID(recordName, zoneName)) { _, error in
+            database.delete(withRecordID: try recordID(recordName, zoneName)) { _, error in
                 if let error = error {
                     // Already gone is the desired end state.
                     if let ckError = error as? CKError, ckError.code == .unknownItem {
@@ -534,9 +722,8 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            let zoneID = zoneName.map {
-                CKRecordZone.ID(zoneName: $0, ownerName: CKCurrentUserDefaultName)
-            }
+            try Self.validateRecordType(recordType)
+            let zoneID = try zoneName.map { try self.zoneID($0) }
 
             var names: [String] = []
 
@@ -584,6 +771,7 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
+            try Self.validateZoneName(zoneName)
             let zone = CKRecordZone(zoneName: zoneName)
             let operation = CKModifyRecordZonesOperation(recordZonesToSave: [zone], recordZoneIDsToDelete: nil)
             operation.modifyRecordZonesResultBlock = { result in
@@ -609,7 +797,7 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            let zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
+            let zoneID = try self.zoneID(zoneName)
             let operation = CKModifyRecordZonesOperation(recordZonesToSave: nil, recordZoneIDsToDelete: [zoneID])
             operation.modifyRecordZonesResultBlock = { result in
                 switch result {
@@ -649,9 +837,29 @@ import Foundation
         assetOperationLock.unlock()
     }
 
-    private func untrackOperation(recordName: String, fieldName: String) {
+    /// Swaps `old` for `new` atomically, but only while `old` is still the
+    /// tracked operation. False means it was cancelled (removed) meanwhile.
+    private func replaceTrackedOperation(
+        _ old: CKOperation, with new: CKOperation, recordName: String, fieldName: String
+    ) -> Bool {
+        let key = Self.transferKey(recordName, fieldName)
         assetOperationLock.lock()
-        activeAssetOperations.removeValue(forKey: Self.transferKey(recordName, fieldName))
+        defer { assetOperationLock.unlock() }
+        guard activeAssetOperations[key] === old else { return false }
+        activeAssetOperations[key] = new
+        return true
+    }
+
+    /// Removes `operation` only if it is still the tracked one. A second
+    /// transfer of the same record+field replaces the entry, and the first one
+    /// finishing must not untrack the second - that made the still-running
+    /// transfer uncancellable (`ckCancelAsset` resolved false).
+    private func untrackOperation(_ operation: CKOperation, recordName: String, fieldName: String) {
+        let key = Self.transferKey(recordName, fieldName)
+        assetOperationLock.lock()
+        if activeAssetOperations[key] === operation {
+            activeAssetOperations.removeValue(forKey: key)
+        }
         assetOperationLock.unlock()
     }
 
@@ -698,6 +906,9 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
+            try Self.validateRecordType(recordType)
+            try Self.validateFieldName(fieldName)
+            let id = try recordID(recordName, zoneName)
             let fileURL = Self.fileURL(from: fileUri)
 
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -710,7 +921,6 @@ import Foundation
                 return
             }
 
-            let id = recordID(recordName, zoneName)
             let record = CKRecord(recordType: recordType, recordID: id)
             record[fieldName] = CKAsset(fileURL: fileURL)
 
@@ -740,8 +950,8 @@ import Foundation
                 ])
             }
 
-            operation.modifyRecordsResultBlock = { [weak self] result in
-                self?.untrackOperation(recordName: recordName, fieldName: fieldName)
+            operation.modifyRecordsResultBlock = { [weak self, unowned operation] result in
+                self?.untrackOperation(operation, recordName: recordName, fieldName: fieldName)
                 switch result {
                 case .success:
                     resolve(nil)
@@ -790,14 +1000,30 @@ import Foundation
     ) {
         do {
             let database = try requireDatabase()
-            let id = recordID(recordName, zoneName)
+            try Self.validateFieldName(fieldName)
+            let id = try recordID(recordName, zoneName)
 
-            fetchKnownSize(database: database, id: id, fieldName: fieldName) { [weak self] knownSize in
-                self?.fetchAsset(
+            // The size lookup is tracked as this transfer's operation from the
+            // start, so `ckCancelAsset` during the lookup cancels it rather
+            // than resolving false and letting the download run anyway.
+            // `fetchAsset` swaps in the download operation only if the lookup
+            // is still the tracked one; otherwise the transfer was cancelled.
+            var sizeOperation: CKDatabaseOperation?
+            sizeOperation = fetchKnownSize(database: database, id: id, fieldName: fieldName) { [weak self] knownSize in
+                // Clearing the box breaks operation -> block -> box -> operation.
+                let lookup = sizeOperation
+                sizeOperation = nil
+                guard let self = self, let sizeOperation = lookup else { return }
+                self.fetchAsset(
                     database: database, id: id, recordName: recordName, fieldName: fieldName,
                     knownSize: knownSize, destinationUri: destinationUri,
+                    replacing: sizeOperation,
                     resolve: resolve, reject: reject
                 )
+            }
+            if let sizeOperation = sizeOperation {
+                trackOperation(sizeOperation, recordName: recordName, fieldName: fieldName)
+                database.add(sizeOperation)
             }
         } catch {
             let mapped = CloudSyncError.from(error)
@@ -814,7 +1040,7 @@ import Foundation
         id: CKRecord.ID,
         fieldName: String,
         completion: @escaping (Int) -> Void
-    ) {
+    ) -> CKDatabaseOperation {
         let operation = CKFetchRecordsOperation(recordIDs: [id])
         operation.desiredKeys = [Self.sizeField(fieldName)]
 
@@ -841,14 +1067,75 @@ import Foundation
                 settle(0)
                 return
             }
-            settle(size)
+            settle(Self.plausibleAssetSize(size))
         }
         operation.fetchRecordsResultBlock = { _ in
             // Only reaches here without having settled when no per-record
             // block fired at all - the operation-level failure case.
             settle(0)
         }
-        database.add(operation)
+        // Added by the caller, after it has tracked the operation.
+        return operation
+    }
+
+    /// Largest size field value trusted for progress reporting.
+    static let maxPlausibleAssetBytes = 1 << 42 // 4 TiB
+
+    /// The stored size is record data, written by whichever client saved the
+    /// asset - another device, or anything holding the user's CloudKit Web
+    /// Services token - so it is not trusted. A value near `Int.max` made
+    /// `Int(progress * Double(totalBytes))` overflow and trap, crashing the
+    /// app on the first progress callback of an otherwise valid download.
+    static func plausibleAssetSize(_ size: Int) -> Int {
+        return (0...maxPlausibleAssetBytes).contains(size) ? size : 0
+    }
+
+    /// Where a fetched asset lands when the caller names no destination.
+    ///
+    /// Derived from a digest rather than spliced from the names. `recordName`
+    /// may legally contain `/` and `..` (CloudKit accepts both), so the old
+    /// `tmp/rncs-<recordName>-<fieldName>` let a record named
+    /// `x/../../Documents/db.sqlite` resolve outside the temporary directory -
+    /// and the code below deletes whatever is at the destination before copying
+    /// over it. The digest is fixed-length, one path component, and still
+    /// stable per record+field, so repeated fetches reuse one file instead of
+    /// accumulating.
+    static func defaultAssetDestination(recordName: String, fieldName: String, zoneName: String?) -> URL {
+        let identity = [zoneName ?? "", recordName, fieldName].joined(separator: "\u{0}")
+        let digest = SHA256.hash(data: Data(identity.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return FileManager.default.temporaryDirectory
+            .appendingPathComponent("rncs-asset-\(digest)", isDirectory: false)
+    }
+
+    /// Clears `destination` so a copy can land there, refusing to delete a
+    /// directory.
+    ///
+    /// Both download paths replace an existing file at the caller's
+    /// destination. `removeItem` is recursive, so a destination that named a
+    /// directory - `FileSystem.documentDirectory`, say, by someone reading
+    /// `destinationUri` as "put it in here" - wiped that whole directory before
+    /// the copy. The type is read without following symlinks: a symlink is
+    /// replaced (the link, not its target), which is what a copy-to-path means.
+    static func prepareDestination(_ destination: URL) throws {
+        let fileManager = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        if !fileManager.fileExists(atPath: parent.path) {
+            try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        }
+        guard let attributes = try? fileManager.attributesOfItem(atPath: destination.path) else {
+            return // Nothing there.
+        }
+        if attributes[.type] as? FileAttributeType == .typeDirectory {
+            throw CloudSyncError.coded(
+                code: CloudSyncErrorCode.unknown,
+                message: "Destination \(destination.path) is a directory. Pass a file path, not a "
+                    + "folder - an existing file there is replaced, a directory never is.",
+                info: [:]
+            )
+        }
+        try fileManager.removeItem(at: destination)
     }
 
     private func fetchAsset(
@@ -858,11 +1145,31 @@ import Foundation
         fieldName: String,
         knownSize: Int,
         destinationUri: String?,
+        replacing sizeOperation: CKOperation,
         resolve: @escaping (Any?) -> Void,
         reject: @escaping (String, String, NSError?) -> Void
     ) {
         let operation = CKFetchRecordsOperation(recordIDs: [id])
         var totalBytes = knownSize
+
+        // Exactly one settlement. A per-record outcome is followed by the
+        // operation-level block, and that block reports `.failure` (a
+        // partialFailure) whenever the record failed - including the
+        // `.unknownItem` case already resolved as nil, and a cancellation
+        // already rejected. Settling twice is "Tried to resolve a promise more
+        // than once" in React Native. CloudKit invokes these blocks serially on
+        // the operation's queue, so a plain flag is enough.
+        var settled = false
+        let settleResolve: (Any?) -> Void = { value in
+            if settled { return }
+            settled = true
+            resolve(value)
+        }
+        let settleReject: (String, String, NSError?) -> Void = { code, message, error in
+            if settled { return }
+            settled = true
+            reject(code, message, error)
+        }
 
         operation.perRecordProgressBlock = { [weak self] _, progress in
             guard let self = self, progress > 0 else { return }
@@ -879,7 +1186,7 @@ import Foundation
             case let .success(record):
                 guard let asset = record[fieldName] as? CKAsset,
                       let url = asset.fileURL else {
-                    resolve(nil)
+                    settleResolve(nil)
                     return
                 }
 
@@ -898,55 +1205,59 @@ import Foundation
                 // may reclaim, so copy it somewhere the caller controls
                 // before handing back a path.
                 let destination = destinationUri.map { Self.fileURL(from: $0) }
-                    ?? FileManager.default.temporaryDirectory
-                        .appendingPathComponent("rncs-\(recordName)-\(fieldName)")
+                    ?? Self.defaultAssetDestination(
+                        recordName: recordName, fieldName: fieldName, zoneName: id.zoneID.zoneName
+                    )
                 do {
-                    // Create the parent directory when the caller named a path
+                    // Creates the parent directory when the caller named a path
                     // inside one that does not exist yet - a copy into a missing
                     // directory fails, and making them create it first would be
                     // a pointless extra step in every export flow.
-                    let parent = destination.deletingLastPathComponent()
-                    if !FileManager.default.fileExists(atPath: parent.path) {
-                        try FileManager.default.createDirectory(
-                            at: parent, withIntermediateDirectories: true
-                        )
-                    }
-                    if FileManager.default.fileExists(atPath: destination.path) {
-                        try FileManager.default.removeItem(at: destination)
-                    }
+                    try Self.prepareDestination(destination)
                     try FileManager.default.copyItem(at: url, to: destination)
-                    resolve(destination.absoluteString)
+                    settleResolve(destination.absoluteString)
                 } catch {
                     let mapped = CloudSyncError.from(error)
-                    reject(mapped.code, mapped.message, mapped.asNSError)
+                    settleReject(mapped.code, mapped.message, mapped.asNSError)
                 }
             case let .failure(error):
                 if let ckError = error as? CKError, ckError.code == .unknownItem {
-                    resolve(nil)
+                    settleResolve(nil)
                     return
                 }
                 let mapped = CloudSyncError.from(error)
-                reject(mapped.code, mapped.message, mapped.asNSError)
+                settleReject(mapped.code, mapped.message, mapped.asNSError)
             }
         }
 
-        operation.fetchRecordsResultBlock = { [weak self] result in
-            self?.untrackOperation(recordName: recordName, fieldName: fieldName)
+        operation.fetchRecordsResultBlock = { [weak self, unowned operation] result in
+            self?.untrackOperation(operation, recordName: recordName, fieldName: fieldName)
             if case let .failure(error) = result {
                 // A per-record failure already resolved/rejected above; this
                 // only fires for operation-level failures (e.g. the record
                 // simply not existing surfaces here rather than per-record
                 // on some CloudKit versions), so guard against double-resolving.
                 if let ckError = error as? CKError, ckError.code == .unknownItem {
-                    resolve(nil)
+                    settleResolve(nil)
                     return
                 }
                 let mapped = CloudSyncError.from(error)
-                reject(mapped.code, mapped.message, mapped.asNSError)
+                settleReject(mapped.code, mapped.message, mapped.asNSError)
             }
         }
 
-        trackOperation(operation, recordName: recordName, fieldName: fieldName)
+        guard replaceTrackedOperation(
+            sizeOperation, with: operation, recordName: recordName, fieldName: fieldName
+        ) else {
+            // `ckCancelAsset` removed the size lookup while it ran.
+            let error = CloudSyncError.coded(
+                code: CloudSyncErrorCode.cancelled,
+                message: "The CloudKit operation was cancelled.",
+                info: [:]
+            )
+            settleReject(error.code, error.message, error.asNSError)
+            return
+        }
         database.add(operation)
     }
 
@@ -973,10 +1284,28 @@ import Foundation
     /// The container root. Blocking - Apple documents this as slow enough that
     /// it must not be called on the main thread, so every caller here hops to a
     /// background queue first.
+    ///
+    /// No CKContainer involved, and safe without a declaration: passing nil asks
+    /// for the first container in the app's ubiquity entitlements, and simply
+    /// returns nil when there is none. The old `iCloud.<bundle id>` guess was
+    /// worse than nil - it named a container the app may not have.
     private func ubiquityContainerURL() -> URL? {
         return FileManager.default.url(
-            forUbiquityContainerIdentifier: Self.resolveContainerIdentifier()
+            forUbiquityContainerIdentifier: Self.documentsContainerIdentifier()
         )
+    }
+
+    /// The container for iCloud Drive documents. Its own Info.plist key, because
+    /// an app can have iCloud Documents without CloudKit - and declaring the
+    /// CloudKit container there would let CloudKit calls build a CKContainer
+    /// the app has no CloudKit service for.
+    static func documentsContainerIdentifier() -> String? {
+        if let configured = Bundle.main.object(
+            forInfoDictionaryKey: "RNCloudSyncDocumentsContainerIdentifier"
+        ) as? String, !configured.isEmpty {
+            return configured
+        }
+        return declaredContainerIdentifier()
     }
 
     /// The user-visible subdirectory. Only `Documents` is ever exposed in
@@ -998,6 +1327,28 @@ import Foundation
             )
         }
         return documents
+    }
+
+    /// A document name must be a single path component inside `Documents`.
+    ///
+    /// Names are appended to the container URL as-is, so `a/b`, `..` or
+    /// `../../Library/x` reached outside the user-visible folder - into a
+    /// subdirectory that does not exist (a confusing ERR_UNKNOWN), or out of
+    /// `Documents` altogether. A `.x.icloud` name would collide with the
+    /// placeholder naming this file relies on to detect undownloaded items.
+    static func validateDocumentName(_ name: String) throws {
+        let invalid = name.isEmpty
+            || name == "." || name == ".."
+            || name.contains("/") || name.contains("\u{0}")
+            || (name.hasPrefix(".") && name.hasSuffix(".icloud"))
+        guard !invalid else {
+            throw CloudSyncError.coded(
+                code: CloudSyncErrorCode.invalidKey,
+                message: "'\(name)' is not a valid iCloud Drive document name. Use a single "
+                    + "file name: non-empty, no '/', not '.' or '..'.",
+                info: [:]
+            )
+        }
     }
 
     /// True when the device has a usable iCloud Drive container right now.
@@ -1035,7 +1386,19 @@ import Foundation
                     )
                 }
 
+                try Self.validateDocumentName(name)
                 let destination = try self.documentsURL().appendingPathComponent(name)
+
+                // Saving the in-container file back under its own name - the
+                // natural "fetch, edit in place, save" flow, since `docFetch`
+                // without a destination resolves exactly that path - used to
+                // remove the destination (i.e. the source) and then fail the
+                // copy, deleting the document from iCloud on every device.
+                // The bytes are already where they belong.
+                if Self.isSameFile(source, destination) {
+                    resolve(destination.absoluteString)
+                    return
+                }
 
                 // Coordinated, because iCloud Drive files are shared with the
                 // system daemon and with other processes. An uncoordinated write
@@ -1084,6 +1447,7 @@ import Foundation
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
+                try Self.validateDocumentName(name)
                 let source = try self.documentsURL().appendingPathComponent(name)
 
                 guard FileManager.default.fileExists(atPath: source.path)
@@ -1094,7 +1458,7 @@ import Foundation
 
                 try FileManager.default.startDownloadingUbiquitousItem(at: source)
 
-                let deadline = Date().addingTimeInterval(timeoutMs.doubleValue / 1000)
+                let deadline = Date().addingTimeInterval(Self.fetchTimeoutSeconds(timeoutMs))
                 while !self.isDownloaded(source) {
                     if Date() >= deadline {
                         throw CloudSyncError.coded(
@@ -1121,9 +1485,16 @@ import Foundation
                 // Copy out of the container when the caller named a destination,
                 // so they get a file the system will not later evict.
                 let destination = Self.fileURL(from: destinationUri)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
+                // Naming the in-container file itself as the destination would
+                // otherwise delete it (everywhere - it is an iCloud document)
+                // and then fail the copy.
+                if Self.isSameFile(source, destination) {
+                    resolve(source.absoluteString)
+                    return
                 }
+                // Same as `ckFetchAsset`: creates a missing parent, and never
+                // deletes a directory standing at the destination.
+                try Self.prepareDestination(destination)
 
                 var coordinationError: NSError?
                 var copyError: Error?
@@ -1144,6 +1515,34 @@ import Foundation
                 reject(mapped.code, mapped.message, mapped.asNSError)
             }
         }
+    }
+
+    /// Default and ceiling for `docFetch`'s wait, in milliseconds.
+    static let defaultFetchTimeoutMs = 60_000.0
+    static let maxFetchTimeoutMs = 60.0 * 60 * 1000
+
+    /// The wait is a polling loop that holds a GCD worker thread for its whole
+    /// duration. A NaN timeout never compared past the deadline, so it held
+    /// that thread forever; enough of them exhaust the global pool. Clamped to
+    /// an hour, NaN reads as the default.
+    static func fetchTimeoutSeconds(_ timeoutMs: NSNumber) -> TimeInterval {
+        let value = timeoutMs.doubleValue
+        guard !value.isNaN else { return defaultFetchTimeoutMs / 1000 }
+        return min(max(value, 0), maxFetchTimeoutMs) / 1000
+    }
+
+    /// True when both URLs name the same file on disk, after resolving symlinks
+    /// and `..`. Falls back to comparing standardized paths when either side
+    /// does not exist yet.
+    static func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        let left = a.standardizedFileURL.resolvingSymlinksInPath()
+        let right = b.standardizedFileURL.resolvingSymlinksInPath()
+        if left.path == right.path { return true }
+        guard let leftID = try? left.resourceValues(forKeys: [.fileResourceIdentifierKey])
+                .fileResourceIdentifier,
+              let rightID = try? right.resourceValues(forKeys: [.fileResourceIdentifierKey])
+                .fileResourceIdentifier else { return false }
+        return leftID.isEqual(rightID)
     }
 
     /// Whether the local copy is current, i.e. safe to read.
@@ -1197,17 +1596,26 @@ import Foundation
                     if seen.contains(name) { continue }
                     seen.insert(name)
 
-                    let values = try? url.resourceValues(forKeys: [
+                    // Ask about the item, not the `.name.icloud` stub. The stub
+                    // is a plain local file: it carries no downloading status,
+                    // so a not-yet-downloaded file was reported as
+                    // `isDownloaded: true` with the stub's own size. The
+                    // ubiquitous-item keys resolve on the logical URL even
+                    // while only the stub is on disk.
+                    let isPlaceholder = url.lastPathComponent != name
+                    let itemURL = documents.appendingPathComponent(name)
+                    let itemValues = try? itemURL.resourceValues(forKeys: [
                         .fileSizeKey,
                         .ubiquitousItemDownloadingStatusKey,
                         .ubiquitousItemIsDownloadingKey,
                     ])
-                    let status = values?.ubiquitousItemDownloadingStatus
+                    let status = itemValues?.ubiquitousItemDownloadingStatus
+                    let isDownloaded = status.map { $0 == .current } ?? !isPlaceholder
                     result.append([
                         "name": name,
-                        "sizeBytes": values?.fileSize ?? 0,
-                        "isDownloaded": status == nil || status == .current,
-                        "isDownloading": values?.ubiquitousItemIsDownloading ?? false,
+                        "sizeBytes": itemValues?.fileSize ?? 0,
+                        "isDownloaded": isDownloaded,
+                        "isDownloading": itemValues?.ubiquitousItemIsDownloading ?? false,
                     ])
                 }
 
@@ -1235,9 +1643,10 @@ import Foundation
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
+                try Self.validateDocumentName(name)
                 let target = try self.documentsURL().appendingPathComponent(name)
-                guard FileManager.default.fileExists(atPath: target.path)
-                    || self.placeholderExists(for: target) else {
+                let hasLocalItem = FileManager.default.fileExists(atPath: target.path)
+                guard hasLocalItem || self.placeholderExists(for: target) else {
                     // Already gone is the end state the caller asked for.
                     resolve(false)
                     return
@@ -1249,7 +1658,18 @@ import Foundation
                     writingItemAt: target, options: .forDeleting, error: &coordinationError
                 ) { url in
                     do {
-                        try FileManager.default.removeItem(at: url)
+                        if FileManager.default.fileExists(atPath: url.path) {
+                            try FileManager.default.removeItem(at: url)
+                        } else {
+                            // Not downloaded on this device (iOS 16 and
+                            // earlier): only the `.name.icloud` stub is on disk,
+                            // so removing the logical path failed with "no such
+                            // file". The stub stands for the item, and deleting
+                            // it deletes the item from the account.
+                            let stub = url.deletingLastPathComponent()
+                                .appendingPathComponent(".\(url.lastPathComponent).icloud")
+                            try FileManager.default.removeItem(at: stub)
+                        }
                     } catch {
                         removeError = error
                     }

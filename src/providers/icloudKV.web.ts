@@ -7,8 +7,14 @@ const DETAIL
   = 'NSUbiquitousKeyValueStore has no browser API. Use the cloudKit provider, which '
     + 'reaches the same private database over CloudKit Web Services.'
 
-function reject(): never {
-  throw unsupportedPlatform(NAME, DETAIL)
+/**
+ * A rejected promise, not a synchronous throw. The native build's methods are
+ * `async`, so `icloudKV.getItem(k).catch(...)` works there; a throw here escaped
+ * that `.catch` and crashed the caller on exactly the builds that are supposed
+ * to fail politely.
+ */
+function reject(): Promise<never> {
+  return Promise.reject(unsupportedPlatform(NAME, DETAIL))
 }
 
 /**

@@ -63,17 +63,27 @@ export const icloudKV: CloudProvider = {
     const m = getNativeModule()
     if (m == null) return false
     try {
-      return await m.isAvailable()
+      // The key-value store's own status, not CloudKit's: `isAvailable()` goes
+      // through `CKContainer`, which raises an uncatchable `CKException` in an
+      // app that has only the key-value-store entitlement.
+      return (await m.kvGetAccountStatus()) === 'available'
     }
     catch {
       return false
     }
   },
 
+  /**
+   * Resolves `'couldNotDetermine'` off Apple platforms rather than throwing -
+   * the same answer the `.web.ts` build gives, so a react-native-web bundle
+   * behaves the same whether or not its bundler resolves platform extensions.
+   * A status question has a truthful answer everywhere; only reads and writes
+   * reject with `ERR_UNSUPPORTED_PLATFORM`.
+   */
   getAccountStatus: async (): Promise<AccountStatus> => {
-    assertPlatform()
+    if (!isApplePlatform()) return 'couldNotDetermine'
     try {
-      return toAccountStatus(await requireNativeModule().getAccountStatus())
+      return toAccountStatus(await requireNativeModule().kvGetAccountStatus())
     }
     catch (e) {
       throw normalizeError(e, NAME)

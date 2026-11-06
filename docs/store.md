@@ -18,7 +18,7 @@ const store = createCloudStore({
 |---|---|
 | `getItem(key)` | Falls through the provider list until a value is found |
 | `setItem(key, value)` | Writes to the first available provider, routed by size |
-| `removeItem(key)` | Removes from the first available provider |
+| `removeItem(key)` | Removes from every available provider |
 | `getAllKeys()` | Union across every available provider |
 | `migrate({ from, to })` | Copies every key. The source is left intact |
 | `flushOutbox()` | Retries queued writes that are due |
@@ -32,7 +32,7 @@ Read carefully: `providers: ['icloudKV', 'googleDrive']` reads as "both" - by de
 | | Default (`failover`) | `writeMode: 'mirror'` |
 |---|---|---|
 | `setItem` | first available provider **only** | **every** available provider |
-| `removeItem` | first available provider only | every available provider |
+| `removeItem` | every available provider | every available provider |
 | `getItem` | falls through the list | falls through the list |
 | `getAllKeys` | union across all | union across all |
 
@@ -45,6 +45,8 @@ createCloudStore({ providers: ['icloudKV', 'googleDrive'] })
 On an iPhone with iCloud signed in, writes go to **iCloud only** - Drive is a read fallback for alternatives like this, not a second destination, and each device only needs its own copy.
 
 No cross-platform sync: an iPhone that only ever wrote to iCloud leaves an Android device nothing to read, since iCloud is unreachable there and Drive was never written to. Use `mirror` for that, or put the user on Drive.
+
+Deletes still go everywhere: a failover write can land on a later provider - the preferred one was down, or tiering routed a large value past it - and removing from only the first would leave that copy for reads to resurrect. `removeItem` succeeds if any provider removed the key.
 
 ### `mirror` - the same data in more than one place
 
@@ -126,9 +128,20 @@ After resolving, the winner writes back to any provider that disagreed - without
 
 Best-effort and never fails the read: the caller already has the right answer, and a failed repair only costs another resolution later. Disable with `repairOnRead: false`.
 
+Repair checks this device's [outbox](#the-outbox) first, weighing a queued write for that provider as one more candidate. A queued write that loses to the winner is dropped, or the next flush would put it back on top of the repair; one that wins is left for the outbox to deliver; a queued delete is never undone.
+
+Batch reads repair the same way: with `resolve` set, `multiGet`, `getAllItems()` and [`useCloudItems`](hooks.md#useclouditems) resolve each key exactly as `getItem` does, server timestamps included.
+
 ### The cost
 
 A resolving read costs one request per provider instead of one, plus possible repair writes. Cache a hot-path key, or keep it on a single provider.
+
+For `multiGet`, a resolver that reads `modifiedAt` also needs server timestamps: free on CloudKit over REST, one listing per 50 keys on Drive (on top of the per-key downloads it needs anyway), one `getItemWithMeta` per key on a provider with no `multiGetWithMeta`. A custom resolver that never looks at `modifiedAt` should say so with `usesModifiedAt = false`, keeping the batch one request per provider:
+
+```ts
+const byVersion: ResolveFn = candidates => pickHighestVersion(candidates)
+byVersion.usesModifiedAt = false
+```
 
 Reads without a resolver are unchanged - first non-null, short-circuit.
 
@@ -142,7 +155,9 @@ Routes a write by size, so store limits stop leaking into product code.
 | ≤ 900 KB (`recordMaxBytes`) | a CloudKit record field |
 | larger | Google Drive, which stores whole files and has no cap of its own |
 
-Each threshold caps one provider; a value above a cap routes past it to the next provider in your list that is both large enough and available. With only `['icloudKV', 'cloudKit']` configured, a 2 MB value fits nowhere and rejects.
+Each threshold caps one provider (`recordMaxBytes` covers `cloudKitEncrypted` too); a value above a cap routes past it to the next provider in your list that is both large enough and available. With only `['icloudKV', 'cloudKit']` configured, a 2 MB value fits nowhere and rejects.
+
+A value that grows past a cap removes its older, smaller copy from the preferred provider once it lands further down the list - reads reach that provider first and would otherwise serve the stale copy.
 
 Thresholds are configurable:
 
@@ -184,7 +199,7 @@ createCloudStore({
 })
 ```
 
-Deliberately not network-aware: detecting a reconnect needs `@react-native-community/netinfo`, and forcing every consumer to install it for the few who want it is a bad trade - call `flushOutbox()` from your own NetInfo listener instead. Foreground plus a slow timer covers the common case anyway, since a reconnected app is almost always about to be foregrounded.
+The timer only flushes while the app is active, so it doesn't spend a background window on network nobody is waiting for. Deliberately not network-aware: detecting a reconnect needs `@react-native-community/netinfo`, and forcing every consumer to install it for the few who want it is a bad trade - call `flushOutbox()` from your own NetInfo listener instead. Foreground plus a slow timer covers the common case anyway, since a reconnected app is almost always about to be foregrounded.
 
 ### Giving up
 
@@ -193,8 +208,10 @@ The queue is bounded three ways - unbounded, it is a slow leak: every enqueue re
 | Option | Default | Meaning |
 |---|---|---|
 | `outboxMaxEntries` | 1000 | Oldest is evicted when full |
-| `outboxMaxAttempts` | 12 | Roughly an hour of backoff |
+| `outboxMaxAttempts` | 12 | About 23.5 minutes of backoff at minimum |
 | `outboxMaxAgeMs` | 7 days | Time matters independently of attempts |
+
+After the n-th failure the next retry waits 2^n seconds, capped at five minutes (or the server's `Retry-After`, itself clamped to 0 to 1 hour). That is the minimum: retries only run when a flush does, so in wall-clock time it usually spans longer - `outboxMaxAgeMs` bounds that.
 
 Whenever an entry is abandoned it is reported, so the loss is visible rather than silent:
 
@@ -237,6 +254,14 @@ const store = createCloudStore({
 ```
 
 **Both methods must be synchronous.** The outbox is read and written on the write path with nowhere to await, so an async store cannot wrap directly. MMKV is the recommendation: synchronous reads/writes put a queued write on disk before `setItem` returns, with no crash window to lose it.
+
+`cloudKitEncrypted` writes are the exception: they are queued in memory only, never in `outboxStorage`, since the value is still plaintext until native code encrypts it. They are lost on restart but still listed by `pendingWrites()`. Entries an older version persisted are moved to memory and removed from storage on startup.
+
+### Ordering
+
+Operations on the same key and provider run one at a time. A write waits for one already in flight - including a flush re-sending a queued value - so an older queued value can't land on top of a newer direct write. A flush also skips an entry a newer write, `discardPendingWrites` or an account switch removed while it was waiting, instead of sending it or writing it back.
+
+With `timeoutMs`, a timed-out request releases the key while the request itself may still be in flight.
 
 ### Surfacing it
 
@@ -352,7 +377,7 @@ import { sanitizeKey } from 'react-native-cloud-sync'
 await store.setItem(sanitizeKey('My Report (2024).pdf'), json)
 ```
 
-Over-long keys are truncated *and* suffixed with a hash of the original - truncation alone maps every long key sharing a prefix onto the same short key, silently merging unrelated values.
+A key that is already legal comes back unchanged. Any other is cleaned, truncated if needed, and suffixed with `--` plus a 14-character hash of the original - replacement alone maps `a b` and `a-b` onto one key, and truncation alone maps every long key sharing a prefix onto one, silently merging unrelated values. `maxBytes` (default 64) must be at least 16, the size of the suffix, or it throws a `RangeError`.
 
 Pass `validateKeys: false` to skip the check when your keys are known good.
 

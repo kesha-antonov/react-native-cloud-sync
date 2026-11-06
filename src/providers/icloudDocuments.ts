@@ -1,7 +1,7 @@
 import { Platform } from 'react-native'
 
 import { getNativeModule, requireNativeModule } from '../internal/nativeModule'
-import { normalizeError, unsupportedPlatform } from '../errors'
+import { CloudSyncError, ErrorCode, normalizeError, unsupportedPlatform } from '../errors'
 
 const NAME = 'icloudDocuments' as const
 
@@ -21,6 +21,40 @@ function assertSupported(): void {
       NAME,
       'iCloud Drive is an Apple filesystem feature with no REST or browser equivalent. '
       + 'Use googleDriveFiles for user-visible files on Android and web.'
+    )
+}
+
+/**
+ * A document name must be one file name inside the app's Documents folder.
+ * Mirrors `validateDocumentName` in `ios/CloudSyncImpl.swift`, so the failure is
+ * the same typed error with or without a native round trip.
+ */
+function assertValidName(name: string): void {
+  const invalid = typeof name !== 'string'
+    || name === '' || name === '.' || name === '..'
+    || name.includes('/') || name.includes('\0')
+    || (name.startsWith('.') && name.endsWith('.icloud'))
+  if (invalid)
+    throw new CloudSyncError(
+      ErrorCode.INVALID_KEY,
+      `'${String(name)}' is not a valid iCloud Drive document name. Use a single file name: `
+      + `non-empty, no '/', not '.' or '..'.`,
+      { provider: NAME }
+    )
+}
+
+/**
+ * The native wait is a polling loop on a background thread. `NaN` never
+ * compared past its deadline, so it held that thread for good, and enough of
+ * them starve the queue every other iCloud Drive call runs on. Native code also
+ * clamps the wait to an hour, so `Infinity` means "as long as allowed".
+ */
+function assertValidTimeout(timeoutMs: number | undefined): void {
+  if (timeoutMs === undefined) return
+  if (typeof timeoutMs !== 'number' || Number.isNaN(timeoutMs) || timeoutMs < 0)
+    throw new RangeError(
+      `[RNCloudSync] icloudDocuments.fetch timeoutMs must be a non-negative number of `
+      + `milliseconds (got ${String(timeoutMs)}).`
     )
 }
 
@@ -50,7 +84,7 @@ export interface DocumentFetchOptions {
    */
   destinationUri?: string
   /**
-   * How long to wait for the download. Default 60000.
+   * How long to wait for the download. Default 60000, capped at one hour.
    *
    * A timeout is not a failure of the transfer - iOS keeps downloading in the
    * background - so `ERR_TIMEOUT` here means "not yet", and it is classified as
@@ -109,6 +143,7 @@ export const icloudDocuments = {
    */
   save: async (options: { fileUri: string; name: string }): Promise<string> => {
     assertSupported()
+    assertValidName(options.name)
     try {
       return await requireNativeModule().docSave(options.fileUri, options.name)
     }
@@ -133,6 +168,8 @@ export const icloudDocuments = {
     options: { name: string } & DocumentFetchOptions
   ): Promise<string | null> => {
     assertSupported()
+    assertValidName(options.name)
+    assertValidTimeout(options.timeoutMs)
     try {
       return await requireNativeModule().docFetch(
         options.name,
@@ -165,6 +202,7 @@ export const icloudDocuments = {
    */
   remove: async (name: string): Promise<boolean> => {
     assertSupported()
+    assertValidName(name)
     try {
       return await requireNativeModule().docRemove(name)
     }
