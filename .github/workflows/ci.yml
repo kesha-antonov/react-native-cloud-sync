@@ -9,12 +9,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only token. Without this the jobs inherit the repository default, which
+# on older repositories is read/write - and every job here runs `yarn install`,
+# i.e. arbitrary dependency lifecycle scripts, with that token in reach.
+permissions:
+  contents: read
+
 jobs:
   check:
     name: Lint, typecheck & test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         run: corepack enable
@@ -58,6 +66,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         run: corepack enable
@@ -119,6 +129,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         run: corepack enable
@@ -193,6 +205,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         run: corepack enable

@@ -5,36 +5,55 @@ on:
     types: [published]
   workflow_dispatch:
 
-jobs:
-  publish:
-    name: Publish to npm
-    runs-on: ubuntu-latest
+# Nothing here needs more than read access by default. The one job that can
+# publish asks for its OIDC token itself, below.
+permissions:
+  contents: read
 
-    permissions:
-      contents: read
-      # Required for npm provenance - lets the job mint the OIDC token that
-      # npm records as a signed, verifiable link back to this workflow run.
-      id-token: write
+jobs:
+  # Everything that executes third-party code - `yarn install` lifecycle
+  # scripts, lint, tests, the build - runs here, WITHOUT id-token: write. A
+  # compromised dependency's install script in this job cannot mint the OIDC
+  # token npm trusted publishing exchanges for a publish credential.
+  build:
+    name: Build and pack
+    runs-on: ubuntu-latest
+    # A manual run publishes whatever ref it was started on, so it is limited to
+    # main and tags - not any branch someone with write access pushed.
+    if: >-
+      github.event_name == 'release'
+      || github.ref == 'refs/heads/main'
+      || startsWith(github.ref, 'refs/tags/')
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         run: corepack enable
 
+      # No `cache: yarn`. The Actions cache is shared with every other workflow
+      # run on the default branch, so a poisoned entry would be restored
+      # straight into the job that produces the published tarball.
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
-          cache: yarn
+
+      - name: Check the tag matches package.json
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          # Releases have been tagged both `v0.4.0` and `0.3.0`; accept either.
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$VERSION" ] && [ "$TAG" != "$VERSION" ]; then
+            echo "Release tag $TAG does not match package.json $VERSION" >&2
+            exit 1
+          fi
 
       - run: yarn install --immutable
-
-      # npm trusted publishing (OIDC) needs npm >= 11.5.1. The runner's bundled
-      # npm is new enough today, but node-version: 24 floats, so this pins the
-      # requirement explicitly rather than relying on what ships with it.
-      - name: Use an npm that supports trusted publishing
-        run: npm install -g npm@^11.5.1
 
       - run: yarn lint
 
@@ -45,8 +64,50 @@ jobs:
       - name: Build
         run: yarn build && yarn build-plugin
 
-      # Authenticated by npm trusted publishing: the id-token permission above
-      # lets npm exchange this run's OIDC token for a short-lived credential,
-      # so there is no NPM_TOKEN secret to store, leak or rotate.
+      - name: Pack
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          npm pack --ignore-scripts --pack-destination dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Required for npm trusted publishing and provenance - lets the job mint
+      # the OIDC token npm exchanges for a short-lived publish credential and
+      # records as a signed, verifiable link back to this workflow run.
+      id-token: write
+
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # npm trusted publishing (OIDC) needs npm >= 11.5.1. The runner's bundled
+      # npm is new enough today, but node-version: 24 floats, so this pins the
+      # requirement explicitly rather than relying on what ships with it.
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: dist
+
+      # Publishing the packed tarball runs no lifecycle scripts and installs
+      # nothing, so the only code executing while the OIDC token is
+      # available is npm itself. No NPM_TOKEN secret to store, leak or rotate.
       - name: Publish
-        run: npm publish --provenance --access public
+        run: npm publish dist/*.tgz --provenance --access public

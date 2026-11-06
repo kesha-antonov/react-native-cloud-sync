@@ -24,16 +24,21 @@ MAC_SDK="$(xcrun --sdk macosx --show-sdk-path)"
 
 failed=0
 
+# Private, unpredictable log location. A fixed /tmp/catalyst-<pid>.log can be
+# pre-created as a symlink by another local user, and the redirect below would
+# then overwrite whatever it points at.
+LOG_DIR="$(mktemp -d)"
+trap 'rm -rf "$LOG_DIR"' EXIT
+
 check () {
   local label="$1" sdk="$2" target="$3"
-  if xcrun swiftc -typecheck -sdk "$sdk" -target "$target" "$IOS"/*.swift 2>/tmp/catalyst-$$.log; then
+  if xcrun swiftc -typecheck -sdk "$sdk" -target "$target" "$IOS"/*.swift 2>"$LOG_DIR/swiftc.log"; then
     echo "  ok  $label  ($target)"
   else
     echo "  FAILED  $label  ($target)" >&2
-    head -20 /tmp/catalyst-$$.log >&2
+    head -20 "$LOG_DIR/swiftc.log" >&2
     failed=1
   fi
-  rm -f /tmp/catalyst-$$.log
 }
 
 check "iOS simulator" "$IOS_SDK" "arm64-apple-ios15.1-simulator"
