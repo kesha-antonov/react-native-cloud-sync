@@ -1,6 +1,6 @@
 # Testing
 
-Cloud storage is the hardest part of a mobile app to test honestly - the most-used library here [gave up testing iCloud on the simulator entirely](https://github.com/kuatsu/react-native-cloud-storage/issues/41). This package ships an in-memory provider with fault injection instead, from a real entry point:
+Cloud storage is hard to test on a simulator (the most-used alternative [gave up on it](https://github.com/kuatsu/react-native-cloud-storage/issues/41)). This package ships an in-memory provider with fault injection:
 
 ```ts
 import { createMemoryProvider } from 'react-native-cloud-sync/testing'
@@ -47,7 +47,7 @@ provider.setFault('getItem', null)   // clear
 ### Failures that heal
 
 ```ts
-// Fail twice, then succeed - the shape retry and outbox logic must converge on.
+// Fail twice, then succeed.
 provider.setFault('setItem', { code: ErrorCode.NETWORK_UNAVAILABLE, times: 2 })
 
 await store.setItem('k', 'v')        // queued
@@ -65,7 +65,7 @@ provider.setFault('setItem', {
 })
 ```
 
-Asserts your backoff honours the server's hint, not its own schedule.
+Use it to check that backoff honours the server's hint.
 
 ## Simulating other devices
 
@@ -73,7 +73,7 @@ Asserts your backoff honours the server's hint, not its own schedule.
 provider.emitRemoteChange({ keys: ['user/id'], reason: 'serverChange' })
 ```
 
-The cross-user leak case:
+An account switch:
 
 ```ts
 provider.emitAccountChange({ status: 'available', identityChanged: true })
@@ -86,7 +86,7 @@ provider.emitAccountChange({ status: 'available', identityChanged: true })
 expect(provider.calls.setItem).toBe(1)   // no blind second write
 ```
 
-Proves a retry did *not* happen - e.g. a quota failure surfacing instead of queuing forever.
+Proves a retry did not happen, for example that a quota failure surfaced instead of queuing.
 
 ## Inspecting state
 
@@ -99,7 +99,7 @@ Proves a retry did *not* happen - e.g. a quota failure surfacing instead of queu
 
 ## Simulating a signed-out fleet
 
-The case that matters most, and the hardest to reach on a device:
+Hard to reproduce on a device:
 
 ```ts
 const provider = createMemoryProvider({ available: false, initial: { backup: 'real data' } })
@@ -111,11 +111,11 @@ await expect(store.getItem('backup')).rejects.toMatchObject({
 })
 ```
 
-`setAvailable(false)` flips it mid-test - for a mid-session sign-out.
+`setAvailable(false)` simulates a sign-out mid-test.
 
 ## Faults scoped to one key
 
-Real backends fail per record, not per operation - one bad key, the rest of the batch through:
+Real backends fail per record, so one bad key can fail while the rest of a batch succeeds:
 
 ```ts
 const provider = createMemoryProvider({
@@ -125,7 +125,7 @@ const provider = createMemoryProvider({
 })
 ```
 
-Also keeps interleaving tests deterministic - in-flight operations no longer share a `times` budget.
+This also keeps interleaving tests deterministic, since other keys don't consume the `times` budget.
 
 ## Several providers at once
 
@@ -138,11 +138,11 @@ store.registerProvider(apple)
 store.registerProvider(drive)
 ```
 
-`name` makes each double stand in for a real provider - tiering, mirroring and read repair, which key off names, behave as in production.
+`name` makes each double stand in for a real provider, so tiering, mirroring and read repair behave as in production.
 
 ## Asserting that batching happened
 
-The double counts one call per batch, not per key, proving the store batched rather than looped:
+The double counts one call per batch, not per key:
 
 ```ts
 const before = provider.calls.getItem
@@ -159,11 +159,11 @@ expect(store.pendingWrites()).toHaveLength(0)   // the previous user's writes ar
 expect(provider.cacheClears).toBe(1)            // and the provider was told to forget
 ```
 
-`cacheClears` counts how often the store told this provider to drop cached state - proof it reacted, not just forwarded the event.
+`cacheClears` counts how often the store told the provider to drop cached state.
 
 ## Mocking the native module
 
-To test a real provider, mock the native module directly - this package ships the mock its own suite uses:
+To test a real provider, use the native-module mock this package's own suite uses:
 
 ```js
 // jest.config.js
@@ -172,7 +172,7 @@ module.exports = {
 }
 ```
 
-A `jest.fn()` surface plus an event registry, so tests can fire native events without a device:
+It exposes `jest.fn()` methods and an event registry, so tests can fire native events:
 
 ```ts
 const harness = (global as any).__RNCloudSync
@@ -183,4 +183,4 @@ harness.setAppState('active')                        // trigger the store's auto
 harness.reset()
 ```
 
-It deliberately avoids `jest.requireActual('react-native')` - loading the real index pulls in DevMenu, whose module-level `TurboModuleRegistry.getEnforcing` call throws under Jest.
+It avoids `jest.requireActual('react-native')`: the real index loads DevMenu, whose `TurboModuleRegistry.getEnforcing` call throws under Jest.

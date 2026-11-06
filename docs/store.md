@@ -1,6 +1,6 @@
 # The store facade
 
-One API over several providers - size tiering, a durable outbox, read fallthrough, migration - for when the app should not care which cloud a value lives in. Use the providers directly when it should.
+One API over several providers, with size tiering, a durable outbox, read fallthrough and migration. Use it when the app shouldn't care which cloud holds a value; use the providers directly when it should.
 
 ```ts
 import { createCloudStore } from 'react-native-cloud-sync'
@@ -27,7 +27,7 @@ const store = createCloudStore({
 
 ## How the provider list is used
 
-Read carefully: `providers: ['icloudKV', 'googleDrive']` reads as "both" - by default it is not.
+`providers: ['icloudKV', 'googleDrive']` does not mean "write to both" by default.
 
 | | Default (`failover`) | `writeMode: 'mirror'` |
 |---|---|---|
@@ -42,11 +42,11 @@ Read carefully: `providers: ['icloudKV', 'googleDrive']` reads as "both" - by de
 createCloudStore({ providers: ['icloudKV', 'googleDrive'] })
 ```
 
-On an iPhone with iCloud signed in, writes go to **iCloud only** - Drive is a read fallback for alternatives like this, not a second destination, and each device only needs its own copy.
+On an iPhone signed in to iCloud, writes go to **iCloud only**. Drive is a read fallback, not a second destination.
 
-No cross-platform sync: an iPhone that only ever wrote to iCloud leaves an Android device nothing to read, since iCloud is unreachable there and Drive was never written to. Use `mirror` for that, or put the user on Drive.
+So there is no cross-platform sync: Android can't reach iCloud and Drive was never written. Use `mirror` for that, or put the user on Drive.
 
-Deletes still go everywhere: a failover write can land on a later provider - the preferred one was down, or tiering routed a large value past it - and removing from only the first would leave that copy for reads to resurrect. `removeItem` succeeds if any provider removed the key.
+Deletes still go to every provider, because a write may have landed on a later one (the preferred one was down, or tiering routed past it). `removeItem` succeeds if any provider removed the key.
 
 ### `mirror` - the same data in more than one place
 
@@ -57,37 +57,32 @@ createCloudStore({
 })
 ```
 
-Every write goes to every available provider: the iPhone now writes to iCloud *and* Drive, so Android - seeing only Drive - finds the data.
+Every write goes to every available provider, so the iPhone writes to iCloud and Drive, and Android finds the data on Drive.
 
-Costs one request per provider per write, and needs the user connected to each one.
-
-Partial failure counts as success: if one destination stores the value and another is offline, the write resolves and the failed one queues in the [outbox](#the-outbox) for retry - it rejects only when *nothing* stored it.
-
-Deletes mirror too - removing from only the preferred provider would leave a copy for reads to resurrect.
-
-Values too large for a provider are skipped, not fatal: a 200 KB value goes to Drive, skipping the iCloud key-value store rather than failing the whole write. Fitting nowhere rejects with `ERR_PAYLOAD_TOO_LARGE`.
+- Costs one request per provider per write; the user must be connected to each.
+- Partial failure counts as success: the failed destination queues in the [outbox](#the-outbox). The write rejects only when nothing stored it.
+- Deletes go everywhere too.
+- A provider too small for the value is skipped: a 200 KB value goes to Drive only. Fitting nowhere rejects with `ERR_PAYLOAD_TOO_LARGE`.
 
 ### Read fallthrough
 
-In both modes `getItem` tries each available provider in order and returns the first value found. `getAllKeys()` unions across providers, and a provider that cannot list does not hide the ones that can.
+In both modes `getItem` returns the first value found among available providers, in order. `getAllKeys()` unions across providers; one that can't list doesn't hide the others.
 
 First found is not newest. See below.
 
 ## Two-way sync across a mixed fleet
 
-Mirroring gets a copy into every store, but does not by itself make reads correct once both sides write.
-
-Consider an iPhone configured `['icloudKV', 'googleDrive']` with `mirror`, and an Android phone that can only reach Drive:
+Mirroring puts a copy in every store, but reads go wrong once both sides write. An iPhone with `['icloudKV', 'googleDrive']` and `mirror`, and an Android phone that only reaches Drive:
 
 1. The iPhone writes. iCloud and Drive both hold `A`.
 2. The Android phone writes. Drive now holds `B`; iCloud still holds `A`, because Android cannot reach it.
-3. The iPhone reads. iCloud is first in the list and has a value, so it returns `A` - and never looks at Drive.
+3. The iPhone reads. iCloud is first and has a value, so it returns `A` and never looks at Drive.
 
-The iPhone serves stale data indefinitely - the break always runs *toward* the device that can reach the preferred store.
+The iPhone serves stale data indefinitely.
 
 ### `resolve`
 
-The store holds opaque strings, so only your app knows which copy is newer. Supply a resolver and a read consults **every** available provider, then asks you which wins:
+The store holds opaque strings, so only your app knows which copy is newer. With a resolver, a read consults **every** available provider and lets you pick the winner:
 
 ```ts
 import { createCloudStore, resolveByTimestamp } from 'react-native-cloud-sync'
@@ -99,9 +94,9 @@ const store = createCloudStore({
 })
 ```
 
-`resolveByTimestamp` covers the usual shape - JSON values carrying a timestamp field, newest wins. It accepts epoch millis or ISO strings, prefers a value it can date over one it cannot, and keeps the earlier provider on a tie so results do not flap.
+`resolveByTimestamp`: JSON values with a timestamp field (epoch millis or ISO string), newest wins. A datable value beats an undatable one; ties keep the earlier provider, so results don't flap.
 
-For a JSON array where two devices adding *different* elements should both survive - favorited item ids, dismissed-tip ids - use `resolveByUnion` instead: it merges every candidate's array rather than picking one.
+`resolveByUnion`: merges JSON arrays, so elements added on different devices (favorite ids, dismissed tips) all survive.
 
 ```ts
 import { resolveByUnion } from 'react-native-cloud-sync'
@@ -109,9 +104,9 @@ import { resolveByUnion } from 'react-native-cloud-sync'
 resolve: resolveByUnion({ key: item => item.id })
 ```
 
-Deletions do not propagate through a union, since a plain array carries no record of what used to be there. Track removals yourself (a separate `removedIds` set, synced the same way) if that matters.
+Deletions don't propagate through a union. If that matters, track removals yourself (a `removedIds` set synced the same way).
 
-Write your own for anything else:
+Or write your own:
 
 ```ts
 resolve: (candidates) => {
@@ -120,46 +115,42 @@ resolve: (candidates) => {
 }
 ```
 
-Returning `null` means "none of these", which reads as absent.
+Returning `null` reads as absent. All built-in resolvers are listed in the [API reference](API.md#resolvers).
 
 ### Read repair
 
-After resolving, the winner writes back to any provider that disagreed - without it, the losing store keeps its stale value and every read pays to resolve again, forever.
+After resolving, the winner is written back to every provider that disagreed, so later reads don't have to resolve again. Repair is best-effort and never fails the read. Disable with `repairOnRead: false`.
 
-Best-effort and never fails the read: the caller already has the right answer, and a failed repair only costs another resolution later. Disable with `repairOnRead: false`.
+Repair counts a write queued in this device's [outbox](#the-outbox) as one more candidate. A queued write that loses is dropped (or the next flush would undo the repair); one that wins is left to the outbox; a queued delete is never undone.
 
-Repair checks this device's [outbox](#the-outbox) first, weighing a queued write for that provider as one more candidate. A queued write that loses to the winner is dropped, or the next flush would put it back on top of the repair; one that wins is left for the outbox to deliver; a queued delete is never undone.
-
-Batch reads repair the same way: with `resolve` set, `multiGet`, `getAllItems()` and [`useCloudItems`](hooks.md#useclouditems) resolve each key exactly as `getItem` does, server timestamps included.
+With `resolve` set, `multiGet`, `getAllItems()` and [`useCloudItems`](hooks.md#useclouditems) resolve and repair each key as `getItem` does.
 
 ### The cost
 
-A resolving read costs one request per provider instead of one, plus possible repair writes. Cache a hot-path key, or keep it on a single provider.
+A resolving read costs one request per provider instead of one, plus possible repair writes. Cache hot keys or keep them on a single provider.
 
-For `multiGet`, a resolver that reads `modifiedAt` also needs server timestamps: free on CloudKit over REST, one listing per 50 keys on Drive (on top of the per-key downloads it needs anyway), one `getItemWithMeta` per key on a provider with no `multiGetWithMeta`. A custom resolver that never looks at `modifiedAt` should say so with `usesModifiedAt = false`, keeping the batch one request per provider:
+For `multiGet`, a resolver that reads `modifiedAt` also needs server timestamps: free on CloudKit over REST, one listing per 50 keys on Drive, one `getItemWithMeta` per key on a provider without `multiGetWithMeta`. A custom resolver that ignores `modifiedAt` should set `usesModifiedAt = false` to keep one request per provider:
 
 ```ts
 const byVersion: ResolveFn = candidates => pickHighestVersion(candidates)
 byVersion.usesModifiedAt = false
 ```
 
-Reads without a resolver are unchanged - first non-null, short-circuit.
+Without a resolver, reads stop at the first non-null value.
 
 ## Tiering
 
-Routes a write by size, so store limits stop leaking into product code.
+Routes each write by size, so store limits stay out of product code.
 
 | Payload | Backing store |
 |---|---|
-| ≤ 64 KB (`kvMaxBytes`) | iCloud key-value store |
-| ≤ 900 KB (`recordMaxBytes`) | a CloudKit record field |
-| larger | Google Drive, which stores whole files and has no cap of its own |
+| up to 64 KB (`kvMaxBytes`) | iCloud key-value store |
+| up to 900 KB (`recordMaxBytes`) | a CloudKit record field |
+| larger | Google Drive (no cap) |
 
-Each threshold caps one provider (`recordMaxBytes` covers `cloudKitEncrypted` too); a value above a cap routes past it to the next provider in your list that is both large enough and available. With only `['icloudKV', 'cloudKit']` configured, a 2 MB value fits nowhere and rejects.
+`recordMaxBytes` covers `cloudKitEncrypted` too. A value above a cap goes to the next provider in your list that is large enough and available. With only `['icloudKV', 'cloudKit']`, a 2 MB value fits nowhere and rejects.
 
-A value that grows past a cap removes its older, smaller copy from the preferred provider once it lands further down the list - reads reach that provider first and would otherwise serve the stale copy.
-
-Thresholds are configurable:
+When a value outgrows a provider, its old copy there is removed, so reads don't serve it.
 
 ```ts
 import { DEFAULT_TIERING } from 'react-native-cloud-sync'
@@ -172,15 +163,15 @@ createCloudStore({
 
 `tiering: 'off'` always writes to the preferred provider.
 
-If a value is too large and no larger-capacity provider is configured and available, the write rejects with `ERR_PAYLOAD_TOO_LARGE` naming the fix, rather than failing somewhere in the OS.
+If no large-enough provider is available, the write rejects with `ERR_PAYLOAD_TOO_LARGE` before reaching the OS.
 
-Binary assets are **not** part of tiering - an explicit API instead, since you pass a file path, not a string. See [CloudKit assets](providers/cloudkit.md#assets).
+Binary assets are **not** tiered; they take a file path. See [CloudKit assets](providers/cloudkit.md#assets).
 
 ## The outbox
 
-A write that fails for a **retryable** reason - offline, rate limited, account temporarily unavailable - is queued and retried with exponential backoff, honouring `retryAfterMs` when supplied.
+A write that fails for a **retryable** reason (offline, rate limited, account temporarily unavailable) is queued and retried with exponential backoff, honouring `retryAfterMs`.
 
-A write that fails for a reason **the user must act on** - signed out, quota exceeded - is *not* queued; it rejects immediately, since retrying forever would only hide it. Same rule on the way out: a queued write that later fails for one of those reasons is reported through `onError` and dropped rather than retried forever.
+A write that fails for a reason **the user must act on** (signed out, quota exceeded) is not queued; it rejects immediately. A queued write that later fails that way is reported through `onError` and dropped.
 
 ```ts
 // On reconnect, or on app foreground:
@@ -189,7 +180,7 @@ const { drained, remaining, dropped } = await store.flushOutbox()
 
 ### Draining it automatically
 
-`autoFlush` wires the two moments nearly every app was calling `flushOutbox()` by hand:
+`autoFlush` calls `flushOutbox()` on foreground and on a timer:
 
 ```ts
 createCloudStore({
@@ -199,11 +190,11 @@ createCloudStore({
 })
 ```
 
-The timer only flushes while the app is active, so it doesn't spend a background window on network nobody is waiting for. Deliberately not network-aware: detecting a reconnect needs `@react-native-community/netinfo`, and forcing every consumer to install it for the few who want it is a bad trade - call `flushOutbox()` from your own NetInfo listener instead. Foreground plus a slow timer covers the common case anyway, since a reconnected app is almost always about to be foregrounded.
+The timer only runs while the app is active. It is not network-aware, to avoid a `@react-native-community/netinfo` dependency; call `flushOutbox()` from your own NetInfo listener if you want reconnect flushes.
 
 ### Giving up
 
-The queue is bounded three ways - unbounded, it is a slow leak: every enqueue rewrites the whole blob, so a long offline stretch degrades the write path itself.
+The queue is bounded three ways, since every enqueue rewrites the whole blob:
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -211,9 +202,9 @@ The queue is bounded three ways - unbounded, it is a slow leak: every enqueue re
 | `outboxMaxAttempts` | 12 | About 23.5 minutes of backoff at minimum |
 | `outboxMaxAgeMs` | 7 days | Time matters independently of attempts |
 
-After the n-th failure the next retry waits 2^n seconds, capped at five minutes (or the server's `Retry-After`, itself clamped to 0 to 1 hour). That is the minimum: retries only run when a flush does, so in wall-clock time it usually spans longer - `outboxMaxAgeMs` bounds that.
+After the n-th failure the next retry waits 2^n seconds, capped at five minutes (or the server's `Retry-After`, clamped to 0 to 1 hour). That is a minimum: retries only run when a flush does, so wall-clock time is usually longer, bounded by `outboxMaxAgeMs`.
 
-Whenever an entry is abandoned it is reported, so the loss is visible rather than silent:
+Every abandoned entry is reported:
 
 ```ts
 createCloudStore({
@@ -226,18 +217,18 @@ createCloudStore({
 
 `reason` is one of `notRetryable`, `tooManyAttempts`, `expired`, `queueFull`, `accountChanged` or `discarded`.
 
-The last one is yours to trigger - a UI showing a stuck write should let the user give up on it:
+You trigger `discarded`, for example from a UI that lets the user give up on a stuck write:
 
 ```ts
 store.discardPendingWrites(e => e.key === stuck.key)
 store.discardPendingWrites()               // all of them
 ```
 
-`accountChanged` is the store acting on its own: see [account switches](#account-switches).
+For `accountChanged`, see [account switches](#account-switches).
 
 ### Making it durable
 
-The default outbox is **in-memory**, so a queued write is lost if the app restarts before it drains - pass storage in production to fix that:
+The default outbox is **in-memory**: queued writes are lost if the app restarts first. Pass storage in production:
 
 ```ts
 import { MMKV } from 'react-native-mmkv'
@@ -253,15 +244,15 @@ const store = createCloudStore({
 })
 ```
 
-**Both methods must be synchronous.** The outbox is read and written on the write path with nowhere to await, so an async store cannot wrap directly. MMKV is the recommendation: synchronous reads/writes put a queued write on disk before `setItem` returns, with no crash window to lose it.
+**Both methods must be synchronous**: the outbox runs on the write path with nowhere to await. MMKV puts a queued write on disk before `setItem` returns.
 
-`cloudKitEncrypted` writes are the exception: they are queued in memory only, never in `outboxStorage`, since the value is still plaintext until native code encrypts it. They are lost on restart but still listed by `pendingWrites()`. Entries an older version persisted are moved to memory and removed from storage on startup.
+`cloudKitEncrypted` writes are queued in memory only, never in `outboxStorage`, because the value is plaintext until native code encrypts it. They are lost on restart but listed by `pendingWrites()`. Entries an older version persisted are moved to memory and removed from storage on startup.
 
 ### Ordering
 
-Operations on the same key and provider run one at a time. A write waits for one already in flight - including a flush re-sending a queued value - so an older queued value can't land on top of a newer direct write. A flush also skips an entry a newer write, `discardPendingWrites` or an account switch removed while it was waiting, instead of sending it or writing it back.
+Operations on the same key and provider run one at a time, so an older queued value can't land on top of a newer direct write. A flush skips entries removed while it waited (by a newer write, `discardPendingWrites` or an account switch).
 
-With `timeoutMs`, a timed-out request releases the key while the request itself may still be in flight.
+With `timeoutMs`, a timed-out request releases the key while it may still be in flight.
 
 ### Surfacing it
 
@@ -282,11 +273,11 @@ const all = await store.getAllItems()                   // { a: '1', b: '2' }
 const { removed } = await store.clear()
 ```
 
-These batch **per provider**, where the provider genuinely batches. CloudKit's `/records/lookup`/`/records/modify` take arrays, so reading 200 keys is one request, not 200 - one rate-limit budget instead of 200 chances to be throttled. Drive has no batch content endpoint, so the store loops there - same cost as writing the loop yourself, just not pretending otherwise.
+These batch **per provider** where the backend supports it. CloudKit's `/records/lookup` and `/records/modify` take arrays, so 200 keys are one request. Drive has no batch endpoint, so the store loops.
 
-`multiGet` results are positional, and a missing key comes back as `[key, null]` rather than being omitted, so you can zip them straight against your input.
+`multiGet` results are positional; a missing key is `[key, null]`, not omitted.
 
-`clear()` enumerates with `getAllKeys()` first, deliberately - a "delete my data" flow built on a hardcoded key list will one day forget a key.
+`clear()` enumerates with `getAllKeys()` first, so it can't miss a key the way a hardcoded list can.
 
 ## Storage usage
 
@@ -296,7 +287,7 @@ for (const { provider, usedBytes, totalBytes } of await store.getQuota())
     warnNearlyFull(provider)
 ```
 
-Reported by the providers that know: Drive from `about.get`, iCloud key-value against Apple's fixed 1 MB ceiling. CloudKit has no usage endpoint and reports nothing rather than guessing. `totalBytes` absent means unlimited, not zero - a "you are out of space" prompt firing for pooled Workspace storage is worse than no prompt.
+Drive reports from `about.get`, the iCloud key-value store against Apple's fixed 1 MB limit. CloudKit has no usage endpoint and reports nothing. `totalBytes` absent means unlimited (for example pooled Workspace storage), not zero.
 
 ## Migration
 
@@ -308,9 +299,9 @@ const { copied, skipped, failed } = await store.migrate({
 })
 ```
 
-The source is **left intact** - a copy, not a move, so a failed migration cannot lose data. Delete the source yourself afterward if you mean to.
+A copy, not a move: the source is **left intact**. Delete it yourself afterward if you mean to.
 
-It keeps going past a key that fails, and tells you which ones did:
+Failed keys don't stop the run:
 
 | | |
 |---|---|
@@ -318,11 +309,11 @@ It keeps going past a key that fails, and tells you which ones did:
 | `skipped` | Present at the source but holding nothing |
 | `failed` | `{ key, error }` for each one that did not |
 
-Aborting on the first bad key leaves the user half migrated with no record of how far it got - the worst of both outcomes. Pass `continueOnError: false` to stop instead, and `filter` to migrate a subset.
+Pass `continueOnError: false` to stop at the first failure, and `filter` to migrate a subset.
 
 ## Account switches
 
-Subscribe once and the store handles the dangerous part itself:
+Subscribe once on the store:
 
 ```ts
 store.onAccountChange(({ identityChanged, status }) => {
@@ -330,34 +321,32 @@ store.onAccountChange(({ identityChanged, status }) => {
 })
 ```
 
-Events from every configured provider merge here, and `onRemoteChange` works the same way.
+Events from every configured provider merge here; `onRemoteChange` works the same way.
 
-Account events are deduplicated: on Apple platforms `icloudKV` and `cloudKit` both observe the same two system notifications and relabel them with their own name, so without dedup a store configured with both would hand your listener one system event twice.
+Account events are deduplicated: on Apple platforms `icloudKV` and `cloudKit` observe the same system notifications, so a store with both would otherwise deliver each event twice.
 
-`cloudKit` reports account changes but **not** remote data changes: `cloudKit.onRemoteChange` is `undefined`, not a subscription that never fires. CloudKit tracks record changes via a server change token, which only works in a custom zone, or via a `CKDatabaseSubscription` over APNs. `icloudKV` and `googleDrive` both report changes normally.
+`cloudKit` reports account changes but **not** remote data changes: `cloudKit.onRemoteChange` is `undefined`. CloudKit change tracking needs a custom zone's change token or a `CKDatabaseSubscription` over APNs. `icloudKV` and `googleDrive` report changes normally.
 
-On `identityChanged: true` the store also, without being asked:
+On `identityChanged: true` the store:
 
-- drops its memoised availability answers;
-- calls `clearCaches()` on every provider, throwing away memoised Drive file ids and CloudKit reachability - both recorded for whoever was signed in at the time;
-- **abandons the outbox**, reporting each entry through `onDropped` with reason `accountChanged`.
+- drops memoised availability;
+- calls `clearCaches()` on every provider (Drive file ids, CloudKit reachability);
+- **abandons the outbox**, reporting each entry through `onDropped` with reason `accountChanged`. A queued write carries no account identity, so flushing it would write the previous user's data into the new account.
 
-That last one matters most: a queued write carries no account identity, so flushing it after a switch would write the previous user's data into the new user's account.
-
-Call `store.dispose()` when a store outlives its usefulness; it releases those subscriptions and stops auto-flush.
+`store.dispose()` releases the subscriptions and stops auto-flush.
 
 ## Keys
 
-One key string has to work as an `NSUbiquitousKeyValueStore` key, a CloudKit `recordName`, and a Drive filename at once - and the three disagree about what is legal. The store checks before the request:
+A key must work as an `NSUbiquitousKeyValueStore` key, a CloudKit `recordName` and a Drive filename at once, and their rules differ. The store checks before the request:
 
 ```ts
 await store.setItem('settings/theme', 'dark')
 // ERR_INVALID_KEY: a key may contain only ASCII letters, digits, and . _ -
 ```
 
-Without that check this reaches CloudKit as `BAD_REQUEST`, maps to `ERR_CONTAINER_MISCONFIGURED`, and sends you to look at your entitlements.
+Without the check, CloudKit would answer `BAD_REQUEST`, mapped to a misleading `ERR_CONTAINER_MISCONFIGURED`.
 
-Every rule is scoped to the provider that imposes it, and only checked when that provider is in your list:
+Each rule applies only when its provider is in your list:
 
 | Rule | Applies when |
 |---|---|
@@ -367,9 +356,9 @@ Every rule is scoped to the provider that imposes it, and only checked when that
 | At most 255 characters | `cloudKit` / `cloudKitEncrypted` configured |
 | At most 64 **UTF-8 bytes** | `icloudKV` configured |
 
-`settings/theme` is fine for a key-value-store-only app, where keys are plain strings with no character rules. It stops being fine once you add `cloudKit`, since it then has to double as a record name.
+`settings/theme` is fine with `icloudKV` alone, but not once `cloudKit` joins.
 
-For keys you do not control - a filename, something the user typed:
+For keys you don't control (a filename, user input):
 
 ```ts
 import { sanitizeKey } from 'react-native-cloud-sync'
@@ -377,13 +366,13 @@ import { sanitizeKey } from 'react-native-cloud-sync'
 await store.setItem(sanitizeKey('My Report (2024).pdf'), json)
 ```
 
-A key that is already legal comes back unchanged. Any other is cleaned, truncated if needed, and suffixed with `--` plus a 14-character hash of the original - replacement alone maps `a b` and `a-b` onto one key, and truncation alone maps every long key sharing a prefix onto one, silently merging unrelated values. `maxBytes` (default 64) must be at least 16, the size of the suffix, or it throws a `RangeError`.
+A legal key comes back unchanged. Any other is cleaned, truncated if needed, and suffixed with `--` plus a 14-character hash of the original, so `a b` and `a-b`, or long keys sharing a prefix, stay distinct. `maxBytes` (default 64) below 16 throws a `RangeError`.
 
 Pass `validateKeys: false` to skip the check when your keys are known good.
 
 ## Encrypting at rest
 
-Drive's `appDataFolder` is plaintext to anything holding the account's OAuth token. `codec` is the seam for closing that:
+Drive's `appDataFolder` is plaintext to anyone holding the account's OAuth token. Encrypt values with `codec`:
 
 ```ts
 createCloudStore({
@@ -395,11 +384,12 @@ createCloudStore({
 })
 ```
 
-No crypto ships with the package on purpose - key management is your problem, and bundling a cipher would make it look solved. Bring one you chose.
+- No cipher ships; bring your own and manage the keys.
+- Values only, never keys (`getAllKeys()`, tiering and read repair need cleartext keys).
+- Encoding runs before tiering, so an inflating codec shrinks your effective `kvMaxBytes`.
+- Decoding runs before resolvers, so they compare plaintext.
 
-Values only, never keys - `getAllKeys()`, tiering and read repair all need cleartext keys. Encoding runs *before* tiering picks a destination, so a value routes by the size it will actually occupy - a codec that inflates its input shrinks your effective `kvMaxBytes` below the number stated. Decoding runs *before* a resolver sees a candidate, so resolvers still compare plaintext.
-
-CloudKit has its own native end-to-end encryption that needs no key management at all - see [Encryption](encryption.md) for when to use which.
+CloudKit also has native end-to-end encryption with no key management. See [Encryption](encryption.md) for which to use.
 
 ## Timeouts
 
@@ -407,11 +397,11 @@ CloudKit has its own native end-to-end encryption that needs no key management a
 createCloudStore({ providers: ['cloudKit'], timeoutMs: 15_000 })
 ```
 
-React Native's `fetch` has no timeout, and neither does CloudKit's native stack, so an unanswered socket hangs forever - including inside `isAvailable()`, which runs before every operation, so one hung probe stalls reads that would otherwise fall through to a working provider.
+React Native's `fetch` and CloudKit's native stack have no timeout, so an unanswered socket hangs forever. That includes `isAvailable()`, which runs before every operation, so one hung probe stalls reads that could fall through to a working provider.
 
-`ERR_TIMEOUT` is classified as retryable, since running out of time says nothing about whether the operation is possible. With the outbox on, a hung write is queued rather than lost.
+`ERR_TIMEOUT` is retryable; with the outbox on, a hung write is queued, not lost.
 
-The REST clients have their own independent defaults - 30s for CloudKit, 60s for Drive, where one "request" can be an 8 MiB chunk.
+The REST clients have separate defaults: 30s for CloudKit, 60s for Drive (one request can be an 8 MiB chunk).
 
 ## Registering another provider
 
@@ -422,4 +412,4 @@ const fake = createMemoryProvider()
 store.registerProvider(fake)
 ```
 
-Used for the in-memory double in tests, and for any provider you implement yourself against the `CloudProvider` interface.
+For the in-memory test double, or your own provider implementing [`CloudProvider`](API.md#the-provider-contract).

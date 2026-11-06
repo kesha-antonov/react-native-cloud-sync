@@ -1,17 +1,17 @@
 # iCloud key-value store
 
-[`NSUbiquitousKeyValueStore`][kvs] - a small dictionary that syncs across a user's Apple devices with no sign-in and no UI.
+[`NSUbiquitousKeyValueStore`][kvs]: a small dictionary that syncs across a user's Apple devices with no sign-in and no UI.
 
 ## When to use it
 
-Small, non-critical values that follow the user across devices - theme, units, onboarding flags, a device-independent user id - and the only provider working from a cold start with no user prompt.
+Small, non-critical values that should follow the user: theme, units, onboarding flags, a device-independent user id. It is the only provider that works from a cold start with no prompt.
 
-Not for the app's primary data: capped at 1 MB *in total*, and exceeding that starves every other key.
+Not for primary data. The store is capped at 1 MB in total, and filling it starves every other key.
 
 | | |
 |---|---|
 | Platforms | iOS, macOS (including Mac Catalyst) |
-| Auth | implicit - the device's iCloud account |
+| Auth | implicit, the device's iCloud account |
 | Total size | 1 MB |
 | Per key | 1 MB |
 | Max keys | 1024 |
@@ -20,7 +20,7 @@ Not for the app's primary data: capped at 1 MB *in total*, and exceeding that st
 
 ## Setup
 
-Entitlements only - no code configuration. See [Platform Notes](../PLATFORM_NOTES.md#entitlements) for the exact keys, or use the Expo config plugin.
+Entitlements only, no code. See [Platform Notes](../PLATFORM_NOTES.md#entitlements) for the keys, or use the Expo config plugin.
 
 ## Operations
 
@@ -37,7 +37,7 @@ await icloudKV.removeItem('settings/theme')
 const keys = await icloudKV.getAllKeys()
 ```
 
-Every failure rejects with a typed error - see [Error handling](../errors.md).
+Every failure rejects with a typed error. See [Error handling](../errors.md).
 
 ## Availability and account state
 
@@ -50,9 +50,9 @@ const status = await icloudKV.getAccountStatus()
 // 'available' | 'noAccount'
 ```
 
-On Apple platforms the status comes from `ubiquityIdentityToken`, not CloudKit - so it is safe in an app with only the key-value-store entitlement, but it reports only `available` or `noAccount` (restricted reads as `noAccount`). The five-state [`CKAccountStatus`][ckstatus] belongs to [`cloudKit`](cloudkit.md#availability-and-account-state).
+The status comes from `ubiquityIdentityToken`, not CloudKit, so it is safe in an app that has only the key-value-store entitlement. It reports only `available` or `noAccount` (restricted reads as `noAccount`). For the five-state [`CKAccountStatus`][ckstatus], use [`cloudKit`](cloudkit.md#availability-and-account-state).
 
-Off Apple platforms `getAccountStatus()` resolves `couldNotDetermine` rather than throwing - a status question has a truthful answer everywhere.
+Off Apple platforms, `getAccountStatus()` resolves `couldNotDetermine` instead of throwing.
 
 ## Reacting to other devices
 
@@ -63,7 +63,7 @@ const unsubscribe = icloudKV.onRemoteChange(({ keys, reason }) => {
 })
 ```
 
-`quotaViolation` is worth handling explicitly - it means the 1 MB budget is full and writes are being dropped.
+Handle `quotaViolation`: the 1 MB budget is full and writes are being dropped.
 
 ## Reacting to an Apple ID switch
 
@@ -76,7 +76,7 @@ icloudKV.onAccountChange(({ status, identityChanged }) => {
 })
 ```
 
-The event most apps miss - without it, a device that switches Apple ID keeps silently serving the previous user's data.
+Without this, a device that switches Apple ID keeps serving the previous user's data.
 
 ## `sync()` does not mean "stored"
 
@@ -86,17 +86,20 @@ import { icloudKVSync } from 'react-native-cloud-sync'
 await icloudKVSync()
 ```
 
-Maps to `NSUbiquitousKeyValueStore.synchronize()`: flushes pending changes to disk and schedules an upload, but does **not** wait for or confirm a server round trip - a resolved promise means *queued*, never *stored in iCloud*. Writes schedule themselves, so you rarely need to call it.
+Maps to `NSUbiquitousKeyValueStore.synchronize()`. It flushes pending changes to disk and schedules an upload, but does not wait for the server. A resolved promise means queued, not stored in iCloud. Writes schedule themselves, so you rarely need it.
 
 ## Limits are enforced, not discovered
 
-A value above 1 MB rejects locally with `ERR_PAYLOAD_TOO_LARGE`, carrying `limitBytes` and `actualBytes`, rather than being handed to the OS and silently dropped. The same goes for a write that would push the store past its 1 MB total, which rejects with `ERR_QUOTA_EXCEEDED` - counting keys as well as values, as Apple does.
+Limits are checked locally instead of letting the OS drop the write silently:
 
-Hitting the limit is the signal to move that key to `cloudKit`/`googleDrive` - or let the [facade](../store.md) route it for you.
+- a value above 1 MB rejects with `ERR_PAYLOAD_TOO_LARGE`, carrying `limitBytes` and `actualBytes`
+- a write that would push the store past 1 MB total rejects with `ERR_QUOTA_EXCEEDED` (keys count toward the total, as Apple counts them)
+
+When you hit a limit, move that key to `cloudKit` or `googleDrive`, or let the [facade](../store.md) route it.
 
 ## On Android and web
 
-Every data operation rejects with `ERR_UNSUPPORTED_PLATFORM` - a rejected promise, so `.catch` handles it, not a synchronous throw - with no polyfill and no fallback, since `NSUbiquitousKeyValueStore` has no network API to reach. `isAvailable()` resolves false and `getAccountStatus()` resolves `couldNotDetermine`. Use `cloudKit` for the same account's data elsewhere, or `googleDrive`.
+Every data operation rejects with `ERR_UNSUPPORTED_PLATFORM` (a rejected promise, not a synchronous throw). There is no fallback: `NSUbiquitousKeyValueStore` has no network API. `isAvailable()` resolves false and `getAccountStatus()` resolves `couldNotDetermine`. Use `cloudKit` to reach the same account elsewhere, or `googleDrive`.
 
 [kvs]: https://developer.apple.com/documentation/foundation/nsubiquitouskeyvaluestore
 [ckstatus]: https://developer.apple.com/documentation/cloudkit/ckaccountstatus

@@ -4,9 +4,7 @@ Files in the user's own iCloud Drive, in a folder they can open in Files.app.
 
 ## When to use it
 
-The one thing no `CKRecord`/`CKAsset` API can do, and the most common iCloud request in mobile apps: *put this file where the user can find it.*
-
-A `CKAsset` lives in the app's private CloudKit database, invisible and unshareable - right for an internal backup, wrong for an export somebody asked for. A file written here instead lands in the app's iCloud Drive folder: visible in Files.app, synced across the user's devices, surviving the app being deleted.
+When the user should be able to find the file: an export, a report, a document they asked for. Files here are visible in Files.app, sync across the user's devices, and survive the app being deleted. A `CKAsset` cannot do this: it lives in the app's private CloudKit database, invisible to the user.
 
 | You want | Use |
 |---|---|
@@ -14,13 +12,11 @@ A `CKAsset` lives in the app's private CloudKit database, invisible and unsharea
 | An internal backup the user never sees | [`cloudKitBackup`](cloudkit.md#backuprestore-helper) |
 | The same, on Android or web | [`googleDriveFiles`](google-drive.md#large-files) |
 
-Apple platforms only, and not a gap waiting to be filled: a filesystem feature with no REST surface or browser API, so every call rejects with `ERR_UNSUPPORTED_PLATFORM` elsewhere rather than pretending to work.
+Apple platforms only, permanently. It is a filesystem feature with no REST or browser API, so every call rejects with `ERR_UNSUPPORTED_PLATFORM` elsewhere.
 
 ## Setup
 
-Two things beyond the CloudKit entitlement, and both matter.
-
-With the config plugin:
+You need two things beyond the CloudKit entitlement. With the config plugin:
 
 ```json
 {
@@ -36,9 +32,9 @@ With the config plugin:
 }
 ```
 
-Off by default - the one capability here with a user-visible consequence, since it puts a folder for your app in somebody's iCloud Drive. That should be deliberate, not something installing a package does to their Files.app.
+`iCloudDocuments` is off by default, because it adds a visible folder to the user's iCloud Drive.
 
-Managing `ios/` yourself, the entitlements are:
+If you manage `ios/` yourself, add the entitlements:
 
 ```xml
 <key>com.apple.developer.icloud-services</key>
@@ -48,7 +44,7 @@ Managing `ios/` yourself, the entitlements are:
 <array><string>iCloud.com.your.app</string></array>
 ```
 
-and the Info.plist entry that makes the folder *visible* is:
+and the Info.plist entry that makes the folder visible:
 
 ```xml
 <key>NSUbiquitousContainers</key>
@@ -62,18 +58,16 @@ and the Info.plist entry that makes the folder *visible* is:
 </dict>
 ```
 
-Miss the Info.plist half and files still sync, but the folder never appears in Files.app - usually the whole reason you reached for this. The plugin writes both.
+Without the Info.plist entry, files still sync but the folder never appears in Files.app. The plugin writes both.
 
-Which container to use can be named in Info.plist too, as `RNCloudSyncDocumentsContainerIdentifier` - the plugin writes it when `iCloudDocuments` is on. Optional: without it, the CloudKit container from `RNCloudSyncContainerIdentifier` is used if declared, else the first ubiquity container in the entitlements.
+Optionally, name the container in Info.plist as `RNCloudSyncDocumentsContainerIdentifier` (the plugin writes it when `iCloudDocuments` is on). Without it, the CloudKit container from `RNCloudSyncContainerIdentifier` is used if declared, else the first ubiquity container in the entitlements. It is a separate key so an app can use iCloud Drive without CloudKit. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
 
 ```xml
 <key>RNCloudSyncDocumentsContainerIdentifier</key>
 <string>iCloud.com.your.app</string>
 ```
 
-A separate key so an app can have iCloud Drive without CloudKit - see [Platform Notes](../PLATFORM_NOTES.md#entitlements).
-
-> One gotcha Apple doesn't make obvious: iOS caches `NSUbiquitousContainers`, re-reading it only when the app's **version** changes. Bump `CFBundleShortVersionString` when you add or change it, or the folder stays hidden on a device that already ran the old build.
+> iOS caches `NSUbiquitousContainers` and re-reads it only when the app's version changes. Bump `CFBundleShortVersionString` when you add or change it, or the folder stays hidden on devices that ran the old build.
 
 ## Operations
 
@@ -94,17 +88,21 @@ await icloudDocuments.remove('Export 2024.csv')
 
 ## Names
 
-A name is a single file name inside the app's `Documents` folder. Empty, `.`, `..`, anything containing `/` or NUL, and the `.x.icloud` form iOS uses for download placeholders all reject with `ERR_INVALID_KEY` before touching the filesystem - so a name can't reach outside the user-visible folder.
+A name is a single file name inside the app's `Documents` folder. These reject with `ERR_INVALID_KEY` before touching the filesystem, so a name cannot escape the folder:
+
+- empty, `.` or `..`
+- anything containing `/` or NUL
+- the `.x.icloud` form iOS uses for download placeholders
 
 ## `save` means "handed to iCloud"
 
-Same distinction as [`icloudKVSync()`](icloud-kv.md#sync-does-not-mean-stored): iOS uploads the file in the background once it's in the container, whether or not your app is running - a resolved promise means the system has it, not the cloud, and no API waits for the actual upload.
+As with [`icloudKVSync()`](icloud-kv.md#sync-does-not-mean-stored), a resolved promise means the system has the file, not the cloud. iOS uploads it in the background, even if your app is not running. No API waits for the upload.
 
-Saving a document back onto itself - `save` with the path `fetch` returned and the same `name` - is a no-op, so the fetch, edit in place, save flow is safe.
+Saving a document onto itself (`save` with the path `fetch` returned and the same `name`) is a no-op, so fetch, edit in place, save is safe.
 
 ## `fetch` before you read
 
-The step that catches people out: a file may exist only as a *placeholder* with no local bytes - the user has it, this device doesn't. Opening that path gives you an empty file, not an error.
+A file may exist on this device only as a placeholder with no local bytes. Opening that path gives you an empty file, not an error.
 
 ```ts
 const entries = await icloudDocuments.list()
@@ -115,9 +113,9 @@ if (entry?.isDownloaded === false)
   await icloudDocuments.fetch({ name: wanted })
 ```
 
-`fetch` asks for the download and waits for it, so calling it unconditionally is fine - immediate return for a file that's already local.
+`fetch` requests the download and waits for it. For a file that is already local it returns immediately, so calling it unconditionally is fine.
 
-Pass `destinationUri` for anything you intend to keep - the system may evict a downloaded copy to reclaim space, turning it back into a placeholder, but a copy outside the container is yours. Missing parent folders are created:
+Pass `destinationUri` for anything you keep. The system may evict a downloaded copy back to a placeholder; a copy outside the container is yours. Missing parent folders are created:
 
 ```ts
 const path = await icloudDocuments.fetch({
@@ -126,15 +124,20 @@ const path = await icloudDocuments.fetch({
 })
 ```
 
-`destinationUri` must name a file: an existing file there is replaced, but a directory is never deleted, and the call rejects instead. A symlink is replaced as a link, its target is left alone. Naming the document's own path is a no-op.
+`destinationUri` rules:
 
-A `fetch` that times out raises `ERR_TIMEOUT` - **not** a failed transfer, since iOS keeps downloading in the background, and the retryable classification means "not yet": try again shortly rather than telling the user something broke.
+- it must name a file; an existing file is replaced, a directory is never deleted (the call rejects)
+- a symlink is replaced as a link; its target is left alone
+- naming the document's own path is a no-op
 
-`timeoutMs` defaults to 60000 and is capped at one hour. `NaN`, a negative number or a non-number throws a `RangeError` before anything starts.
+Timeouts:
+
+- a timed-out `fetch` rejects with `ERR_TIMEOUT`. The download is not failed: iOS keeps going in the background, so retry shortly instead of reporting an error
+- `timeoutMs` defaults to 60000, capped at one hour; `NaN`, a negative number or a non-number throws a `RangeError` before anything starts
 
 ## Progress
 
-Not reported byte by byte: real progress needs an `NSMetadataQuery` and a live run loop, and these calls deliberately run off the main thread. Poll `list()` and watch `isDownloading` instead:
+No byte-level progress: that needs an `NSMetadataQuery` and a live run loop, and these calls run off the main thread. Poll `list()` and watch `isDownloading`:
 
 ```ts
 const tick = setInterval(async () => {
@@ -143,14 +146,14 @@ const tick = setInterval(async () => {
 }, 500)
 ```
 
-[`cloudKitAssets`](cloudkit.md#assets) *does* report real byte progress - `CKModifyRecordsOperation` hands it to us; the difference is in the APIs, not the effort.
+[`cloudKitAssets`](cloudkit.md#assets) does report byte progress, because `CKModifyRecordsOperation` provides it.
 
 ## Deleting
 
-`remove` deletes from iCloud (every device, and Files.app) and resolves `false` when the file was already gone - the end state the caller asked for. A file not yet downloaded to this device is removed too, through its placeholder.
+`remove` deletes from iCloud (every device and Files.app). It resolves `false` when the file was already gone. A file not yet downloaded to this device is removed through its placeholder.
 
-The user can delete these files themselves from Files.app at any time - that's what "visible" means, so treat a missing file as normal, not corruption.
+Users can delete these files from Files.app at any time. Treat a missing file as normal, not corruption.
 
 ## Not a `CloudProvider`
 
-`icloudDocuments` can't register with `createCloudStore`: the provider contract is keys to string values, this moves files by path - same reason [`cloudKitAssets`](cloudkit.md#assets)/[`googleDriveFiles`](google-drive.md#large-files) are their own APIs, since `setItem(key, value)` can't express "stream this file from disk".
+`icloudDocuments` cannot be registered with `createCloudStore`. The provider contract maps keys to string values; this API moves files by path. [`cloudKitAssets`](cloudkit.md#assets) and [`googleDriveFiles`](google-drive.md#large-files) are separate APIs for the same reason.

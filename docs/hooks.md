@@ -4,9 +4,7 @@
 import { useCloudItem } from 'react-native-cloud-sync/hooks'
 ```
 
-A separate entry point: the store also runs in a saga, background task or plain module, none of which need a renderer.
-
-Every app writes these same hooks and hits the same two bugs - a stale response overwriting a newer one, and `setState` after unmount - handled once here.
+A separate entry point, so code outside React (sagas, background tasks) doesn't import it. The hooks handle the two usual bugs: a stale response overwriting a newer one, and `setState` after unmount.
 
 ## `useCloudItem`
 
@@ -34,7 +32,7 @@ function SettingsScreen () {
 | `remove` | Deletes the key |
 | `refresh` | Re-reads |
 
-Values go through `JSON.parse`/`JSON.stringify` by default; for a plain string, pass identity functions:
+Values go through `JSON.parse`/`JSON.stringify` by default. For a plain string, pass identity functions:
 
 ```ts
 useCloudItem<string>(store, 'theme', {
@@ -45,19 +43,19 @@ useCloudItem<string>(store, 'theme', {
 
 ### It re-reads when another device writes
 
-`watch` defaults to true, subscribing to [`onRemoteChange`](store.md#account-switches) so another device's edit doesn't need a manual refresh to appear. An empty `keys` list (account or quota event) still triggers a re-read.
+`watch` (default true) subscribes to [`onRemoteChange`](store.md#account-switches), so another device's edit shows up without a refresh. An event with an empty `keys` list (account or quota change) also triggers a re-read.
 
 ### Writes are optimistic and do not revert
 
-`setValue` updates local state immediately and keeps it on failure, since the outbox usually delivers anyway. A failed *read* likewise keeps the last known value rather than blanking the screen over a network blip.
+`setValue` updates local state immediately and keeps it on failure, since the outbox usually delivers anyway. A failed read keeps the last known value.
 
 ### Stale responses cannot land
 
-Every read carries a ticket; a stale one - key changed, overtaken, invalidated - is dropped instead of written into state, avoiding a hand-rolled version's flash-of-wrong-value bug on fast navigation. When `key` changes, `value` falls back to `initialValue` while the new key loads rather than showing the old key's value under the new name.
+A read whose result is stale (key changed, overtaken, invalidated) is dropped instead of written into state. When `key` changes, `value` falls back to `initialValue` while the new key loads, never showing the old key's value.
 
 ## `useCloudItems`
 
-The multi-key sibling of `useCloudItem`. Binds a list of keys with one batched `multiGet` instead of one `useCloudItem` per row. With `resolve` on the store, that `multiGet` resolves each key as `getItem` would, server timestamps and read repair included - see [the cost](store.md#the-cost).
+Binds a list of keys with one batched `multiGet` instead of one `useCloudItem` per row. With `resolve` on the store, each key resolves as `getItem` would, including read repair. See [the cost](store.md#the-cost).
 
 ```tsx
 function NotesList ({ noteIds }: { noteIds: string[] }) {
@@ -82,15 +80,15 @@ function NotesList ({ noteIds }: { noteIds: string[] }) {
 
 ### It only fetches what it doesn't already know
 
-Mount, `refresh()`, and a matching remote-change event fetch normally. But a key that merely *joins* the tracked list - `useCloudCollection` adding one right after a local write, say - is never re-fetched on that account alone. Without that guard, a slow fetch already in flight for the rest of the list could land a stale answer on top of a write that already resolved locally, the same bug `useCloudItem`'s ticket exists to prevent, just triggered by list membership instead of a key change.
+Mount, `refresh()` and a matching remote-change event fetch. A key that merely joins the tracked list (say, `useCloudCollection` adding one after a local write) is not fetched, so a slow in-flight fetch can't overwrite the local write with a stale answer.
 
 ### Loading only reflects the initial fetch and `refresh()`
 
-A remote event that adds a key to the list, or names a key already tracked, updates `values` in the background without flipping `loading` - a live update from another device shouldn't flash a spinner over rows that are already showing something.
+Remote events update `values` in the background without flipping `loading`, so live updates don't flash a spinner over visible rows.
 
 ## `useCloudCollection`
 
-Adds the membership index `useCloudItems` needs but doesn't derive itself: every key starting with `prefix`, kept live.
+`useCloudItems` plus a live list of every key starting with `prefix`.
 
 ```tsx
 function NotesList () {
@@ -102,9 +100,9 @@ function NotesList () {
 }
 ```
 
-Same shape as `useCloudItems`, plus `keys: string[]` for the current membership. Re-lists on mount and after any remote-change event that could plausibly have added or removed a member - not only one naming a key already under this prefix.
+Returns the `useCloudItems` result plus `keys: string[]`. Re-lists on mount and after any remote-change event that could have added or removed a member.
 
-A `setValue` for a key not seen before joins `keys` immediately, so a newly created record appears in its own list without waiting on a round trip to confirm it. `remove` leaves the collection the same way. A listing already in flight when either happens can't undo it.
+`setValue` on a new key adds it to `keys` immediately, and `remove` drops it immediately. A listing already in flight can't undo either.
 
 ## `useAccountStatus`
 
@@ -121,9 +119,9 @@ function SyncBanner () {
 }
 ```
 
-[`AccountStatus`](errors.md) values as the provider reports them, not a boolean - "signed out", "temporarily unavailable" and "could not determine" each need different UI. `cloudKit` reports all five; `icloudKV` only `available` or `noAccount` ([why](providers/icloud-kv.md#availability-and-account-state)). An account event that arrives while a status query is in flight wins over the query's older answer.
+`status` is the provider's [`AccountStatus`](API.md#types), not a boolean, since signed out, temporarily unavailable and undetermined need different UI. `cloudKit` reports all five values; `icloudKV` only `available` or `noAccount` ([why](providers/icloud-kv.md#availability-and-account-state)). An account event arriving during a status query wins over the query's older answer.
 
-`identityChanged` is **latched**: it stays true once a different identity signs in, so a screen mounting right after the event still sees it.
+`identityChanged` is **latched**: it stays true once a different identity signs in, so a screen mounting after the event still sees it.
 
 ## `usePendingWrites`
 
@@ -145,9 +143,7 @@ function PendingBadge () {
 }
 ```
 
-Polled every 2s by default, cheaply - `pendingWrites()` reads a small JSON blob synchronously. Pass `0` to poll only on mount.
-
-Each entry carries `lastErrorCode`, so the indicator can say *why* it's stuck.
+Polls every 2s by default (cheap: `pendingWrites()` is a synchronous read). Pass `0` to read only on mount. Each entry has `lastErrorCode`, so the UI can say why it's stuck.
 
 ## `useRemoteChange`
 
@@ -157,7 +153,7 @@ useRemoteChange(store, ({ keys }) => {
 })
 ```
 
-The listener is held in a ref, so an inline arrow function doesn't rebuild the subscription every render.
+The listener is held in a ref, so an inline function doesn't resubscribe every render.
 
 ## `useQuota`
 
@@ -165,8 +161,8 @@ The listener is held in a ref, so an inline arrow function doesn't rebuild the s
 const { quota, loading, refresh } = useQuota(store)
 ```
 
-Not polled - a per-provider network round trip, moving too slowly to watch. Call `refresh()` on settings-screen open, or after a large write.
+Not polled (each read is a network round trip per provider). Call `refresh()` when a settings screen opens or after a large write.
 
 ## Cleaning up
 
-None of these hooks call `store.dispose()` - a store outlives its components. Call it yourself when one is genuinely finished (sign-out, tearing down a test).
+No hook calls `store.dispose()`, since a store outlives its components. Call it yourself when done (sign-out, test teardown).

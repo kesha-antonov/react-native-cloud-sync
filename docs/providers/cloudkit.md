@@ -1,43 +1,43 @@
 # CloudKit
 
-The user's [private CloudKit database][ckdb] - [records][ckrecord], [custom zones][ckzone], [binary assets][ckasset]. The only provider here reaching the *same* data from iOS, Android and the web.
+The user's [private CloudKit database][ckdb]: [records][ckrecord], [custom zones][ckzone], [binary assets][ckasset]. The only provider that reaches the same data from iOS, Android and the web.
 
 ## When to use it
 
-Your app's real data on Apple platforms, with the option of reaching it elsewhere - records are bigger than key-value entries (1 MB each, not 1 MB total) and queryable.
+Your app's real data on Apple platforms, optionally reachable elsewhere. Records hold more than key-value entries (1 MB each, not 1 MB total) and are queryable.
 
 | | iOS / macOS | Android | Web |
 |---|:---:|:---:|:---:|
 | Records | native | REST | REST |
-| Custom zones | native | – | – |
+| Custom zones | native | - | - |
 | Assets (`CKAsset`) | native | REST (15 MB cap) | REST (15 MB cap) |
-| Remote change events | native | – | – |
+| Remote change events | native | - | - |
 | Auth | implicit | Apple ID sign-in | Apple ID sign-in |
 
-Per-record limit: **1 MB**, excluding assets ([all limits][cklimits]). Oversized writes reject locally with `ERR_PAYLOAD_TOO_LARGE` rather than failing server-side.
+Per-record limit: 1 MB, excluding assets ([all limits][cklimits]). Oversized writes reject locally with `ERR_PAYLOAD_TOO_LARGE`.
 
 ## The schema
 
-CloudKit is schema-bound and the schema isn't optional - the single most common reason a CloudKit app works in debug and fails the day it ships. This package uses one record type.
+CloudKit is schema-bound. A missing schema is the most common reason a CloudKit app works in debug and fails in release. This package uses one record type:
 
 | | |
 |---|---|
 | Record type | `KVBlob` |
-| `value` | **String** - holds what `setItem` writes |
-| `<fieldName>` | **Asset** - one per `cloudKitAssets` field you use |
-| `<fieldName>__size` | **Int(64)** - byte count written alongside each asset |
+| `value` | String - holds what `setItem` writes |
+| `<fieldName>` | Asset - one per `cloudKitAssets` field you use |
+| `<fieldName>__size` | Int(64) - byte count written with each asset |
 
-`cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image' })` therefore needs `image` (Asset) and `image__size` (Int) on `KVBlob`; `cloudKitBackup` defaults to `backup`/`file`, needing `file`/`file__size`. Record *names* are data, not schema - only field names and types must exist.
+Example: `cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image' })` needs `image` (Asset) and `image__size` (Int) on `KVBlob`. `cloudKitBackup` defaults to `backup`/`file`, so it needs `file` and `file__size`. Record names are data, not schema; only field names and types must exist.
 
-The `__size` sidecar is what lets a restore report real progress from the first callback rather than jumping from 0 to 1 at the end.
+The `__size` field lets a restore report real progress from the first callback.
 
 ### Development creates it for you. Production does not.
 
-Development adds fields on first write, so the schema appears by itself while you build; Production only gets what you **Deploy Schema Changes** from the Console, so a release build hitting an undeployed field fails at runtime on a schema that looked fine all along. Before your first release: write every field once in Development (or by hand), then deploy.
+Development adds fields on first write. Production only has what you deploy with **Deploy Schema Changes** in the Console; a release build that writes an undeployed field fails at runtime. Before your first release, write every field once in Development (or add it by hand), then deploy.
 
 ### `getAllKeys()` needs an index
 
-`getItem`, `setItem` and `removeItem` address records by name, needing no index - `getAllKeys()` differs, issuing a real query (`CKQueryOperation` natively, `/records/query` over REST), and CloudKit refuses to query a record type with no queryable index.
+`getItem`, `setItem` and `removeItem` address records by name and need no index. `getAllKeys()` runs a query (`CKQueryOperation` natively, `/records/query` over REST), and CloudKit refuses to query a record type without a queryable index.
 
 In the Console, under **Indexes** for `KVBlob`, add:
 
@@ -45,19 +45,19 @@ In the Console, under **Indexes** for `KVBlob`, add:
 |---|---|
 | `recordName` | **Queryable** |
 
-Deploy that to Production too - without it `getAllKeys()` rejects, and since [`migrate()`](../store.md#migration) and the [delete-everything flow](../recipes.md#turning-it-off-and-deleting-what-is-stored) are both built on it, they fail too.
+Deploy it to Production too. Without it `getAllKeys()` rejects, and so do [`migrate()`](../store.md#migration) and the [delete-everything flow](../recipes.md#turning-it-off-and-deleting-what-is-stored), which use it.
 
 ## Setup on Apple platforms
 
-Entitlements plus [the schema](#the-schema) above. The container identifier never needs repeating in JavaScript: the Expo config plugin writes it to `Info.plist` as `RNCloudSyncContainerIdentifier`, and a bare project adds that key by hand. Without it CloudKit is disabled - every call rejects with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` resolves false; nothing falls back to `iCloud.<bundle id>`. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
+Entitlements plus [the schema](#the-schema). The container identifier goes in `Info.plist` as `RNCloudSyncContainerIdentifier`, not in JavaScript; the Expo config plugin writes it, a bare project adds it by hand. Without it CloudKit is disabled: every call rejects with `ERR_CONTAINER_MISCONFIGURED`, `isAvailable()` resolves false, and nothing falls back to `iCloud.<bundle id>`. See [Platform Notes](../PLATFORM_NOTES.md#entitlements).
 
 ## Setup on Android and web
 
-Three things in the [CloudKit Console][console] first:
+In the [CloudKit Console][console]:
 
-1. A **Client** API token under API Access ([how tokens work][ckauth]). Not a server-to-server key - see [the constraint](#the-constraint-on-android-and-web) below.
-2. A **Sign In Callback** set to `cloudkit-<container-id>://callback`.
-3. [The schema](#the-schema) and its `recordName` index **deployed to Production**, if you use `environment: 'production'`. Development and Production are separate datastores, so a debug build and a release build do not see each other's data.
+1. Create a **Client** API token under API Access ([how tokens work][ckauth]). Not a server-to-server key; see [the constraint](#the-constraint-on-android-and-web).
+2. Set the **Sign In Callback** to `cloudkit-<container-id>://callback`.
+3. If you use `environment: 'production'`, deploy [the schema](#the-schema) and its `recordName` index to Production. Development and Production are separate datastores; debug and release builds do not see each other's data.
 
 Then configure the REST path:
 
@@ -73,16 +73,16 @@ configureCloudKit({
 })
 ```
 
-A Client token only grants what the signed-in user could already do, so it's safe to ship in an app binary - a server-to-server private key isn't.
+A Client token grants only what the signed-in user can already do, so it is safe to ship in the app binary. A server-to-server private key is not.
 
 ### Getting a `ckWebAuthToken`
 
 1. `GET https://api.apple-cloudkit.com/database/1/<container>/<env>/public/users/current?ckAPIToken=<token>`
-2. That returns **HTTP 421** with a `redirectURL` in a top-level error dict.
+2. The response is **HTTP 421** with a `redirectURL` in a top-level error dict.
 3. Load `redirectURL` in a WebView.
 4. Intercept navigation to your callback scheme and read `ckWebAuthToken` from the query string.
 
-Intercept at the native page-load level, not with `onShouldStartLoadWithRequest` - it's undependable for Android's server-side 302s. A custom `cloudkit-…://` scheme is far more reliably interceptable than an `https` URL.
+Intercept at the native page-load level. `onShouldStartLoadWithRequest` is unreliable for Android's server-side 302s. A custom `cloudkit-...://` scheme is easier to intercept reliably than an `https` URL.
 
 ## Records
 
@@ -99,19 +99,19 @@ await cloudKit.removeItem('playlist')
 const names = await cloudKit.getAllKeys()
 ```
 
-Records are stored with the record name as the key, so both platforms fetch by name directly (no query, no index needed) except `getAllKeys()`, which queries and needs [the `recordName` index](#getallkeys-needs-an-index).
+The key is the record name, so reads fetch by name with no query. Only `getAllKeys()` queries and needs [the `recordName` index](#getallkeys-needs-an-index).
 
-Keys starting with `rncs-enc.` are reserved: that is [`cloudKitEncrypted`'s record-name prefix](../encryption.md#cloudkits-native-encryption), and CloudKit record names are unique across record types, so `cloudKit` rejects them with `ERR_INVALID_KEY` and leaves them out of `getAllKeys()`.
+Keys starting with `rncs-enc.` are reserved for [`cloudKitEncrypted`](../encryption.md#cloudkits-native-encryption). Record names are unique across record types, so `cloudKit` rejects these keys with `ERR_INVALID_KEY` and omits them from `getAllKeys()`.
 
-Natively, identifiers CloudKit would crash on reject with `ERR_INVALID_KEY` instead:
+Natively, identifiers CloudKit would crash on reject with `ERR_INVALID_KEY`:
 
 - record and zone names: 1 to 255 characters (UTF-16 units)
 - record types and field names: ASCII letters, digits and `_`, not starting with a digit, at most 255 characters (249 for an asset field, to leave room for `__size`)
 - field names CloudKit reserves for metadata (`recordID`, `recordType`, `creationDate`, `creatorUserRecordID`, `modificationDate`, `lastModifiedUserRecordID`, `recordChangeTag`)
 
-A read checks the record type too: a record under the requested name that is not a `KVBlob` (another type sharing the name) rejects with `ERR_INVALID_KEY`, on native and REST alike, rather than being read as this key's value.
+Reads check the record type: a record with the requested name that is not a `KVBlob` rejects with `ERR_INVALID_KEY` (native and REST).
 
-Concurrent writes resolve last-write-wins, identically on native (`.changedKeys`) and over REST (`forceUpdate`), so two devices cannot deadlock on a change-tag conflict.
+Concurrent writes are last-write-wins on both paths (native `.changedKeys`, REST `forceUpdate`), so two devices never deadlock on a change-tag conflict. See [Concurrent writes](#concurrent-writes).
 
 ## Custom zones
 
@@ -127,7 +127,7 @@ await cloudKitZones.remove('Projects')
 
 ## Assets
 
-For anything above the 1 MB record limit - images, audio, exports - streamed from disk natively as a `CKAsset`, so a large file never has to be held in memory the way a base64 round trip would.
+For anything above the 1 MB record limit: images, audio, exports. Natively the file streams from disk as a `CKAsset` and is never held in memory.
 
 ```ts
 import { cloudKitAssets } from 'react-native-cloud-sync'
@@ -152,30 +152,28 @@ const path = await cloudKitAssets.fetch({
 // null when the record or field does not exist.
 ```
 
-Progress is reported per record, so it can be attributed when several transfers are in flight.
+Progress is reported per record, so concurrent transfers can be told apart. Assets are an explicit API; the [store facade](../store.md) does not route to them.
 
-Assets are an explicit API, not something the [store facade](../store.md) routes to automatically - you pass a file path, not a string.
+Rules:
 
-A few rules:
-
-- `recordName` must not start with `rncs-enc.`, the same [reserved prefix](#records) as `cloudKit` keys; `save` and `fetch` reject it with `ERR_INVALID_KEY`.
-- Natively, `destinationUri` must name a file. An existing file there is replaced; a directory is never deleted, and the call rejects instead. A symlink is replaced as a link, its target is left alone.
-- Without `destinationUri` (native only), the file lands at `tmp/rncs-asset-<hash>`, one stable name per zone, record and field. iOS may clear it at any time, so copy it somewhere permanent before keeping it.
-- Over REST, asset upload and download URLs from CloudKit must be HTTPS. Anything else rejects with `ERR_UNKNOWN` and `serverErrorCode: 'UNTRUSTED_URL'`.
+- `recordName` must not start with the [reserved](#records) `rncs-enc.` prefix; `save` and `fetch` reject it with `ERR_INVALID_KEY`.
+- Natively, `destinationUri` must name a file. An existing file is replaced; a directory is never deleted (the call rejects). A symlink is replaced as a link; its target is left alone.
+- Without `destinationUri` (native only), the file lands at `tmp/rncs-asset-<hash>`, one stable name per zone, record and field. iOS may clear it at any time; copy it somewhere permanent.
+- Over REST, CloudKit's asset upload and download URLs must be HTTPS. Anything else rejects with `ERR_UNKNOWN` and `serverErrorCode: 'UNTRUSTED_URL'`.
 
 ### On Android and web
 
-`save`/`fetch` go through CloudKit Web Services' own asset-upload protocol - request a single-use upload URL, POST the bytes, attach the returned descriptor to the record. Three things follow:
+`save` and `fetch` use CloudKit Web Services' asset protocol: request a single-use upload URL, POST the bytes, attach the returned descriptor to the record. As a result:
 
-- **15 MB per asset, hard limit** - CloudKit Web Services' own ceiling, narrower than the general 50 MB `CKAsset` limit and unrelated to the 1 MB *record* limit above. Oversized files reject locally with `ERR_PAYLOAD_TOO_LARGE`; use [`googleDriveFiles`](google-drive.md#large-files) for anything bigger on Android/web.
-- **Needs a file adapter.** Reads/writes the local file through the same `GoogleDriveFileAdapter` contract [`googleDriveFiles`](google-drive.md#large-files) uses - one `configureGoogleDriveFiles(adapter)` call covers both, even without touching `googleDrive`.
-- **`destinationUri` is required on `fetch`.** Natively, omitting it falls back to the app's temporary directory; REST has no such directory to reach without a native module, so it rejects with `ERR_UNSUPPORTED_PLATFORM` instead of guessing a path.
+- **15 MB per asset, hard limit.** This is the Web Services ceiling (native `CKAsset` allows 50 MB). Oversized files reject locally with `ERR_PAYLOAD_TOO_LARGE`; use [`googleDriveFiles`](google-drive.md#large-files) for bigger files.
+- **Needs a file adapter.** Local files go through the same `GoogleDriveFileAdapter` as [`googleDriveFiles`](google-drive.md#large-files). One `configureGoogleDriveFiles(adapter)` call covers both, even if you never use `googleDrive`.
+- **`destinationUri` is required on `fetch`.** REST has no temporary directory to fall back to, so omitting it rejects with `ERR_UNSUPPORTED_PLATFORM`.
 
-Two things stay native-only, both rejecting `ERR_UNSUPPORTED_PLATFORM`: a custom `zoneName` ([no REST zone support](#custom-zones)), and `cancel()`, which resolves `false` since a REST transfer has no in-flight handle to stop yet.
+Native only, rejecting with `ERR_UNSUPPORTED_PLATFORM` over REST: a custom `zoneName` ([no REST zone support](#custom-zones)). `cancel()` resolves `false` over REST, since a REST transfer has no in-flight handle.
 
 ### Backup/restore helper
 
-`cloudKitBackup` wraps `cloudKitAssets` for the common case of a single named blob - a database export, an archive - with progress reported as a fraction instead of a global, unfiltered event feed:
+`cloudKitBackup` wraps `cloudKitAssets` for a single named blob (a database export, an archive) and reports progress as a fraction:
 
 ```ts
 import { cloudKitBackup } from 'react-native-cloud-sync'
@@ -190,11 +188,11 @@ const restoredPath = await cloudKitBackup.restore({
 // null when nothing has been backed up yet
 ```
 
-`save`/`restore` both default to a single well-known record (`recordName: 'backup'`, `fieldName: 'file'`), so most apps never need to pass either - override them to keep more than one backup (e.g. one per exported dataset).
+Both default to `recordName: 'backup'`, `fieldName: 'file'`. Override them to keep more than one backup.
 
-The download side reports real progress from the first callback, not just at completion: `save` stashes the file's byte count alongside the asset, so a subsequent `restore` (even from a different device) knows the total before the transfer starts.
+`save` stores the byte count next to the asset, so `restore` (even on another device) reports real progress from the first callback.
 
-Same platform behavior as `cloudKitAssets` above, including the 15 MB cap on Android/web - a database export near that size needs [`googleDriveFiles`](google-drive.md#large-files) instead, and `restore()` without `destinationUri` needs a native module. [Recipes](../recipes.md#cross-platform-large-file-backup) pairs the two behind one function.
+Platform behavior matches `cloudKitAssets`, including the 15 MB cap on Android/web (use [`googleDriveFiles`](google-drive.md#large-files) for larger exports) and the required `destinationUri` there. [Recipes](../recipes.md#cross-platform-large-file-backup) wraps both behind one function.
 
 ## Availability and account state
 
@@ -208,19 +206,25 @@ const status = await cloudKit.getAccountStatus()
 // 'temporarilyUnavailable' | 'couldNotDetermine'
 ```
 
-Natively, all five states ([`CKAccountStatus`][ckstatus]), not a boolean: `temporarilyUnavailable` means retry silently, `noAccount` means prompt the user, `couldNotDetermine` means do nothing yet. Without a [declared container](#setup-on-apple-platforms), `getAccountStatus()` rejects with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` resolves false.
+Natively you get all five [`CKAccountStatus`][ckstatus] states:
 
-Over REST there is no account-status endpoint, so `getAccountStatus()` reports `available` once `configureCloudKit` has been called and `noAccount` before.
+- `temporarilyUnavailable`: retry silently
+- `noAccount`: prompt the user
+- `couldNotDetermine`: do nothing yet
+
+Without a [declared container](#setup-on-apple-platforms), `getAccountStatus()` rejects with `ERR_CONTAINER_MISCONFIGURED` and `isAvailable()` resolves false.
+
+REST has no account-status endpoint: `getAccountStatus()` reports `available` once `configureCloudKit` has been called, `noAccount` before.
 
 ## Errors specific to CloudKit
 
 | Code | Cause |
 |---|---|
 | `ERR_AUTH_EXPIRED` | REST `AUTHENTICATION_REQUIRED` / `AUTHENTICATION_FAILED`; `onAuthExpired` fires |
-| `ERR_CONTAINER_MISCONFIGURED` | No declared container natively; REST `BAD_REQUEST` / `ZONE_NOT_FOUND`; or REST `ACCESS_DENIED` - the user lacks rights to the record type, zone or database (security roles in the Console). Not an auth failure, so `onAuthExpired` doesn't fire and nobody is signed out |
+| `ERR_CONTAINER_MISCONFIGURED` | No declared container natively; REST `BAD_REQUEST` / `ZONE_NOT_FOUND`; or REST `ACCESS_DENIED` (the user lacks rights to the record type, zone or database, set by security roles in the Console). Not an auth failure: `onAuthExpired` does not fire |
 | `ERR_ACCOUNT_UNAVAILABLE` | `CKError.accountTemporarilyUnavailable` |
 
-A single-record native write or fetch that fails inside a `partialFailure` reports the underlying record's error - quota, size limit, conflict - with its `retryAfterMs` and `serverValue`, not `ERR_UNKNOWN`. See [Error handling](../errors.md).
+When a single-record native write or fetch fails inside a `partialFailure`, you get the record's own error (quota, size limit, conflict) with its `retryAfterMs` and `serverValue`, not `ERR_UNKNOWN`. See [Error handling](../errors.md).
 
 ## Events
 
@@ -231,20 +235,22 @@ cloudKit.onAccountChange(({ identityChanged }) => {
 })
 ```
 
-Native only - the REST path has no push channel without APNs. Both are no-ops elsewhere rather than throwing, so the same code runs on every platform.
+Native only; REST has no push channel without APNs. Elsewhere both are no-ops, not errors, so the same code runs everywhere.
 
 ## The constraint on Android and web
 
-A `ckWebAuthToken` expires after **30 minutes**, or **2 weeks** with "Keep me signed in" ticked at sign-in. Apple documents no refresh mechanism, and there's no alternative auth mode:
+A `ckWebAuthToken` expires after **30 minutes**, or **2 weeks** if "Keep me signed in" was ticked. Apple documents no refresh, and there is no other auth mode:
 
 - A **server-to-server key reaches only the public database.** Apple: *"Use a server-to-server key to access the public database of a container as the developer who created the key."*
-- **Sign in with Apple can't bootstrap it.** Per Apple DTS: *"The unique user identifiers for Sign in with Apple and CloudKit are not linked."*
+- **Sign in with Apple cannot bootstrap it.** Per Apple DTS: *"The unique user identifiers for Sign in with Apple and CloudKit are not linked."*
 
-So interactive sign-in isn't a shortcut this package chose - it's the only mechanism that exists.
+Interactive sign-in is the only mechanism. Design around it:
 
-Design around it: make CloudKit-on-Android a deliberate import/export, handle `ERR_AUTH_EXPIRED` by prompting for sign-in rather than retrying, and use `googleDrive` for continuous background sync there.
+- treat CloudKit on Android as a deliberate import/export
+- handle `ERR_AUTH_EXPIRED` by prompting for sign-in, not retrying
+- use `googleDrive` for continuous background sync there
 
-The REST path needs no crypto - two query parameters on a `fetch` - so it's unaffected by the missing-`crypto` problem that stalled earlier CloudKit JS attempts in React Native.
+The REST path needs no crypto (two query parameters on a `fetch`), so it avoids the missing-`crypto` problem that blocked earlier CloudKit JS attempts in React Native.
 
 [ckdb]: https://developer.apple.com/documentation/cloudkit/ckdatabase
 [ckrecord]: https://developer.apple.com/documentation/cloudkit/ckrecord
@@ -258,38 +264,22 @@ The REST path needs no crypto - two query parameters on a `fetch` - so it's unaf
 
 ## Batching
 
-Over REST, `/records/lookup` and `/records/modify` both take arrays, so the store's [batch operations](../store.md#batch-operations) really are one request:
+Over REST, `/records/lookup` and `/records/modify` take arrays, so the store's [batch operations](../store.md#batch-operations) are real batches:
 
 ```ts
 await store.multiGet(['a', 'b', 'c'])     // one request
 await store.multiSet(entries)             // one request per 200 records
 ```
 
-Batched writes use `atomic: false` - a batch is a convenience, not a transaction, so one oversized record shouldn't silently discard the other 199. Per-record failures are raised, not swallowed.
+Batched writes use `atomic: false`: a batch is a convenience, not a transaction, so one oversized record does not discard the other 199. Per-record failures are raised, not swallowed.
 
-Natively the same calls loop, since `CKModifyRecordsOperation` already coalesces on the framework's own schedule.
+Natively the calls loop; `CKModifyRecordsOperation` already coalesces on its own schedule.
 
 ## Concurrent writes
 
-The default is last-write-wins on both platforms: native uses `savePolicy = .changedKeys`, REST uses `forceUpdate`, so two devices writing the same record agree on the outcome rather than one failing on a change-tag mismatch.
+The default is last-write-wins (native `savePolicy = .changedKeys`, REST `forceUpdate`), so two devices writing the same record agree instead of one failing on a change-tag mismatch.
 
-Right for the common case, wrong when a genuine concurrent edit should be merged instead of destroyed. The REST client can do a conditional write:
-
-```ts
-import { configureCloudKit, isCloudSyncError } from 'react-native-cloud-sync'
-
-const client = getCloudKitClient()                       // internal, but see below
-const current = await client.getRecordWithMeta('doc')
-
-try {
-  await client.saveRecordIfUnchanged('doc', merged, current.recordChangeTag)
-} catch (e) {
-  if (isCloudSyncError(e) && e.code === 'ERR_CONFLICT')
-    await retryWith(e.serverValue)                       // somebody else got there first
-}
-```
-
-`ERR_CONFLICT` carries `serverValue` precisely so this loop can merge - before conditional writes existed, the error could never fire, so the documented merge path was unreachable.
+Conditional writes (save only if the record is unchanged since you read it) are not part of the public API yet. To avoid losing a concurrent edit, store data that merges cleanly, for example one record per item instead of one big document.
 
 ## Cancelling a transfer
 
@@ -298,6 +288,6 @@ const cancelled = await cloudKitAssets.cancel({ recordName: 'avatar', fieldName:
 await cloudKitBackup.cancel()                            // the default backup record
 ```
 
-Identified by record and field, not a handle - the same pair `onProgress` reports, so a UI already showing progress has what it needs to stop it. The cancelled call rejects with `ERR_CANCELLED`, which `isCancelled(e)` recognises and shouldn't be shown as an error.
+Transfers are identified by record and field (the same pair `onProgress` reports), not by a handle. The cancelled call rejects with `ERR_CANCELLED`; `isCancelled(e)` recognises it, and it should not be shown as an error.
 
 Native only, like the rest of the asset API.

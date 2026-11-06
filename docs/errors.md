@@ -1,6 +1,6 @@
 # Error handling
 
-Every failure here is a typed rejection you can branch on; `null` means exactly one thing.
+Every failure is a typed rejection you can branch on. `null` means only "the key doesn't exist".
 
 ## The contract
 
@@ -19,19 +19,14 @@ try {
   e.retryAfterMs   // on ERR_RATE_LIMITED
   e.limitBytes     // on ERR_PAYLOAD_TOO_LARGE
   e.actualBytes    // on ERR_PAYLOAD_TOO_LARGE
-  e.serverValue    // on ERR_CONFLICT
   e.serverErrorCode // the backend's own code, when there was one
   e.provider       // which provider raised it
 }
 ```
 
-## Why it matters
-
-A `catch { return null }` conflates every failure into one useless signal. Worse, a failed write can look like success: real libraries misreport it, so a quota-exceeded write resolves happily while the data vanishes.
-
 ## Codes
 
-These codes map onto CloudKit's own ([framework][ck], [Web Services][ckerrors]) and Drive's HTTP statuses; the original is kept on `serverErrorCode`. Per-provider details: [CloudKit](providers/cloudkit.md#errors-specific-to-cloudkit), [Google Drive](providers/google-drive.md#errors-specific-to-drive).
+Codes map CloudKit's errors ([framework][ck], [Web Services][ckerrors]) and Drive's HTTP statuses; the original is kept on `serverErrorCode`. Per-provider details: [CloudKit](providers/cloudkit.md#errors-specific-to-cloudkit), [Google Drive](providers/google-drive.md#errors-specific-to-drive).
 
 | Code | Meaning | Typical response |
 |---|---|---|
@@ -46,13 +41,17 @@ These codes map onto CloudKit's own ([framework][ck], [Web Services][ckerrors]) 
 | `ERR_PAYLOAD_TOO_LARGE` | Above the store's limit | Use a bigger provider |
 | `ERR_INVALID_KEY` | Key cannot round-trip through the configured providers, an invalid CloudKit identifier (name, zone, record type, field), or a record of another type under the requested name | Fix the key, or `sanitizeKey` it |
 | `ERR_TIMEOUT` | Ran longer than the configured timeout | Retry; it may still be in flight |
-| `ERR_CONFLICT` | A concurrent write won | Merge using `serverValue` |
+| `ERR_CONFLICT` | Google Drive holds several files for one key and `onDuplicateName` is `'error'` | Remove the extra files, or use the default `'newest'` |
 | `ERR_CONTAINER_MISCONFIGURED` | Entitlement, container, token or CloudKit permission (`ACCESS_DENIED`) problem | Fix the build or the Console |
 | `ERR_UNSUPPORTED_PLATFORM` | Provider unavailable here | Branch on `isAvailable()` |
 | `ERR_CANCELLED` | Cancelled by the caller | Nothing - they asked for it |
 | `ERR_UNKNOWN` | Unclassified; `cause` holds the original. `serverErrorCode: 'UNTRUSTED_URL'` means a URL was refused: a Drive URL outside googleapis.com, or a non-HTTPS CloudKit asset URL | Report it |
 
-Three deserve a note: `ERR_INVALID_KEY` fires **before** the request, so a bad record name doesn't instead surface as a confusing `BAD_REQUEST` (see [keys](store.md#keys)); `ERR_TIMEOUT` is only an abandoned wait, not a failure; and `ERR_CANCELLED` is what a cancelled transfer rejects with - [`cloudKitAssets.cancel`](providers/cloudkit.md#assets), `cloudKitBackup.cancel`, or an `AbortLike` signal to [`googleDriveFiles`](providers/google-drive.md#large-files).
+Notes:
+
+- `ERR_INVALID_KEY` fires **before** the request, instead of a confusing `BAD_REQUEST` (see [keys](store.md#keys)).
+- `ERR_TIMEOUT` is an abandoned wait, not a failure.
+- `ERR_CANCELLED` comes from [`cloudKitAssets.cancel`](providers/cloudkit.md#assets), `cloudKitBackup.cancel`, or an `AbortLike` signal passed to [`googleDriveFiles`](providers/google-drive.md#large-files).
 
 ## Classifying without a switch
 
@@ -69,7 +68,7 @@ try {
 }
 ```
 
-`isCancelled` comes first: cancelling isn't a fault, so don't toast it. The [facade](store.md)'s outbox already queues retryable failures, so most call sites need only `requiresUserAction`.
+Check `isCancelled` first: a cancellation isn't a fault. The [facade](store.md)'s outbox already queues retryable failures, so most call sites need only `requiresUserAction`.
 
 ## Recognising an error
 
@@ -79,11 +78,9 @@ import { isCloudSyncError } from 'react-native-cloud-sync'
 if (isCloudSyncError(e)) console.warn(e.code)
 ```
 
-Use the guard, not `instanceof`: a bridge rejection sometimes arrives as a plain object, so it checks shape.
+Use the guard, not `instanceof`: bridge rejections can arrive as plain objects, so it checks shape.
 
 ## Distinguishing "absent" from "broken"
-
-The one case worth being deliberate about:
 
 ```ts
 let value: string | null = null
@@ -101,7 +98,7 @@ if (value == null)
   seedInitialState()
 ```
 
-That works because the facade raises `ERR_NOT_SIGNED_IN`, never `null`, when no provider is reachable - and the reverse holds too:
+This works because the facade raises `ERR_NOT_SIGNED_IN`, never `null`, when no provider is reachable:
 
 ```ts
 // One provider down, another up and holding the value -> the value.

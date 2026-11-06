@@ -1,23 +1,23 @@
 # Google Drive
 
-Drive's hidden [`appDataFolder`][appdata] - a per-app, per-Google-account folder that never appears in the user's visible Drive.
+Drive's hidden [`appDataFolder`][appdata]: a per-app, per-Google-account folder that never appears in the user's visible Drive.
 
 ## When to use it
 
-Always-on backend for a cross-platform app - identical on iOS, Android and web, with no periodic re-auth unlike CloudKit's Android path.
+An always-on backend for a cross-platform app. It behaves the same on iOS, Android and web, and unlike CloudKit's Android path it needs no periodic re-auth.
 
 | | |
 |---|---|
 | Platforms | iOS, Android, web |
 | Auth | OAuth, [`drive.appdata` scope][drivescopes], supplied by your app |
 | Size limits | the user's Drive quota |
-| Survives app uninstall | yes - tied to the account, not the install; gone only on Drive disconnect or direct deletion |
-| Remote change events | – |
+| Survives app uninstall | yes; tied to the account, gone only on Drive disconnect or direct deletion |
+| Remote change events | polled (see [below](#knowing-when-another-device-wrote)) |
 | Visible to the user in Drive | no |
 
 ## Setup
 
-This package never owns the consent flow - you supply a token getter, independent of any sign-in library, so the same code runs in a browser too.
+You own the consent flow and supply a token getter. It works with any sign-in library, and in a browser.
 
 ```ts
 import { configureGoogleDrive } from 'react-native-cloud-sync'
@@ -28,9 +28,9 @@ configureGoogleDrive({
 })
 ```
 
-`getAccessToken` is called before every request - refresh silently there rather than caching a token that may have expired.
+`getAccessToken` runs before every request. Refresh silently there instead of caching a token that may expire.
 
-With `@react-native-google-signin/google-signin`, the one-time connect:
+The one-time connect with `@react-native-google-signin/google-signin`:
 
 ```ts
 GoogleSignin.configure({
@@ -43,7 +43,7 @@ await GoogleSignin.hasPlayServices()
 await GoogleSignin.signIn()          // account picker + consent, once
 ```
 
-Afterwards, `signInSilently()` keeps every read and write silent.
+After that, `signInSilently()` keeps reads and writes silent.
 
 ## Operations
 
@@ -64,9 +64,12 @@ Keys are file names inside `appDataFolder`.
 
 ## Large files
 
-`setItem` holds the whole value in memory as a JS string - fine for JSON, not a 500 MB database export - so `googleDriveFiles` (the Android/web equivalent of `cloudKitAssets`' `CKAsset`) uploads via Drive's resumable protocol in fixed chunks (8 MiB default, never more than one in memory), retrying a dropped chunk from the real server offset instead of restarting the whole upload.
+`setItem` holds the whole value in memory as a string: fine for JSON, not for a 500 MB database. `googleDriveFiles` (the Android/web counterpart of `cloudKitAssets`) uses Drive's resumable upload:
 
-No filesystem dependency here, so both directions read/write through a `GoogleDriveFileAdapter` you supply - a few lines wrapping whichever fs library you already use:
+- fixed chunks, 8 MiB by default, at most one in memory
+- a dropped chunk retries from the server's real offset instead of restarting the upload
+
+The package has no filesystem dependency, so you supply a `GoogleDriveFileAdapter` that wraps your fs library:
 
 ```ts
 import {
@@ -115,11 +118,14 @@ configureGoogleDriveFiles({
 })
 ```
 
-`File`/`FileHandle`/seekable `offset` are the modern `expo-file-system` API (SDK 54); `FileHandle` reads/writes at an arbitrary offset so a chunk never costs more than its own bytes - close it in a `finally`, since an open handle blocks the file from being moved or deleted. `readBytes`/`writeBytes` use `Uint8Array` while the adapter contract is base64, so this package exports [`bytesToBase64`/`base64ToBytes`](../API.md#base64) to bridge them, dependency-free and Hermes-safe unlike `Buffer` or `atob`/`btoa`.
+Notes on this adapter:
 
-(`react-native-fs` fits this shape too, but has had no commits in two years and 600+ open issues; `expo-file-system` also works in a bare RN project.)
+- It uses the `expo-file-system` `File`/`FileHandle` API (SDK 54), which also works in a bare RN project. `FileHandle` reads and writes at any offset, so a chunk costs only its own bytes.
+- Close the handle in `finally`; an open handle blocks the file from being moved or deleted.
+- `readBytes`/`writeBytes` use `Uint8Array` and the adapter contract is base64. [`bytesToBase64`/`base64ToBytes`](../API.md#base64) convert between them without dependencies and are Hermes-safe (`Buffer` and `atob`/`btoa` are not).
+- `react-native-fs` also fits, but has had no commits in two years and 600+ open issues.
 
-A working version - adapter, upload, download, progress - is the **Files** tab of the [example app](https://github.com/kesha-antonov/react-native-cloud-sync/blob/main/example).
+A working version (adapter, upload, download, progress) is in the **Files** tab of the [example app](https://github.com/kesha-antonov/react-native-cloud-sync/blob/main/example).
 
 Then:
 
@@ -141,9 +147,11 @@ const restoredPath = await googleDriveFiles.fetch({
 // never touched in that case
 ```
 
-Calling `save`/`fetch` before `configureGoogleDriveFiles` rejects with `ERR_CONTAINER_MISCONFIGURED`, naming the missing call - separate from `configureGoogleDrive` since most apps never touch a file this large.
+Calling `save`/`fetch` before `configureGoogleDriveFiles` rejects with `ERR_CONTAINER_MISCONFIGURED`, naming the missing call. It is separate from `configureGoogleDrive` because most apps never move files this large.
 
-Resumability covers a dropped connection for free (a chunk that fails mid-flight retries against Drive's real offset). Surviving the *process* dying mid-upload needs one more thing - pass `sessionStore` to `configureGoogleDrive`:
+### Resuming after the app is killed
+
+A dropped connection resumes automatically. To also resume after the process dies, pass `sessionStore` to `configureGoogleDrive`:
 
 ```ts
 import { configureGoogleDrive } from 'react-native-cloud-sync'
@@ -158,13 +166,17 @@ configureGoogleDrive({
 })
 ```
 
-Without it, a killed process restarts `save` from byte 0; with it, `save` persists the session first, and the next call for the same `name` - even a fresh process - finds it, asks Drive for the real offset, and resumes. A session is trusted only if the source size still matches (a changed size starts fresh, since a byte-range upload into different content would corrupt it), and one Drive no longer recognizes (past its ~1 week lifetime) is handled the same way, transparently. It's a tiny JSON record, not file I/O, so `sessionStore` is a much lighter ask than `GoogleDriveFileAdapter` - one row in whatever key-value storage the host app already has. Cancelling via `signal` drops the session too, since a deliberate stop isn't a crash to recover from.
+How it behaves:
 
-The stored `sessionUrl` must be on `https://www.googleapis.com/` or a `https://<host>.googleapis.com/upload/` URL. Anything else (a tampered entry, say) is ignored and a fresh session starts, so the access token is never sent elsewhere.
+- Without it, a killed process restarts `save` from byte 0. With it, `save` persists the session first, and the next `save` for the same `name` (even in a new process) asks Drive for the real offset and resumes.
+- A session is reused only if the source file size still matches. A changed size, or a session Drive no longer recognizes (they last about a week), starts fresh.
+- A session is a small JSON record; any key-value storage you already have will do.
+- Cancelling via `signal` drops the session, since a deliberate stop is not a crash.
+- A stored `sessionUrl` must be on `https://www.googleapis.com/` or `https://<host>.googleapis.com/upload/`. Anything else (for example a tampered entry) is ignored and a fresh session starts, so the access token is never sent elsewhere.
 
-If losing a transfer to backgrounding or an OS kill is the failure you care about, [`@kesha-antonov/react-native-background-downloader`][rnbd] is built for it: `createUploadTask`/`createDownloadTask` hand the whole transfer to `NSURLSession`/a foreground service, re-attachable via `getExistingUploadTasks`/`getExistingDownloadTasks`. It doesn't implement `GoogleDriveFileAdapter` (whole-file HTTP tasks, not byte-range), so using it means driving Drive's plain, non-resumable `uploadType=media`/`alt=media` endpoints directly - trading Drive's resumable protocol for the OS's background-session resilience.
+If your concern is losing transfers to backgrounding or an OS kill, consider [`@kesha-antonov/react-native-background-downloader`][rnbd]. Its `createUploadTask`/`createDownloadTask` hand the transfer to `NSURLSession` or a foreground service, and `getExistingUploadTasks`/`getExistingDownloadTasks` re-attach to it. It does whole-file HTTP, not byte ranges, so it cannot implement `GoogleDriveFileAdapter`; you would call Drive's non-resumable `uploadType=media`/`alt=media` endpoints directly.
 
-CloudKit-native equivalent on iOS/macOS: [assets](cloudkit.md#assets), [backup/restore](cloudkit.md#backuprestore-helper); [Recipes](../recipes.md#cross-platform-large-file-backup) pairs the two behind one function.
+CloudKit equivalents on iOS/macOS: [assets](cloudkit.md#assets), [backup/restore](cloudkit.md#backuprestore-helper). [Recipes](../recipes.md#cross-platform-large-file-backup) wraps both behind one function.
 
 [rnbd]: https://www.npmjs.com/package/@kesha-antonov/react-native-background-downloader
 
@@ -176,21 +188,19 @@ if (!(await googleDrive.isAvailable()))
   promptConnect()
 ```
 
-`isAvailable()` only checks that a token can be obtained - no network request, so it's safe on a render path.
+`isAvailable()` only checks that a token can be obtained. It makes no network request, so it is safe on a render path.
 
 ## What happens on a reinstall
 
-The **file** survives - it belongs to the Google account. The **session** doesn't: a fresh install needs one more tap to connect, after which `getItem` immediately reads the previous data back.
+The files survive; they belong to the Google account. The session does not: after a reinstall the user taps to connect once, and `getItem` reads the previous data.
 
 ## Performance notes
 
-The [Drive `files` API][drivefiles] has no "get by name" endpoint, so a read must first resolve a name to a file id - this package does that with one scoped `q=` query and caches the id, keeping a read to a single request and usually none.
+The [Drive `files` API][drivefiles] has no get-by-name endpoint, so a read resolves the name to a file id first. This package does that with one scoped `q=` query and caches the id, so a read is usually one request. (Listing every file and filtering client-side is what makes some implementations take minutes on large accounts.) If you switch accounts, reconfigure to drop the cache.
 
-The naive approach - listing every file and filtering client-side - is what makes other implementations take minutes on accounts with many files; if you switch accounts, drop the cache by reconfiguring.
-
-`getItemWithMeta` - what [`resolveByModifiedAt`](../store.md#resolve) reads - always lists the name again rather than trusting the cache, since a cached `modifiedTime` goes stale the moment another device writes. That is one more request than `getItem`.
-
-There is deliberately no `multiGet`: Drive has no batch endpoint for file content, and a batch API that secretly loops hides N round trips behind a call that looks like one. `multiGetWithMeta` is the exception, because it really does save requests - one listing per 50 keys instead of one per key, plus one download per key - so a resolving `multiGet` doesn't pay a fresh listing for every key.
+- `getItemWithMeta` (used by [`resolveByModifiedAt`](../store.md#resolve)) always re-lists the name, since a cached `modifiedTime` goes stale as soon as another device writes. That is one request more than `getItem`.
+- There is no `multiGet`: Drive has no batch endpoint for file content, and a fake batch would hide N round trips.
+- `multiGetWithMeta` exists because it does save requests: one listing per 50 keys instead of one per key, plus one download per key.
 
 ## Errors specific to Drive
 
@@ -199,9 +209,9 @@ There is deliberately no `multiGet`: Drive has no batch endpoint for file conten
 | `ERR_NOT_SIGNED_IN` | `getAccessToken` returned null |
 | `ERR_AUTH_EXPIRED` | HTTP 401, or a 403 whose body doesn't match one of the reasons below; `onAuthExpired` fires |
 | `ERR_RATE_LIMITED` | HTTP 429, or a 403 with `reason: userRateLimitExceeded`/`rateLimitExceeded`; `retryAfterMs` set from `Retry-After` when present, at most 1 hour (the 403 variants never carry it) |
-| `ERR_RATE_LIMITED` | HTTP 500/502/503/504 - Google documents these as transient; `serverErrorCode` is `HTTP_503` and so on, and `retryAfterMs` comes from `Retry-After` when sent |
-| `ERR_QUOTA_EXCEEDED` | A 403 with `reason: storageQuotaExceeded` - the user's Drive is full, never the 507 a WebDAV-style API would use |
-| `ERR_UNKNOWN` | `serverErrorCode: 'UNTRUSTED_URL'` - a request or resumable session URI outside `https://www.googleapis.com` (or `https://<host>.googleapis.com/upload/`); refused before the token is attached |
+| `ERR_RATE_LIMITED` | HTTP 500/502/503/504, which Google documents as transient; `serverErrorCode` is `HTTP_503` and so on, and `retryAfterMs` comes from `Retry-After` when sent |
+| `ERR_QUOTA_EXCEEDED` | A 403 with `reason: storageQuotaExceeded`: the user's Drive is full (Drive does not use 507) |
+| `ERR_UNKNOWN` | `serverErrorCode: 'UNTRUSTED_URL'`: a request or resumable session URI outside `https://www.googleapis.com` (or `https://<host>.googleapis.com/upload/`); refused before the token is attached |
 
 See [Error handling](../errors.md).
 
@@ -211,17 +221,16 @@ See [Error handling](../errors.md).
 
 ## Knowing when another device wrote
 
-Drive has no push channel a mobile client can subscribe to (its webhooks need a public HTTPS endpoint), so `onRemoteChange` polls Drive's change cursor instead:
+Drive's webhooks need a public HTTPS endpoint, so a mobile client cannot subscribe. `onRemoteChange` polls Drive's change cursor instead:
 
 ```ts
 const off = googleDrive.onRemoteChange(({ keys }) => reload(keys))
 ```
 
-Polling starts with the first subscriber and stops with the last, so an app that never subscribes never makes the request - default interval is 30s (`changePollIntervalMs` on `createGoogleDriveProvider`), and an empty poll is still just one request.
-
-Deletions are included too. The client drops its memoised file id for every name the feed reports - removed, changed, or a same-named copy from another device - so the next read lists it again rather than serving a stale id.
-
-The starting cursor is taken as soon as the first listener subscribes, not one interval later, so a write in between isn't missed; that first poll reports nothing, so a new subscriber isn't told everything that ever happened just changed. After an account switch (`clearCaches()`), polling restarts on a fresh cursor for the listeners already subscribed.
+- Polling runs only while there are subscribers. The default interval is 30s (`changePollIntervalMs` on `createGoogleDriveProvider`); an empty poll is one request.
+- Deletions are reported too. Every name in the feed (removed, changed, or a same-named copy from another device) drops its cached file id, so the next read re-lists it.
+- The starting cursor is taken when the first listener subscribes, so no write in between is missed. The first poll reports nothing, so a new subscriber is not flooded with history.
+- After an account switch (`clearCaches()`), polling restarts on a fresh cursor for existing listeners.
 
 ## Storage usage
 
@@ -230,9 +239,9 @@ const [drive] = await store.getQuota()
 // { provider: 'googleDrive', usedBytes: 4_100_000_000, totalBytes: 15_000_000_000 }
 ```
 
-This is the whole Google account's usage, not the `appDataFolder`'s share (Drive reports no per-folder figure) - it's the number that matters anyway, since the account limit is what a write actually hits.
+This is the whole Google account's usage, not the `appDataFolder` share (Drive has no per-folder figure). The account limit is what a write hits anyway.
 
-`totalBytes` is absent for a pooled or unlimited Workspace account - not zero, and an "out of space" prompt that treats it as zero is worse than no prompt.
+`totalBytes` is absent, not zero, for pooled or unlimited Workspace accounts. Do not show an "out of space" prompt that treats it as zero.
 
 ## Cancelling a transfer
 
@@ -246,6 +255,6 @@ await googleDriveFiles.save({
 })
 ```
 
-Checked between chunks, so a cancel lands during the transfer rather than after; bytes Drive already accepted stay in the resumable session, and a later `save` of the same name starts a fresh one.
+The signal is checked between chunks, so a cancel takes effect mid-transfer. A later `save` of the same name starts a fresh session.
 
-`signal` is typed structurally, so a polyfilled `AbortController` works and you don't need `lib.dom` in your tsconfig.
+`signal` is typed structurally: a polyfilled `AbortController` works and you do not need `lib.dom` in your tsconfig.

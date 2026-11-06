@@ -39,7 +39,7 @@ export default function SupportMyWork() {
             <li><strong>No account, no email, no exchange API keys, no ads.</strong> Your holdings never reach a server - they sync through your own iCloud or Google Drive</li>
             <li>Free for 3 holdings, and that is not a trial timer</li>
           </ul>
-          <p className={styles.note}>This is the app the library was built for. Downloading it pays for the time that goes into maintaining it.</p>
+          <p className={styles.note}>This is the app the library was built for. Downloading it pays for its maintenance.</p>
         </div>
       </div>
     </aside>
