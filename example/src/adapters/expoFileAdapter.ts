@@ -26,7 +26,7 @@ export function installExpoFileAdapter() {
         // A seekable handle is the whole point: a chunk costs its own bytes and
         // nothing more, so a 500 MB file never lands in memory as a string.
         handle.offset = position
-        return bytesToBase64(handle.readBytes(length))
+        return bytesToBase64(await handle.readBytes(length))
       }
       finally {
         // An open handle blocks the file from being moved or deleted.
@@ -39,7 +39,7 @@ export function installExpoFileAdapter() {
       file.create({ intermediates: true, overwrite: true })
       const handle = file.open()
       try {
-        handle.writeBytes(base64ToBytes(base64))
+        await handle.writeBytes(base64ToBytes(base64))
       }
       finally {
         handle.close()
@@ -50,7 +50,7 @@ export function installExpoFileAdapter() {
       const handle = new File(uri).open()
       try {
         handle.offset = handle.size ?? 0
-        handle.writeBytes(base64ToBytes(base64))
+        await handle.writeBytes(base64ToBytes(base64))
       }
       finally {
         handle.close()
@@ -80,7 +80,7 @@ export function makeTestFile(name: string, megabytes: number): string {
   try {
     const block = new Uint8Array(1024 * 1024)
     for (let i = 0; i < block.length; i++) block[i] = i & 0xff
-    for (let mb = 0; mb < megabytes; mb++) handle.writeBytes(block)
+    for (let mb = 0; mb < megabytes; mb++) handle.writeBytesSync(block)
   }
   finally {
     handle.close()

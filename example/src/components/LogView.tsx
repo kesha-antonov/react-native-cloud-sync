@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import type { ScrollViewInstance } from 'react-native'
 import { ScrollView, StyleSheet, Text, View } from 'react-native'
 
 import { colors, fontFamily, mono, radius } from '../theme'
@@ -29,7 +30,7 @@ const TONE: Record<LogEntry['tone'], { color: string; glyph: string }> = {
  * every tap defeats the point of watching it live.
  */
 export function LogView({ entries, height = 200 }: { entries: LogEntry[]; height?: number }) {
-  const scrollRef = useRef<ScrollView>(null)
+  const scrollRef = useRef<ScrollViewInstance>(null)
 
   return (
     <View style={[s.wrap, { height }]}>

@@ -23,7 +23,8 @@
         {
           "containerIdentifier": "iCloud.com.example.reactnativecloudsync"
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }

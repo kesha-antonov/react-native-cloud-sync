@@ -9,6 +9,7 @@ export default [
       '**/node_modules/**',
       '**/lib/**',
       '**/build/**',
+      'coverage/**',
       'example/**',
       // Separate Yarn projects with their own tooling.
       'website/**',

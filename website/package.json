@@ -10,13 +10,13 @@
     "clear": "docusaurus clear"
   },
   "dependencies": {
-    "@docusaurus/core": "^3.9.2",
-    "@docusaurus/preset-classic": "^3.9.2",
-    "@mdx-js/react": "^3.1.0",
+    "@docusaurus/core": "^3.10.2",
+    "@docusaurus/preset-classic": "^3.10.2",
+    "@mdx-js/react": "^3.1.1",
     "clsx": "^2.1.1",
     "prism-react-renderer": "^2.4.1",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "browserslist": {
     "production": [
@@ -32,5 +32,11 @@
   },
   "engines": {
     "node": ">=20.0"
+  },
+  "resolutions": {
+    "qs": "^6.17.1",
+    "serialize-javascript": "^7.1.4",
+    "tinypool": "^2.2.0",
+    "uuid": "^11.1.1"
   }
 }
