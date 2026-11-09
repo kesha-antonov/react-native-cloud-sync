@@ -9,7 +9,7 @@ const config = {
   tagline: 'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API - iOS, Android and web',
   favicon: 'img/favicon.svg',
 
-  url: 'https://kesha-antonov.github.io',
+  url: 'https://kesha-antonov.com',
   baseUrl: '/react-native-cloud-sync/',
   organizationName: 'kesha-antonov',
   projectName: 'react-native-cloud-sync',
