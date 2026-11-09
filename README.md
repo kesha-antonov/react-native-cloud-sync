@@ -24,6 +24,10 @@
 </p>
 
 <p align="center">
+  <sub>Built and maintained by <a href="https://kesha-antonov.com">Kesha Antonov</a>, React Native lead engineer. More libraries, apps and case studies on <a href="https://kesha-antonov.com">kesha-antonov.com</a>.</sub>
+</p>
+
+<p align="center">
   <img src="assets/sync-demo.gif" width="760" alt="A book saved on an iPhone syncs through iCloud to an iPad and a Mac and through Google Drive to an Android phone and the web, then un-saved on Android it syncs back everywhere" />
 </p>
 
