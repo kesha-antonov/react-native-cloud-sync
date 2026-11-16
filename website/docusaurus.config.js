@@ -7,7 +7,11 @@ const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
 const config = {
   title: 'React Native Cloud Storage',
   tagline: 'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API - iOS, Android and web',
-  favicon: 'img/favicon.svg',
+  favicon: 'https://kesha-antonov.com/favicon.ico',
+  headTags: [
+    { tagName: 'link', attributes: { rel: 'icon', type: 'image/png', sizes: '192x192', href: 'https://kesha-antonov.com/favicon-192.png' } },
+    { tagName: 'link', attributes: { rel: 'apple-touch-icon', href: 'https://kesha-antonov.com/apple-touch-icon.png' } },
+  ],
 
   url: 'https://kesha-antonov.com',
   baseUrl: '/react-native-cloud-sync/',
