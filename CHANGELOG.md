@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2 - 2026-11-18
+
+No changes to the library code. This release updates the README shown on npm.
+
+### 📚 Documentation
+
+- The author line links to the hire page at its new address, without a trailing slash
+- The note about the author's app is gone from the Authors section
+
 ## 0.5.1 - 2026-11-18
 
 No changes to the library code. This release updates the README shown on npm.
