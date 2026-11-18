@@ -50,7 +50,7 @@
     "url": "https://github.com/kesha-antonov/react-native-cloud-sync/issues"
   },
   "license": "MIT",
-  "author": "Kesha Antonov <innokenty.longway@gmail.com> (https://kesha-antonov.com)",
+  "author": "Kesha Antonov <keshagoodvibes@gmail.com> (https://kesha-antonov.com)",
   "packageManager": "yarn@4.18.0",
   "source": "./src/index.ts",
   "main": "./lib/commonjs/index.js",
