@@ -21,7 +21,7 @@ import { PAGES } from '../website/scripts/sync-docs.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
-const SITE = 'https://kesha-antonov.github.io/react-native-cloud-sync'
+const SITE = 'https://kesha-antonov.com/react-native-cloud-sync'
 
 let problems = 0
 

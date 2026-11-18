@@ -41,7 +41,7 @@
     "macos",
     "mac-catalyst"
   ],
-  "homepage": "https://github.com/kesha-antonov/react-native-cloud-sync",
+  "homepage": "https://kesha-antonov.com/react-native-cloud-sync/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kesha-antonov/react-native-cloud-sync.git"
@@ -50,7 +50,7 @@
     "url": "https://github.com/kesha-antonov/react-native-cloud-sync/issues"
   },
   "license": "MIT",
-  "author": "Kesha Antonov <innokenty.longway@gmail.com>",
+  "author": "Kesha Antonov <innokenty.longway@gmail.com> (https://kesha-antonov.com)",
   "packageManager": "yarn@4.18.0",
   "source": "./src/index.ts",
   "main": "./lib/commonjs/index.js",

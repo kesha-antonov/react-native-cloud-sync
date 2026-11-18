@@ -17,14 +17,14 @@
 </p>
 
 <p align="center">
-  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/">Documentation</a> ·
-  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/comparison">Comparison</a> ·
-  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/api">API</a> ·
-  <a href="https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes">Platform Notes</a>
+  <a href="https://kesha-antonov.com/react-native-cloud-sync/">Documentation</a> ·
+  <a href="https://kesha-antonov.com/react-native-cloud-sync/comparison">Comparison</a> ·
+  <a href="https://kesha-antonov.com/react-native-cloud-sync/api">API</a> ·
+  <a href="https://kesha-antonov.com/react-native-cloud-sync/platform-notes">Platform Notes</a>
 </p>
 
 <p align="center">
-  <sub>Built and maintained by <a href="https://kesha-antonov.com">Kesha Antonov</a>, React Native lead engineer. More libraries, apps and case studies on <a href="https://kesha-antonov.com">kesha-antonov.com</a>.</sub>
+  <sub>Built and maintained by <a href="https://kesha-antonov.com">Kesha Antonov</a>, React Native lead engineer, <a href="https://kesha-antonov.com/react-native-developer/">available for hire</a>. More libraries, apps and case studies on <a href="https://kesha-antonov.com">kesha-antonov.com</a>.</sub>
 </p>
 
 <p align="center">
@@ -189,7 +189,7 @@ This package is a wrapper. When something behaves unexpectedly, check Apple's or
 <a id="note-6"></a>**[6]** Field type is `string | number | null`, so it can't hold binary data.  
 <a id="note-7"></a>**[7]** A mock factory exists, but isn't exported or documented.  
 <a id="note-8"></a>**[8]** No commits since April; the last four releases shipped with Swift that didn't compile.  
-<a id="note-9"></a>**[9]** `CKAsset` on Apple platforms; CloudKit Web Services' upload-token protocol on Android/web, capped at 15 MB by CloudKit. Use [`googleDriveFiles`](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive#large-files) for anything bigger; it chunks and resumes the same way.
+<a id="note-9"></a>**[9]** `CKAsset` on Apple platforms; CloudKit Web Services' upload-token protocol on Android/web, capped at 15 MB by CloudKit. Use [`googleDriveFiles`](https://kesha-antonov.com/react-native-cloud-sync/providers/google-drive#large-files) for anything bigger; it chunks and resumes the same way.
 
 [kuatsu]: https://github.com/kuatsu/react-native-cloud-storage
 [ik]: https://github.com/BogdanGeorgian91/react-native-icloud-kit
@@ -201,20 +201,20 @@ This package is a wrapper. When something behaves unexpectedly, check Apple's or
 
 | | |
 |---|---|
-| [Choosing a provider](https://kesha-antonov.github.io/react-native-cloud-sync/choosing-a-provider) | Which one, what it costs, why to let the user pick |
-| [iCloud key-value store](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-kv) | Small settings, zero friction, Apple only |
-| [CloudKit](https://kesha-antonov.github.io/react-native-cloud-sync/providers/cloudkit) | Records, zones, assets, and the Android/web path |
-| [iCloud Drive](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-drive) | Files in the user's own Drive, visible in Files.app |
-| [Google Drive](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive) | The always-on cross-platform backend |
-| [The store facade](https://kesha-antonov.github.io/react-native-cloud-sync/store) | Tiering, outbox, migration, fallthrough |
-| [Error handling](https://kesha-antonov.github.io/react-native-cloud-sync/errors) | The typed contract |
-| [Encryption](https://kesha-antonov.github.io/react-native-cloud-sync/encryption) | What's encrypted for you, and how to add your own |
-| [React hooks](https://kesha-antonov.github.io/react-native-cloud-sync/hooks) | Binding cloud state to components |
-| [Recipes](https://kesha-antonov.github.io/react-native-cloud-sync/recipes) | Backup/restore, migration, offline-first |
-| [Testing](https://kesha-antonov.github.io/react-native-cloud-sync/testing) | Fault injection without a device |
-| [API reference](https://kesha-antonov.github.io/react-native-cloud-sync/api) | Every export |
-| [Platform notes](https://kesha-antonov.github.io/react-native-cloud-sync/platform-notes) | Entitlements, architectures, build config |
-| [Troubleshooting](https://kesha-antonov.github.io/react-native-cloud-sync/troubleshooting) | Common problems and what they usually mean |
+| [Choosing a provider](https://kesha-antonov.com/react-native-cloud-sync/choosing-a-provider) | Which one, what it costs, why to let the user pick |
+| [iCloud key-value store](https://kesha-antonov.com/react-native-cloud-sync/providers/icloud-kv) | Small settings, zero friction, Apple only |
+| [CloudKit](https://kesha-antonov.com/react-native-cloud-sync/providers/cloudkit) | Records, zones, assets, and the Android/web path |
+| [iCloud Drive](https://kesha-antonov.com/react-native-cloud-sync/providers/icloud-drive) | Files in the user's own Drive, visible in Files.app |
+| [Google Drive](https://kesha-antonov.com/react-native-cloud-sync/providers/google-drive) | The always-on cross-platform backend |
+| [The store facade](https://kesha-antonov.com/react-native-cloud-sync/store) | Tiering, outbox, migration, fallthrough |
+| [Error handling](https://kesha-antonov.com/react-native-cloud-sync/errors) | The typed contract |
+| [Encryption](https://kesha-antonov.com/react-native-cloud-sync/encryption) | What's encrypted for you, and how to add your own |
+| [React hooks](https://kesha-antonov.com/react-native-cloud-sync/hooks) | Binding cloud state to components |
+| [Recipes](https://kesha-antonov.com/react-native-cloud-sync/recipes) | Backup/restore, migration, offline-first |
+| [Testing](https://kesha-antonov.com/react-native-cloud-sync/testing) | Fault injection without a device |
+| [API reference](https://kesha-antonov.com/react-native-cloud-sync/api) | Every export |
+| [Platform notes](https://kesha-antonov.com/react-native-cloud-sync/platform-notes) | Entitlements, architectures, build config |
+| [Troubleshooting](https://kesha-antonov.com/react-native-cloud-sync/troubleshooting) | Common problems and what they usually mean |
 
 ## 📋 Requirements
 
@@ -236,7 +236,7 @@ Both architectures are supported. RN 0.82 removed the Legacy Architecture, so it
 | `icloudDocuments` | native | - | - |
 | `googleDrive` | REST | REST | REST |
 
-An unavailable provider rejects with `ERR_UNSUPPORTED_PLATFORM`; it never silently does nothing. Trade-offs: [Choosing a provider](https://kesha-antonov.github.io/react-native-cloud-sync/choosing-a-provider).
+An unavailable provider rejects with `ERR_UNSUPPORTED_PLATFORM`; it never silently does nothing. Trade-offs: [Choosing a provider](https://kesha-antonov.com/react-native-cloud-sync/choosing-a-provider).
 
 ## 📦 Installation
 
@@ -258,7 +258,7 @@ Add the config plugin, then rebuild:
 }
 ```
 
-Bare React Native and manual `ios/` entitlements: see [Installation](https://kesha-antonov.github.io/react-native-cloud-sync/installation).
+Bare React Native and manual `ios/` entitlements: see [Installation](https://kesha-antonov.com/react-native-cloud-sync/installation).
 
 ## 🚀 Quick start
 
@@ -276,7 +276,7 @@ const theme = await icloudKV.getItem('settings/theme')
 icloudKV.onRemoteChange(({ keys }) => reload(keys))
 ```
 
-[Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-kv)
+[Full guide](https://kesha-antonov.com/react-native-cloud-sync/providers/icloud-kv)
 
 ### CloudKit
 
@@ -292,7 +292,7 @@ const raw = await cloudKit.getItem('playlist')
 await cloudKitAssets.save({ recordName: 'avatar', fieldName: 'image', fileUri })
 ```
 
-Android and web need an Apple ID sign-in whose token lasts up to two weeks: fine for an explicit import, not for background sync. [Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/providers/cloudkit)
+Android and web need an Apple ID sign-in whose token lasts up to two weeks: fine for an explicit import, not for background sync. [Full guide](https://kesha-antonov.com/react-native-cloud-sync/providers/cloudkit)
 
 ### Sensitive data
 
@@ -304,7 +304,7 @@ import { cloudKitEncrypted } from 'react-native-cloud-sync'
 await cloudKitEncrypted.setItem('auth.refreshToken', token)
 ```
 
-Apple only: the key lives in the user's iCloud Keychain. For cross-platform encryption use the store's `codec`. [Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/encryption)
+Apple only: the key lives in the user's iCloud Keychain. For cross-platform encryption use the store's `codec`. [Full guide](https://kesha-antonov.com/react-native-cloud-sync/encryption)
 
 ### iCloud Drive
 
@@ -319,7 +319,7 @@ await icloudDocuments.save({ fileUri: localPath, name: 'Export 2024.csv' })
 const path = await icloudDocuments.fetch({ name: 'Export 2024.csv' })
 ```
 
-[Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/providers/icloud-drive)
+[Full guide](https://kesha-antonov.com/react-native-cloud-sync/providers/icloud-drive)
 
 ### Google Drive
 
@@ -335,7 +335,7 @@ configureGoogleDrive({
 await googleDrive.setItem('playlist.json', JSON.stringify(tracks))
 ```
 
-[Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/providers/google-drive)
+[Full guide](https://kesha-antonov.com/react-native-cloud-sync/providers/google-drive)
 
 ### All of them at once
 
@@ -354,7 +354,7 @@ await store.setItem('playlist', json)
 await store.flushOutbox()                       // on reconnect
 ```
 
-`mirror` copies writes to Drive so non-Apple devices can read them. `resolve` keeps an Apple device from serving a stale iCloud copy. Together they sync **both** ways across a mixed fleet. [Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/store)
+`mirror` copies writes to Drive so non-Apple devices can read them. `resolve` keeps an Apple device from serving a stale iCloud copy. Together they sync **both** ways across a mixed fleet. [Full guide](https://kesha-antonov.com/react-native-cloud-sync/store)
 
 ### In a component
 
@@ -364,7 +364,7 @@ import { useCloudItem } from 'react-native-cloud-sync/hooks'
 const { value, setValue, loading, error } = useCloudItem<Settings>(store, 'settings')
 ```
 
-Re-reads on remote writes, drops stale responses, no `setState` after unmount. [Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/hooks)
+Re-reads on remote writes, drops stale responses, no `setState` after unmount. [Full guide](https://kesha-antonov.com/react-native-cloud-sync/hooks)
 
 ### Handling failures
 
@@ -379,7 +379,7 @@ try {
 }
 ```
 
-[Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/errors)
+[Full guide](https://kesha-antonov.com/react-native-cloud-sync/errors)
 
 ## 🧪 Testing
 
@@ -394,7 +394,7 @@ const provider = createMemoryProvider({
 provider.emitAccountChange({ status: 'available', identityChanged: true })
 ```
 
-Test signed-out, offline and account-switch paths in Jest, no device needed. [Full guide](https://kesha-antonov.github.io/react-native-cloud-sync/testing)
+Test signed-out, offline and account-switch paths in Jest, no device needed. [Full guide](https://kesha-antonov.com/react-native-cloud-sync/testing)
 
 ## 🧪 Example App
 
