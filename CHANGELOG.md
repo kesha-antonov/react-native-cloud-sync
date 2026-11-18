@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3 - 2026-11-18
+
+No changes to the library code. This release updates the README shown on npm.
+
+### 📚 Documentation
+
+- The README and the package homepage link the docs site without a trailing slash
+
 ## 0.5.2 - 2026-11-18
 
 No changes to the library code. This release updates the README shown on npm.
