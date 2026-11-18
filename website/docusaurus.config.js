@@ -3,7 +3,7 @@ const { themes } = require('prism-react-renderer')
 const { execFileSync } = require('node:child_process')
 
 const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
-const SITE = 'https://kesha-antonov.com/react-native-cloud-sync/'
+const SITE = 'https://kesha-antonov.com/react-native-cloud-sync'
 const TAGLINE = 'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API - iOS, Android and web'
 
 // Describes the library to search engines on every page.
@@ -42,7 +42,8 @@ const LASTMOD = docsLastModified()
 // Every page gets that one date.
 const sitemapWithDates = {
   createSitemapItems: async ({ defaultCreateSitemapItems, ...rest }) => {
-    const items = await defaultCreateSitemapItems(rest)
+    // The root is listed without its trailing slash (plugins/slashless-root.js)
+    const items = (await defaultCreateSitemapItems(rest)).map(item => ({ ...item, url: item.url.replace(/\/$/, '') }))
     return LASTMOD ? items.map(item => ({ ...item, lastmod: LASTMOD })) : items
   },
 }
@@ -63,6 +64,7 @@ const config = {
   organizationName: 'kesha-antonov',
   projectName: 'react-native-cloud-sync',
   trailingSlash: false,
+  plugins: ['./plugins/slashless-root.js'],
 
   onBrokenLinks: 'throw',
   // A link to a heading that no longer exists lands the reader at the top of
@@ -152,10 +154,10 @@ const config = {
           {
             title: 'More libraries',
             items: [
-              { label: 'React Native Chat', href: 'https://kesha-antonov.com/react-native-chat/' },
-              { label: 'React Native Zoom Reanimated', href: 'https://kesha-antonov.com/react-native-zoom-reanimated/' },
-              { label: 'React Native Background Downloader', href: 'https://kesha-antonov.com/react-native-background-downloader/' },
-              { label: 'React Native ActionCable', href: 'https://kesha-antonov.com/react-native-action-cable/' },
+              { label: 'React Native Chat', href: 'https://kesha-antonov.com/react-native-chat' },
+              { label: 'React Native Zoom Reanimated', href: 'https://kesha-antonov.com/react-native-zoom-reanimated' },
+              { label: 'React Native Background Downloader', href: 'https://kesha-antonov.com/react-native-background-downloader' },
+              { label: 'React Native ActionCable', href: 'https://kesha-antonov.com/react-native-action-cable' },
             ],
           },
           {

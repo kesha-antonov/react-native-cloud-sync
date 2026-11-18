@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://kesha-antonov.com/react-native-cloud-sync/">Documentation</a> ·
+  <a href="https://kesha-antonov.com/react-native-cloud-sync">Documentation</a> ·
   <a href="https://kesha-antonov.com/react-native-cloud-sync/comparison">Comparison</a> ·
   <a href="https://kesha-antonov.com/react-native-cloud-sync/api">API</a> ·
   <a href="https://kesha-antonov.com/react-native-cloud-sync/platform-notes">Platform Notes</a>

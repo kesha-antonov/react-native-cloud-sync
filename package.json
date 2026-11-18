@@ -41,7 +41,7 @@
     "macos",
     "mac-catalyst"
   ],
-  "homepage": "https://kesha-antonov.com/react-native-cloud-sync/",
+  "homepage": "https://kesha-antonov.com/react-native-cloud-sync",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kesha-antonov/react-native-cloud-sync.git"
