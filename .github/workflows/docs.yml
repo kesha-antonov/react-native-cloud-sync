@@ -32,6 +32,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          # The sitemap dates come from git history (docusaurus.config.js)
+          fetch-depth: 0
           persist-credentials: false
 
       # Must precede setup-node: setup-node probes the package manager named in

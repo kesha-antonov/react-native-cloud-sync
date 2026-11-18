@@ -387,8 +387,6 @@ Issues and pull requests welcome. Run `yarn lint`, `yarn typecheck` and `yarn te
 
 - [Kesha Antonov](https://github.com/kesha-antonov)
 
-This library was built for **[cryptoc](https://cryptoc-app.web.app/)**, my crypto portfolio app.
-
 ## 📄 License
 
 MIT

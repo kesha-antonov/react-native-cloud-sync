@@ -19,6 +19,17 @@ const REPO = 'https://github.com/kesha-antonov/react-native-cloud-sync'
 // same host the "raw" button on github.com redirects to for an LFS file -
 // so pages can embed the real PNG without copying it into website/static.
 const RAW = 'https://media.githubusercontent.com/media/kesha-antonov/react-native-cloud-sync/main'
+// Where the site is published. The README links here with full URLs so that
+// they work on GitHub and npm.
+const SITE = 'https://kesha-antonov.com/react-native-cloud-sync'
+
+// Pixel sizes of the repository images the pages embed, so each <img> can
+// state its width and height and the browser reserves the space before the
+// file loads. Written out rather than read from the files: they are stored in
+// Git LFS, and a checkout without LFS has only their pointer files.
+const IMAGE_SIZES = [
+  { path: /^assets\/screenshots\/[^/]+\.png$/, width: 1206, height: 2622 },
+]
 
 /**
  * Canonical key for a heading.
@@ -36,6 +47,9 @@ const key = text => text.toLowerCase().replace(/[^a-z0-9]/g, '')
  * `sections` pulls named `##` blocks out of README.md; `file` copies a whole
  * markdown file. Either way the repository root stays the single source of
  * truth, so the site cannot drift from what a reader sees on GitHub or npm.
+ *
+ * `title` is the heading a reader sees. The browser and search title is
+ * "title | site name" unless `searchTitle` replaces it.
  */
 export const PAGES = [
   {
@@ -43,6 +57,7 @@ export const PAGES = [
     slug: '/',
     category: 'Getting started',
     title: 'React Native Cloud Sync',
+    searchTitle: 'iCloud and Google Drive sync - React Native Cloud Sync',
     sidebarLabel: 'Introduction',
     description:
       'iCloud key-value store, CloudKit, iCloud Drive and Google Drive behind one API for React Native and Expo - '
@@ -58,8 +73,8 @@ export const PAGES = [
     title: 'Comparison with other libraries',
     sidebarLabel: 'Comparison',
     description:
-      'How this library compares with react-native-cloud-storage, react-native-icloud-kit, expo-cloudkit '
-      + 'and expo-icloud-storage across providers, platforms, architectures and error handling.',
+      'Compared with react-native-cloud-storage, react-native-icloud-kit, expo-cloudkit and '
+      + 'expo-icloud-storage: providers, platforms and error handling.',
     sections: ['⚖️ Comparison'],
   },
   {
@@ -198,7 +213,9 @@ export const PAGES = [
     category: 'Reference',
     title: 'API Reference',
     sidebarLabel: 'API',
-    description: 'Every provider, the facade, the error vocabulary and the test harness.',
+    description:
+      'Compact reference for every export: the providers, createCloudStore and its options, tiering, '
+      + 'resolvers, error codes, types, React hooks and diagnostics.',
     file: 'docs/API.md',
   },
   {
@@ -214,7 +231,9 @@ export const PAGES = [
     category: 'Reference',
     title: 'Troubleshooting',
     sidebarLabel: 'Troubleshooting',
-    description: 'Common problems and what they usually mean.',
+    description:
+      'Common problems and what they usually mean: writes that never reach iCloud, '
+      + 'ERR_CONTAINER_MISCONFIGURED, CloudKit failing in the release build.',
     file: 'docs/troubleshooting.md',
   },
 ]
@@ -253,6 +272,68 @@ const idByFile = new Map(
   PAGES.filter(p => p.file != null).map(p => [p.file.replace(/^docs\//, ''), p.id])
 )
 
+/**
+ * Renumbers headings so the page outline starts at h2 and never skips a level
+ * (an h2 followed directly by an h4, say), whatever levels the source used.
+ */
+function closeHeadingGaps (markdown) {
+  let inFence = false
+  // Source levels of the headings the current line is nested under.
+  const open = []
+
+  return markdown
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('```')) inFence = !inFence
+      const match = !inFence && /^(#{1,6}) (.+)$/.exec(line)
+      if (!match) return line
+
+      while (open.length > 0 && open[open.length - 1] >= match[1].length) open.pop()
+      open.push(match[1].length)
+      return `${'#'.repeat(Math.min(6, open.length + 1))} ${match[2]}`
+    })
+    .join('\n')
+}
+
+/**
+ * Gives repository images their pixel width and height. The width the README
+ * asked for (a percentage, which the attribute cannot hold next to a height)
+ * moves into a style. The style is written as JSX because the pages are MDX.
+ */
+function sizeImages (markdown) {
+  return markdown.replace(/<img\b[^>]*>/g, (tag) => {
+    const src = /\ssrc="(assets\/[^"]+)"/.exec(tag)
+    if (src == null || /\sheight=/.test(tag)) return tag
+
+    const size = IMAGE_SIZES.find(s => s.path.test(src[1]))
+    if (size == null) throw new Error(`No pixel size for ${src[1]}: add it to IMAGE_SIZES in website/scripts/sync-docs.mjs`)
+
+    const asked = /\swidth="([^"]+)"/.exec(tag)
+    const shown = asked == null ? '100%' : /^\d+$/.test(asked[1]) ? `${asked[1]}px` : asked[1]
+    const attributes = ` width="${size.width}" height="${size.height}" style={{ width: '${shown}', height: 'auto' }}`
+    return asked == null ? tag.replace(/^<img/, `<img${attributes}`) : tag.replace(asked[0], attributes)
+  })
+}
+
+/**
+ * Opening of the landing page: the one-line summary under the README title and
+ * the install command. Both sit in parts of the README that no page copies.
+ */
+function landingLead (readme, sections) {
+  const summary = /<h1[^>]*>[\s\S]*?<\/h1>\s*<p[^>]*>\s*([\s\S]*?)\s*<\/p>/.exec(readme)
+  const install = /```sh\n([\s\S]*?)\n```/.exec(sections.get(key('Installation')) ?? '')
+  if (summary == null || install == null) throw new Error('README summary or install command not found (page intro)')
+
+  return {
+    summary: summary[1],
+    install: [
+      'Install the package:',
+      `\`\`\`sh\n${install[1]}\n\`\`\``,
+      'The config plugin and the setup for bare React Native projects are covered in [Installation](/installation).',
+    ].join('\n\n'),
+  }
+}
+
 function rewriteLinks (markdown, ownerByAnchor, page) {
   // Links between doc files are relative on GitHub (../errors.md) but must be
   // site-relative here (/errors). Strip the extension and any leading ../.
@@ -265,7 +346,10 @@ function rewriteLinks (markdown, ownerByAnchor, page) {
     }
   )
 
-  return docLink
+  return sizeImages(docLink)
+    // Full URLs of this site become site-relative, so the reader stays in the
+    // same tab and the build checks that the page and the heading exist.
+    .replace(new RegExp(`\\]\\(${SITE}(/[^)]*)?\\)`, 'g'), (_m, path) => `](${path ?? '/'})`)
     .replace(/\]\((docs\/[^)]+|example\/[^)]*|LICENSE)\)/g, (_m, path) => `](${REPO}/blob/main/${path})`)
     .replace(/\]\(#([a-z0-9-]+)\)/g, (whole, anchor) => {
       const owner = ownerByAnchor.get(key(anchor))
@@ -296,7 +380,11 @@ function frontMatter (page) {
     `title: ${JSON.stringify(page.title)}`,
     `sidebar_label: ${JSON.stringify(page.sidebarLabel)}`,
     `description: ${JSON.stringify(page.description)}`,
+    // "Edit this page" opens the file the page is generated from.
+    `custom_edit_url: ${JSON.stringify(`${REPO}/edit/main/${page.file ?? 'README.md'}`)}`,
   ]
+  // Read by src/theme/DocItem/Metadata, which puts it in the title element.
+  if (page.searchTitle != null) lines.push(`search_title: ${JSON.stringify(page.searchTitle)}`)
   if (page.slug != null) lines.push(`slug: ${page.slug}`)
   lines.push('---', '')
   return lines.join('\n')
@@ -332,7 +420,12 @@ function main () {
       }
       body = parts.join('\n\n')
     }
+    body = closeHeadingGaps(body)
     if (page.prepend != null) body = `${page.prepend}\n\n${body}`
+    if (page.id === 'intro') {
+      const lead = landingLead(readme, sections)
+      body = `${lead.summary}\n\n${body.replace(page.prepend, `${page.prepend}\n\n${lead.install}`)}`
+    }
 
     const out = join(OUT, `${page.id}.md`)
     // Nested ids (providers/cloudkit) need their directory to exist.
