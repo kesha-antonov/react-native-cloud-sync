@@ -1,6 +1,6 @@
 {
   "name": "react-native-cloud-sync",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Sync React Native app data via iCloud key-value store, CloudKit, iCloud Drive and Google Drive with one API. Offline-first with retry, real-time updates, optional end-to-end encryption. iOS, Android, web; old and new architecture",
   "workspaces": [
     "example"
